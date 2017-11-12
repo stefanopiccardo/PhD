@@ -20,6 +20,7 @@
 #include <vector>
 #include <fstream>
 #include <algorithm>
+#include <list>
 
 #include "src/point.hpp"
 
@@ -27,11 +28,15 @@
 struct node
 {
     size_t                  point_id;
+    bool                    near_to_interface;
+
+    node() : near_to_interface(false) {}
 };
 
 struct edge
 {
     std::array<size_t, 2>   point_ids;
+    bool                    to_be_removed;
     bool                    is_boundary;
     size_t                  boundary_id;
 
@@ -46,11 +51,20 @@ struct edge
     }
 };
 
+template<typename T>
+struct integration_triangle
+{
+    std::array<point<T,2>, 3>   points;
+};
+
+
+
 struct polygon
 {
     std::vector<size_t>     point_ids;
     size_t                  domain_id;
     bool                    cut_by_interface;
+    bool                    to_be_removed;
 
     polygon()
     {
@@ -86,6 +100,34 @@ struct mesh
 };
 
 template<typename T>
+class connectivity
+{
+    std::vector<std::list<size_t>>  node_to_face;
+    std::vector<std::list<size_t>>  node_to_cell;
+
+public:
+    connectivity(const mesh<T>& msh)
+    {
+        node_to_face.resize( msh.nodes.size() );
+        for (size_t i = 0; i < msh.faces.size(); i++)
+        {
+            auto ptids = msh.faces.at(i).point_ids;
+            assert(ptids.size() == 2);
+            node_to_face.at(ptids[0]).push_back(i);
+            node_to_face.at(ptids[1]).push_back(i);
+        }
+
+        node_to_cell.resize( msh.nodes_size() );
+        for (size_t i = 0; i < msh.cells.size(); i++)
+        {
+            auto ptids = msh.cells.at(i).point_ids;
+            for (size_t j = 0; j < ptids.size(); j++)
+                node_to_face.at(ptids[j]).push_back(i);
+        }
+    }
+};
+
+template<typename T>
 typename mesh<T>::point_type
 points(const mesh<T>& msh, const typename mesh<T>::node_type& node)
 {
@@ -102,7 +144,7 @@ points(const mesh<T>& msh, const typename mesh<T>::face_type& face)
         return msh.points.at( ptid );
     };
 
-    std::transform(face.point_ids.begin(), face.point_ids.end(), ret.begin());
+    std::transform(face.point_ids.begin(), face.point_ids.end(), ret.begin(), id_to_point);
     return ret;
 }
 
@@ -145,6 +187,35 @@ detect_cut_cells(mesh<T>& msh, const Function& level_set_function)
 
         if ( std::count(signs.begin(), signs.end(), -1) == signs.size() )
             cl.cut_by_interface = false;
+    }
+}
+
+template<typename T, typename Function>
+void
+detect_agglomeration_nodes(mesh<T>& msh, const Function& level_set_function)
+{
+    for (auto& fc : msh.faces)
+    {
+        auto pts = points(msh, fc);
+        assert(pts.size() == 2);
+
+        auto lvl0 = level_set_function(pts[0]);
+        auto lvl1 = level_set_function(pts[1]);
+
+        if ( (lvl0 >= 0 && lvl1 >= 0) || (lvl0 <= 0 && lvl1 <= 0) )
+            continue; /* This face is not cut by interface */
+
+        auto range = (pts[1] - pts[0])*0.15;
+
+        auto pts0r = pts[0] + range;
+        auto lvl0r = level_set_function(pts0r);
+        if ( (lvl0r < 0 && lvl0 >= 0) || (lvl0r >=0 && lvl0 < 0) )
+            msh.nodes.at( fc.point_ids.at(0) ).near_to_interface = true;
+
+        auto pts1r = pts[1] - range;
+        auto lvl1r = level_set_function(pts1r);
+        if ( (lvl1r < 0 && lvl1 >= 0) || (lvl1r >=0 && lvl1 < 0) )
+            msh.nodes.at( fc.point_ids.at(1) ).near_to_interface = true;
     }
 }
 
@@ -208,7 +279,7 @@ bool load_netgen_2d(const std::string& filename, mesh<T>& msh)
         for (size_t i = 0; i < 3; i++)
         {
             auto p0 = cl.point_ids[i];
-            auto p1 = cl.point_ids[i%3];
+            auto p1 = cl.point_ids[(i+1)%3];
 
             if (p1 < p0)
                 std::swap(p0, p1);
@@ -222,7 +293,7 @@ bool load_netgen_2d(const std::string& filename, mesh<T>& msh)
     }
 
     std::sort(msh.faces.begin(), msh.faces.end());
-    msh.faces.erase(msh.faces.begin(), std::unique(msh.faces.begin(), msh.faces.end()) );
+    msh.faces.erase(std::unique(msh.faces.begin(), msh.faces.end()), msh.faces.end());
 
     std::cout << "Faces: " << msh.faces.size() << std::endl;
 

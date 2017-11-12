@@ -24,8 +24,8 @@ int main(int argc, char **argv)
     auto level_set_function = [](const typename mesh<coord_type>::point_type pt) -> coord_type {
         auto x = pt.x();
         auto y = pt.y();
-        auto alpha = 0.4;
-        auto beta = 0.4;
+        auto alpha = 0.5;
+        auto beta = 0.5;
 
         return (x-alpha)*(x-alpha) + (y-beta)*(y-beta) - 0.1;
     };
@@ -53,6 +53,20 @@ int main(int argc, char **argv)
             marked_cells.push_back(0.0);
 
     silo.add_variable("test_mesh", "cut", marked_cells.data(), marked_cells.size(), zonal_variable_t);
+
+
+    detect_agglomeration_nodes(msh, level_set_function);
+
+    std::vector<coord_type> marked_nodes;
+    marked_nodes.reserve( msh.nodes.size() );
+
+    for (auto& cl : msh.nodes)
+        if (cl.near_to_interface)
+            marked_nodes.push_back(1.0);
+        else
+            marked_nodes.push_back(0.0);
+
+    silo.add_variable("test_mesh", "agglo_nodes", marked_nodes.data(), marked_nodes.size(), nodal_variable_t);
 
     silo.close();
 
