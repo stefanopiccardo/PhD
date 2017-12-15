@@ -130,13 +130,20 @@ conjugated_gradient(const Eigen::SparseMatrix<T>& A,
 /*****************************************************************************
  *   Mesh stuff
  *****************************************************************************/
+
+template<typename T>
+struct cell_unfitted_info {
+    std::array< std::pair<bool, point<T,2>>, 4 >   intersections;
+};
+
+template<typename T>
 struct cell {
     std::array<size_t, 4>   ptids;
 
-    bool cut_by_interface;
+    std::shared_ptr<cell_unfitted_info<T>>     unfitted_info;
 
     cell()
-        : cut_by_interface(false)
+        : unfitted_info(nullptr)
     {}
 
     bool operator<(const cell& other) const
@@ -148,10 +155,15 @@ struct cell {
     {
         return (this->ptids == other.ptids);
     }
+
+    bool is_cut() {
+        return bool(unfitted_info);
+    }
 };
 
+template<typename T>
 std::ostream&
-operator<<(std::ostream& os, const cell& cl)
+operator<<(std::ostream& os, const cell<T>& cl)
 {
     os << "Cell: " << cl.ptids[0] << " " << cl.ptids[1];
     os << " " << cl.ptids[2] << " " << cl.ptids[3];
@@ -178,15 +190,20 @@ struct face {
 
     bool operator<(const face& other) const
     {
+        assert(ptids[0] < ptids[1]);
+        assert(other.ptids[0] < other.ptids[1]);
         return (this->ptids < other.ptids);
     }
 
     bool operator==(const face& other) const
     {
+        assert(ptids[0] < ptids[1]);
+        assert(other.ptids[0] < other.ptids[1]);
         return (this->ptids == other.ptids);
     }
 };
 
+template<typename T>
 std::ostream&
 operator<<(std::ostream& os, const face& fc)
 {
@@ -227,7 +244,7 @@ template<typename T>
 struct mesh {
 
     typedef point<T,2>          point_type;
-    typedef cell                cell_type;
+    typedef cell<T>             cell_type;
     typedef face                face_type;
 
     std::vector<point_type>     points;
@@ -265,26 +282,26 @@ struct mesh {
                 auto pt2_idx = pt0_idx + parms.Nx + 2;
                 auto pt3_idx = pt0_idx + parms.Nx + 1;
 
-                cell cl;
+                cell_type cl;
                 cl.ptids = {{pt0_idx, pt1_idx, pt2_idx, pt3_idx}};
                 cells.push_back(cl);
 
-                face f0;
+                face_type f0;
                 f0.ptids = {pt0_idx, pt1_idx};
                 if (j == 0) f0.is_boundary = true;
                 faces.push_back(f0);
 
-                face f1;
+                face_type f1;
                 f1.ptids = {pt1_idx, pt2_idx};
                 if (i == parms.Nx-1) f1.is_boundary = true;
                 faces.push_back(f1);
 
-                face f2;
+                face_type f2;
                 f2.ptids = {pt3_idx, pt2_idx};
                 if (j == parms.Ny-1) f2.is_boundary = true;
                 faces.push_back(f2);
 
-                face f3;
+                face_type f3;
                 f3.ptids = {pt0_idx, pt3_idx};
                 if (i == 0) f3.is_boundary = true;
                 faces.push_back(f3);
@@ -298,10 +315,223 @@ struct mesh {
     }
 };
 
+template<typename T, typename Function>
+std::pair<bool, point<T,2>>
+find_face_interface_intersection(const mesh<T>& msh, const typename mesh<T>::face_type& fc,
+                                 const Function& level_set_function)
+{
+    auto pts = points(msh, fc);
+    auto l0 = level_set_function(pts[0]);
+    auto l1 = level_set_function(pts[1]);
+    if ( (l0 >= 0 && l1 >= 0) || (l0 < 0 && l1 < 0) )
+        return std::make_pair( false, typename mesh<T>::point_type() );
+
+    auto t = l0/(l0-l1);
+    auto ip = (pts[1] - pts[0]) * t + pts[0];
+    return std::make_pair(true, ip);
+}
+
+template<typename T, typename Function>
+std::shared_ptr<cell_unfitted_info<T>>
+make_cell_unfitted_info(mesh<T>& msh, const typename mesh<T>::cell_type& cl,
+                        const Function& level_set_function)
+{
+    auto pts = points(msh, cl);
+    auto fcs = faces(msh, cl);
+
+    std::array< std::pair<bool, point<T,2>>, 4> intersections;
+
+    auto tf = [&](const typename mesh<T>::face_type& fc) -> auto {
+        return find_face_interface_intersection(msh, fc, level_set_function);
+    };
+    std::transform(fcs.begin(), fcs.end(), intersections.begin(), tf);
+
+    auto is_intersected = [](const std::pair<bool, typename mesh<T>::point_type>& int_pt) -> auto {
+        return int_pt.first;
+    };
+    auto num_cuts = std::count_if(intersections.begin(), intersections.end(), is_intersected);
+
+    if (num_cuts == 0)  /* The cell is not cut, don't return anything */
+        return nullptr;
+
+    if (num_cuts != 2)
+        throw std::logic_error("invalid number of cuts in cell");
+
+    auto ui = std::make_shared<cell_unfitted_info<T>>();
+    ui->intersections = intersections;
+
+    return ui;
+}
+
+
+template<typename T, typename Function>
+void
+fill_unfitted_info(mesh<T>& msh, const Function& level_set_function)
+{
+    for (auto& cl : msh.cells)
+        cl.unfitted_info = make_cell_unfitted_info(msh, cl, level_set_function);
+}
+
+
+template<typename T>
+struct cell_info
+{
+    //bool        cut_by_interface;
+
+    std::array< std::pair<bool, point<T,2>>, 4 >        cuts;
+    /*std::vector<*/ std::array<point<T,2>, 2> /*>*/            additional_faces;
+
+    cell_info() //:
+        //cut_by_interface(false)
+    {
+        for (auto& c : cuts)
+            c.first = false;
+    }
+
+    bool is_cut_by_interface(void) const
+    {
+        auto is_cut = [&](const std::pair<bool, point<T,2>>& c) -> bool {
+            return c.first;
+        };
+        return std::any_of(cuts.begin(), cuts.end(), is_cut);
+    }
+};
+
+template<typename T>
+struct face_info
+{
+    bool                    intersected_by_interface;
+    point<T, 2>             intersection_point;
+
+    face_info() :
+        intersected_by_interface(false)
+    {}
+};
+
+template<typename T>
+class element_info
+{
+    typedef typename mesh<T>::cell_type     cell_type;
+    typedef typename mesh<T>::face_type     face_type;
+    typedef typename mesh<T>::point_type    point_type;
+
+    std::vector<cell_info<T>>               cell_information;
+    std::vector<face_info<T>>               face_information;
+
+    template<typename Function>
+    std::pair<bool, point_type>
+    find_face_interface_intersection(const mesh<T>& msh, const face_type& fc, const Function& level_set_function)
+    {
+        auto pts = points(msh, fc);
+        auto l0 = level_set_function(pts[0]);
+        auto l1 = level_set_function(pts[1]);
+        if ( (l0 >= 0 && l1 >= 0) || (l0 < 0 && l1 < 0) )
+            return std::make_pair( false, point_type() );
+
+        auto t = l0/(l0-l1);
+        auto ip = (pts[1] - pts[0]) * t + pts[0];
+        return std::make_pair(true, ip);
+    }
+
+    template<typename Function>
+    void
+    detect_cut_cells(const mesh<T>& msh, const Function& level_set_function)
+    {
+        size_t cell_i = 0;
+        for (auto& cl : msh.cells)
+        {
+            auto pts = points(msh, cl);
+            std::vector<int> signs;
+            signs.resize(pts.size());
+
+            auto fcs = faces(msh, cl);
+            auto tf = [&](const face_type& fc) -> auto {
+                return find_face_interface_intersection(msh, fc, level_set_function);
+            };
+            std::transform(fcs.begin(), fcs.end(), cell_information.at(cell_i).cuts.begin(), tf);
+
+            auto count_cut = [](const std::pair<bool, point_type>& c) -> auto {
+                return c.first;
+            };
+            auto num_cuts = std::count_if(cell_information.at(cell_i).cuts.begin(),
+                                          cell_information.at(cell_i).cuts.end(), count_cut);
+
+            if (num_cuts != 0 && num_cuts != 2)
+            {
+                std::cout << num_cuts << std::endl;
+                throw std::logic_error("invalid number of cuts in cell");
+            }
+
+            if (num_cuts == 2)
+            {
+                for (size_t i = 0, k = 0; i < 4; i++)
+                {
+                    if ( cell_information.at(cell_i).cuts[i].first )
+                        cell_information.at(cell_i).additional_faces[k++] = cell_information.at(cell_i).cuts[i].second;
+                }
+
+                auto p0 = cell_information.at(cell_i).additional_faces[0];
+                auto p1 = cell_information.at(cell_i).additional_faces[1];
+
+                auto pt = p1 - p0;
+                auto pn = p0 + point<T,2>(-pt.y(), pt.x());
+
+                if ( level_set_function(pn) >= 0 )
+                    std::swap(cell_information.at(cell_i).additional_faces[0], cell_information.at(cell_i).additional_faces[1]);
+            }
+
+            cell_i++;
+        }
+    }
+
+    template<typename Function>
+    void
+    detect_face_intersection_points(const mesh<T>& msh, const Function& level_set_function)
+    {
+        size_t face_i = 0;
+        for (auto& fc : msh.faces)
+        {
+            auto fi = find_face_interface_intersection(msh, fc, level_set_function);
+
+            face_information.at(face_i).intersected_by_interface = fi.first;
+            face_information.at(face_i).intersection_point = fi.second;
+
+            face_i++;
+        }
+    }
+
+public:
+    template<typename Function>
+    element_info(const mesh<T>& msh, const Function& level_set_function)
+    {
+        cell_information.resize(msh.cells.size());
+        face_information.resize(msh.faces.size());
+        detect_cut_cells(msh, level_set_function);
+        detect_face_intersection_points(msh, level_set_function);
+    }
+
+    cell_info<T>
+    info(const mesh<T>& msh, const cell_type& cl) const
+    {
+        return cell_information.at( offset(msh, cl) );
+    }
+
+    face_info<T>
+    info(const mesh<T>& msh, const face_type& fc) const
+    {
+        return face_information.at( offset(msh, fc) );
+    }
+};
+
+template<typename T, typename Function>
+auto make_element_info(const mesh<T>& msh, const Function& level_set_function)
+{
+    return element_info<T>(msh, level_set_function);
+}
+
 /*****************************************************************************
  *   SILO stuff
  *****************************************************************************/
-
 enum variable_centering_t
 {
     nodal_variable_t,
@@ -604,32 +834,6 @@ normals(const mesh<T>& msh, const typename mesh<T>::cell_type& cl)
     return ret;
 }
 
-template<typename T, typename Function>
-void
-detect_cut_cells(mesh<T>& msh, const Function& level_set_function)
-{
-    for (auto& cl : msh.cells)
-    {
-        auto pts = points(msh, cl);
-        std::vector<int> signs;
-        signs.resize(pts.size());
-
-        auto compute_sign = [&](typename mesh<T>::point_type pt) -> int {
-            return level_set_function(pt) < 0 ? -1 : +1;
-        };
-
-        std::transform(pts.begin(), pts.end(), signs.begin(), compute_sign);
-
-        cl.cut_by_interface = true;
-
-        if ( std::count(signs.begin(), signs.end(), 1) == signs.size() )
-            cl.cut_by_interface = false;
-
-        if ( std::count(signs.begin(), signs.end(), -1) == signs.size() )
-            cl.cut_by_interface = false;
-    }
-}
-
 template<typename T>
 std::vector< typename mesh<T>::point_type >
 make_test_points(const mesh<T>& msh, const typename mesh<T>::cell_type& cl)
@@ -903,10 +1107,13 @@ edge_quadrature(size_t doe)
 
     using namespace Eigen;
 
+
     if (doe%2 == 0)
         doe++;
 
     size_t num_nodes = (doe+1)/2;
+
+    //size_t num_nodes = doe+1;
 
     if (num_nodes == 1)
     {
@@ -976,6 +1183,50 @@ integrate(const mesh<T>& msh, const typename mesh<T>::cell_type& cl, size_t degr
 
 template<typename T>
 std::vector<std::pair<point<T,2>, T>>
+integrate_cut(const mesh<T>& msh, const typename mesh<T>::cell_type& cl, const cell_info<T>& ci, size_t degree)
+{
+    typedef typename mesh<T>::point_type    point_type;
+
+    auto qps = edge_quadrature<T>(degree);
+    auto pts = points(msh, cl);
+
+    auto scale_x = (pts[1] - pts[0]).x();
+    auto scale_y = (pts[3] - pts[0]).y();
+    auto meas = scale_x * scale_y;
+
+    std::vector<std::pair<point<T,2>, T>> ret;
+
+    for (auto jtor = qps.begin(); jtor != qps.end(); jtor++)
+    {
+        for (auto itor = qps.begin(); itor != qps.end(); itor++)
+        {
+            auto qp_x = *itor;
+            auto qp_y = *jtor;
+
+            auto px = qp_x.first.x() * scale_x + pts[0].x();
+            auto py = qp_y.first.x() * scale_y + pts[0].y();
+
+            auto w = qp_x.second * qp_y.second * meas;
+
+            ret.push_back( std::make_pair( point_type(px, py), w ) );
+        }
+    }
+
+    return ret;
+}
+
+template<typename T>
+std::vector<std::pair<point<T,2>, T>>
+integrate(const mesh<T>& msh, const typename mesh<T>::cell_type& cl, const cell_info<T>& ci, size_t degree)
+{
+    if ( ci.is_cut_by_interface() )
+        return integrate_cut(msh, cl, ci, degree);
+
+    return integrate(msh, cl, degree);
+}
+
+template<typename T>
+std::vector<std::pair<point<T,2>, T>>
 integrate(const mesh<T>& msh, const typename mesh<T>::face_type& fc, size_t degree)
 {
     typedef typename mesh<T>::point_type    point_type;
@@ -998,6 +1249,15 @@ integrate(const mesh<T>& msh, const typename mesh<T>::face_type& fc, size_t degr
     }
 
     return ret;
+}
+
+
+template<typename T, size_t N>
+std::ostream&
+operator<<(std::ostream& os, const std::pair<point<T,N>, T>& pw_pair)
+{
+    os << "[ " << pw_pair.first << ", " << pw_pair.second << " ]";
+    return os;
 }
 
 /*****************************************************************************
@@ -1150,10 +1410,10 @@ make_hho_laplacian(const mesh<T>& msh, const typename mesh<T>::cell_type& cl, si
         auto qps_f = integrate(msh, fc, 2*degree);
         for (auto& qp : qps_f)
         {
-            Matrix<T, Dynamic, 1> c_phi = cb.eval_basis(qp.first);
-            c_phi = c_phi.head(cbs);
-            Matrix<T, Dynamic, 2> c_dphi = cb.eval_gradients(qp.first);
-            c_dphi = c_dphi.block(1, 0, rbs-1, 2);
+            Matrix<T, Dynamic, 1> c_phi_tmp = cb.eval_basis(qp.first);
+            Matrix<T, Dynamic, 1> c_phi = c_phi_tmp.head(cbs);
+            Matrix<T, Dynamic, 2> c_dphi_tmp = cb.eval_gradients(qp.first);
+            Matrix<T, Dynamic, 2> c_dphi = c_dphi_tmp.block(1, 0, rbs-1, 2);
             Matrix<T, Dynamic, 1> f_phi = fb.eval_basis(qp.first);
             gr_rhs.block(0, cbs+i*fbs, rbs-1, fbs) += qp.second * (c_dphi * n) * f_phi.transpose();
             gr_rhs.block(0, 0, rbs-1, cbs) -= qp.second * (c_dphi * n) * c_phi.transpose();
@@ -1186,7 +1446,6 @@ make_hho_naive_stabilization(const mesh<T>& msh, const typename mesh<T>::cell_ty
     Matrix<T, Dynamic, Dynamic> If = Matrix<T, Dynamic, Dynamic>::Identity(fbs, fbs);
 
     cell_basis<T,T> cb(msh, cl, degree);
-    auto h = measure(msh, cl);
 
     for (size_t i = 0; i < 4; i++)
     {
@@ -1211,7 +1470,7 @@ make_hho_naive_stabilization(const mesh<T>& msh, const typename mesh<T>::cell_ty
 
         oper.block(0, 0, fbs, cbs) = mass.llt().solve(trace);
 
-        data += oper.transpose() * mass * oper / h;
+        data += oper.transpose() * mass * oper; /* Don't divide by h with this stabilization. It breaks convergence! */
     }
 
     return data;
@@ -1235,7 +1494,7 @@ plot_basis_functions(const mesh<T>& msh)
 
     for (auto cl : msh.cells)
     {
-        cell_basis<double, double> cb(msh, cl, 2);
+        cell_basis<double, double> cb(msh, cl, 3);
 
         auto tps = make_test_points(msh, cl);
 
@@ -1569,51 +1828,15 @@ auto make_assembler(const mesh<T>& msh, size_t deg)
 
 
 
-
-#if 0
-auto rhs_fun = [](const typename mesh<RealType>::point_type& pt) -> RealType {
-    return std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
-};
-
-std::ofstream ofs("gr_check.dat");
-
-auto assembler = make_assembler(msh, degree);
-
-for (auto& cl : msh.cells)
-{
-    Matrix<RealType, Dynamic, Dynamic> gr = make_hho_laplacian(msh, cl, degree);
-    Matrix<RealType, Dynamic, Dynamic> stab = make_hho_naive_stabilization(msh, cl, degree);
-    Matrix<RealType, Dynamic, 1> f = project_function(msh, cl, degree, rhs_fun);
-
-    Matrix<RealType, Dynamic, 1> g = gr*f;
-
-    cell_basis<RealType,RealType> rb(msh, cl, degree+1);
-
-    auto tps = make_test_points(msh, cl);
-    for (auto& tp : tps)
-    {
-        Matrix<RealType, Dynamic, 1> phi = rb.eval_basis(tp);
-        auto val = g.dot( phi.tail(rb.size()-1) ) + f(0);
-        ofs << tp.x() << " " << tp.y() << " " << val << std::endl;
-    }
-
-
-    assembler.assemble(msh, cl, stab, f, rhs_fun);
-
-}
-
-assembler.finalize();
-
-ofs.close();
-#endif
-
 template<typename T>
-void dump_mesh(const mesh<T>& msh)
+void dump_mesh(const mesh<T>& msh, const element_info<T>& eleminfo)
 {
     std::ofstream ofs("mesh_dump.m");
     size_t i = 0;
+    ofs << "hold on;" << std::endl;
     for (auto& fc : msh.faces)
     {
+        auto fi = eleminfo.info(msh, fc);
         auto pts = points(msh, fc);
         if (fc.is_boundary)
             ofs << "line([" << pts[0].x() << ", " << pts[1].x() << "], [" << pts[0].y() << ", " << pts[1].y() << "], 'Color', 'r');" << std::endl;
@@ -1623,25 +1846,141 @@ void dump_mesh(const mesh<T>& msh)
         auto bar = barycenter(msh, fc);
         ofs << "text(" << bar.x() << ", " << bar.y() << ", '" << i << "');" << std::endl;
 
+        if (fi.intersected_by_interface)
+        {
+            auto pt = fi.intersection_point;
+            ofs << "plot(" << pt.x() << "," << pt.y() << ", '*');" << std::endl;
+        }
+
         i++;
     }
+
+    for (auto& cl : msh.cells)
+    {
+        auto ci = eleminfo.info(msh, cl);
+        if ( ci.is_cut_by_interface() )
+        {
+            auto p0 = ci.additional_faces[0];
+            auto p1 = ci.additional_faces[1];
+            auto q = p1 - p0;
+            ofs << "quiver(" << p0.x() << ", " << p0.y() << ", " << q.x() << ", " << q.y() << ", 0)" << std::endl;;
+        }
+    }
+
     ofs.close();
 }
 
-
-template<typename T>
-void add_interface_edges(const mesh<T>& msh)
+int main2(int argc, char **argv)
 {
-    for (auto& cl : msh.cells)
+    using RealType = double;
+
+    size_t deg_min = 0;
+    size_t deg_max = 6;
+
+    size_t min_elems = 4;
+    size_t steps = 5;
+
+    auto rhs_fun = [](const typename mesh<RealType>::point_type& pt) -> RealType {
+        return 2.0 * M_PI * M_PI * std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
+        //return -6.0*pt.x();
+    };
+
+    auto sol_fun = [](const typename mesh<RealType>::point_type& pt) -> RealType {
+        return std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
+        //return pt.x() * pt.x() * pt.x();
+    };
+
+    for (size_t k = deg_min; k < deg_max+1; k++)
     {
-        auto fcs = faces(msh, cl);
-        for (auto& fc : fcs)
+        std::cout << "Testing degree " << k << ". Expected rate " << k+1 << std::endl;
+
+        std::vector<RealType> errors_int, errors_mm;
+        errors_int.resize(steps);
+        errors_mm.resize(steps);
+
+        for (size_t i = 0; i < steps; i++)
         {
-            auto pts = points(msh, fc);
-            auto len = (pts[1] - pts[0]).to_vector().norm();
+            errors_int.at(i) = 0.0;
+            errors_mm.at(i) = 0.0;
+        }
+
+        for (size_t i = 0, N = min_elems; i < steps; i++, N *= 2)
+        {
+            mesh_init_params<RealType> mip;
+            mip.Nx = N;
+            mip.Ny = N;
+
+            mesh<RealType> msh(mip);
+
+            for (auto& fc : msh.faces)
+            {
+                if (fc.is_boundary)
+                    fc.bndtype = boundary::DIRICHLET;
+            }
+
+            auto assembler = make_assembler(msh, k);
+            for (auto& cl : msh.cells)
+            {
+                auto gr = make_operator(msh, cl, k);
+                Matrix<RealType, Dynamic, Dynamic> stab = make_stabilization(msh, cl, k);
+                Matrix<RealType, Dynamic, Dynamic> lc = gr.second + stab;
+                Matrix<RealType, Dynamic, 1> f = make_rhs(msh, cl, k, rhs_fun);
+                assembler.assemble(msh, cl, lc, f, sol_fun);
+            }
+
+            assembler.finalize();
+
+            Matrix<RealType, Dynamic, 1> sol;
+
+            SparseLU<SparseMatrix<RealType>>  solver;
+
+            solver.analyzePattern(assembler.LHS);
+            solver.factorize(assembler.LHS);
+            sol = solver.solve(assembler.RHS);
+
+
+            size_t cell_i = 0;
+            for (auto& cl : msh.cells)
+            {
+                cell_basis<RealType,RealType> cb(msh, cl, k);
+                auto cbs = cb.size();
+
+                Matrix<RealType, Dynamic, 1> cdofs = sol.block(cell_i*cbs, 0, cbs, 1);
+
+                auto qps = integrate(msh, cl, 2*k);
+                for (auto& qp : qps)
+                {
+                    Matrix<RealType, Dynamic, 1> phi = cb.eval_basis(qp.first);
+                    auto val = cdofs.dot( phi );
+                    auto real_val = sol_fun( qp.first );
+                    errors_int.at(i) += qp.second*(real_val - val)*(real_val - val);
+
+                    Matrix<RealType, Dynamic, Dynamic> mass = make_mass_matrix(msh, cl, k);
+                    Matrix<RealType, Dynamic, 1> rhs = make_rhs(msh, cl, k, sol_fun);
+                    Matrix<RealType, Dynamic, 1> real_dofs = mass.llt().solve(rhs);
+                    Matrix<RealType, Dynamic, 1> diff = real_dofs - cdofs;
+                    errors_mm.at(i) += diff.dot(mass*diff);
+                }
+
+                cell_i++;
+            }
+
+            if (i > 0)
+            {
+                auto error_prev_int = sqrt(errors_int.at(i-1));
+                auto error_cur_int = sqrt(errors_int.at(i));
+                std::cout << log10(error_prev_int/error_cur_int) / log10(2) << "\t\t";
+
+                auto error_prev_mm = sqrt(errors_mm.at(i-1));
+                auto error_cur_mm = sqrt(errors_mm.at(i));
+                std::cout << log10(error_prev_mm/error_cur_mm) / log10(2) << std::endl;
+            }
         }
     }
+
+    return 0;
 }
+
 
 
 int main(int argc, char **argv)
@@ -1680,15 +2019,22 @@ int main(int argc, char **argv)
     argc -= optind;
     argv += optind;
 
-    mesh<RealType> msh(mip);
 
-    dump_mesh(msh);
+/*
+    auto eq = edge_quadrature<double>(degree);
+    for (auto p : eq)
+    {
+        std::cout << p << std::endl;
+    }
+
+    return 0;
+*/
+
+    mesh<RealType> msh(mip);
 
     silo_database silo;
     silo.create("cuthho_square.silo");
     silo.add_mesh(msh, "mesh");
-
-
 
     auto level_set_function = [](const typename mesh<RealType>::point_type pt) -> RealType {
         auto x = pt.x();
@@ -1699,12 +2045,19 @@ int main(int argc, char **argv)
         return (x-alpha)*(x-alpha) + (y-beta)*(y-beta) - 0.15;
     };
 
-    detect_cut_cells(msh, level_set_function);
+    auto eleminfo = make_element_info(msh, level_set_function);
+
+    fill_unfitted_info(msh, level_set_function);
+
+    //detect_cut_cells(msh, level_set_function);
+    //detect_face_intersection_points(msh, level_set_function);
+
+    dump_mesh(msh, eleminfo);
 
     std::vector<RealType> cut_cell_markers;
     for (auto& cl : msh.cells)
     {
-        if (cl.cut_by_interface)
+        if (cl.is_cut())
             cut_cell_markers.push_back(1.0);
         else
             cut_cell_markers.push_back(0.0);
@@ -1721,12 +2074,12 @@ int main(int argc, char **argv)
 
     auto rhs_fun = [](const typename mesh<RealType>::point_type& pt) -> RealType {
         return 2.0 * M_PI * M_PI * std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
-        //return pt.x() * pt.x() * pt.x();
+        //return -6.0*pt.x();
     };
 
     auto sol_fun = [](const typename mesh<RealType>::point_type& pt) -> RealType {
         return std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
-        //return pt.x();
+        //return pt.x() * pt.x() * pt.x();
     };
 
     for (auto& fc : msh.faces)
