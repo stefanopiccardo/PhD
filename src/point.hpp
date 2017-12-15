@@ -48,6 +48,12 @@ public:
 
     point(const point& other) : m_coords(other.m_coords) {}
 
+    point operator=(const point& other)
+    {
+        m_coords = other.m_coords;
+        return *this;
+    }
+
     template<typename U = T>
     point(const typename std::enable_if<DIM == 1, U>::type& x)
     {
