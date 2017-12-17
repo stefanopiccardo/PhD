@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <memory>
 
 #include <Eigen/Dense>
 #include <Eigen/SparseCore>
@@ -90,11 +91,16 @@ conjugated_gradient(const Eigen::SparseMatrix<T>& A,
     T                           nr, nr0;
     T                           alpha, beta, rho;
 
-    Eigen::Matrix<T, Eigen::Dynamic, 1> d(N), r(N), r0(N), y(N);
+    Eigen::Matrix<T, Eigen::Dynamic, 1> d(N), r(N), r0(N), y(N), iMr(N);
     x = Eigen::Matrix<T, Eigen::Dynamic, 1>::Zero(N);
 
+    Eigen::Matrix<T, Eigen::Dynamic, 1> iA = A.diagonal();
 
-    r0 = d = r = b - A*x;
+    for (size_t i = 0; i < iA.rows(); i++)
+      iA(i) = 1./iA(i);
+
+    r0 = r = b - A*x;
+    d = iA.cwiseProduct(r0);
     nr = nr0 = r.norm();
 
     std::ofstream ofs("cg_nopre_convergence.txt");
@@ -108,12 +114,14 @@ conjugated_gradient(const Eigen::SparseMatrix<T>& A,
 
         ofs << nr/nr0 << std::endl;
         y = A*d;
-        rho = r.dot(r);
+        iMr = iA.cwiseProduct(r);
+        rho = r.dot(iMr);
         alpha = rho/d.dot(y);
         x = x + alpha * d;
         r = r - alpha * y;
-        beta = r.dot(r)/rho;
-        d = r + beta * d;
+        iMr = iA.cwiseProduct(r);
+        beta = r.dot(iMr)/rho;
+        d = iMr + beta * d;
 
         nr = r.norm();
         iter++;
@@ -1870,7 +1878,7 @@ void dump_mesh(const mesh<T>& msh, const element_info<T>& eleminfo)
     ofs.close();
 }
 
-int main2(int argc, char **argv)
+int main(int argc, char **argv)
 {
     using RealType = double;
 
@@ -1932,12 +1940,16 @@ int main2(int argc, char **argv)
 
             Matrix<RealType, Dynamic, 1> sol;
 
+#define DIRECT
+#ifdef DIRECT
             SparseLU<SparseMatrix<RealType>>  solver;
 
             solver.analyzePattern(assembler.LHS);
             solver.factorize(assembler.LHS);
             sol = solver.solve(assembler.RHS);
-
+#else
+            conjugated_gradient(assembler.LHS, assembler.RHS, sol);
+#endif
 
             size_t cell_i = 0;
             for (auto& cl : msh.cells)
@@ -1983,7 +1995,7 @@ int main2(int argc, char **argv)
 
 
 
-int main(int argc, char **argv)
+int main2(int argc, char **argv)
 {
     using RealType = double;
     size_t degree = 0;
