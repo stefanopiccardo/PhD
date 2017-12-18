@@ -28,317 +28,44 @@
 #include <cassert>
 #include <cmath>
 #include <memory>
+#include <sstream>
 
 #include <Eigen/Dense>
 #include <Eigen/SparseCore>
 #include <Eigen/SparseLU>
 #include <unsupported/Eigen/SparseExtra>
 
-#include <unistd.h>
 
-#include <silo.h>
 
 using namespace Eigen;
 
-#include "point.hpp"
+#include "basic_mesh.hpp"
+#include "cuthho_mesh.hpp"
+#include "solver_cg.hpp"
+#include "hho.hpp"
+#include "silo_io.hpp"
 
-template<typename T>
-struct interface_box {
-
-};
 
 
-class degree_info {
 
-    size_t cell_deg, face_deg;
 
-public:
-    degree_info()
-        : cell_deg(1), face_deg(1)
-    {}
-
-    degree_info(size_t k, int l)
-    {
-        if ( l < -1 || l > 1)
-            l = 0;
-
-        if (l == -1 && k == 0)
-            l = 0;
-
-        cell_deg = k+l;
-        face_deg = k;
-    }
-
-    size_t cell_degree() const
-    {
-        return cell_deg;
-    }
-
-    size_t face_degree() const
-    {
-        return face_deg;
-    }
-};
-
-template<typename T>
-bool
-conjugated_gradient(const Eigen::SparseMatrix<T>& A,
-                    const Eigen::Matrix<T, Eigen::Dynamic, 1>& b,
-                    Eigen::Matrix<T, Eigen::Dynamic, 1>& x)
-{
-    size_t                      N = A.cols();
-    size_t                      iter = 0;
-    T                           nr, nr0;
-    T                           alpha, beta, rho;
-
-    Eigen::Matrix<T, Eigen::Dynamic, 1> d(N), r(N), r0(N), y(N), iMr(N);
-    x = Eigen::Matrix<T, Eigen::Dynamic, 1>::Zero(N);
-
-    Eigen::Matrix<T, Eigen::Dynamic, 1> iA = A.diagonal();
-
-    for (size_t i = 0; i < iA.rows(); i++)
-      iA(i) = 1./iA(i);
-
-    r0 = r = b - A*x;
-    d = iA.cwiseProduct(r0);
-    nr = nr0 = r.norm();
-
-    std::ofstream ofs("cg_nopre_convergence.txt");
-
-    while ( nr/nr0 > 1e-8 && iter < 40000 && nr/nr0 < 10000 )
-    {
-        std::cout << "                                                 \r";
-        std::cout << " -> Iteration " << iter << ", rr = ";
-        std::cout << nr/nr0 << "\b\r";
-        std::cout.flush();
-
-        ofs << nr/nr0 << std::endl;
-        y = A*d;
-        iMr = iA.cwiseProduct(r);
-        rho = r.dot(iMr);
-        alpha = rho/d.dot(y);
-        x = x + alpha * d;
-        r = r - alpha * y;
-        iMr = iA.cwiseProduct(r);
-        beta = r.dot(iMr)/rho;
-        d = iMr + beta * d;
-
-        nr = r.norm();
-        iter++;
-    }
-
-    ofs << nr/nr0 << std::endl;
-    ofs.close();
-
-    std::cout << " -> Iteration " << iter << ", rr = " << nr/nr0 << std::endl;
-
-    return true;
-}
-
-/*****************************************************************************
- *   Mesh stuff
- *****************************************************************************/
-
-template<typename T>
-struct cell_unfitted_info {
-    std::array< std::pair<bool, point<T,2>>, 4 >   intersections;
-};
-
-template<typename T>
-struct cell {
-    std::array<size_t, 4>   ptids;
-
-    std::shared_ptr<cell_unfitted_info<T>>     unfitted_info;
-
-    cell()
-        : unfitted_info(nullptr)
-    {}
-
-    bool operator<(const cell& other) const
-    {
-        return (this->ptids < other.ptids);
-    }
-
-    bool operator==(const cell& other) const
-    {
-        return (this->ptids == other.ptids);
-    }
-
-    bool is_cut() {
-        return bool(unfitted_info);
-    }
-};
-
-template<typename T>
-std::ostream&
-operator<<(std::ostream& os, const cell<T>& cl)
-{
-    os << "Cell: " << cl.ptids[0] << " " << cl.ptids[1];
-    os << " " << cl.ptids[2] << " " << cl.ptids[3];
-    return os;
-}
-
-enum class boundary
-{
-    NONE,
-    DIRICHLET,
-    NEUMANN,
-    ROBIN
-};
-
-struct face {
-    std::array<size_t, 2>   ptids;
-    bool                    is_boundary;
-    boundary                bndtype;
-
-    face()
-        : is_boundary(false),
-          bndtype(boundary::NONE)
-    {}
-
-    bool operator<(const face& other) const
-    {
-        assert(ptids[0] < ptids[1]);
-        assert(other.ptids[0] < other.ptids[1]);
-        return (this->ptids < other.ptids);
-    }
-
-    bool operator==(const face& other) const
-    {
-        assert(ptids[0] < ptids[1]);
-        assert(other.ptids[0] < other.ptids[1]);
-        return (this->ptids == other.ptids);
-    }
-};
-
-template<typename T>
-std::ostream&
-operator<<(std::ostream& os, const face& fc)
-{
-    os << "Face: " << fc.ptids[0] << " " << fc.ptids[1];
-    if (fc.is_boundary && fc.bndtype == boundary::NONE)
-        os << " [Boundary, unspecified kind]";
-    if (fc.is_boundary && fc.bndtype == boundary::DIRICHLET)
-        os << " [Dirichlet boundary]";
-    if (fc.is_boundary && fc.bndtype == boundary::NEUMANN)
-        os << " [Neumann boundary]";
-    if (fc.is_boundary && fc.bndtype == boundary::ROBIN)
-        os << " [Robin boundary]";
-    return os;
-}
-
-template<typename T>
-struct mesh_init_params {
-    T           min_x, max_x;
-    T           min_y, max_y;
-    size_t      Nx, Ny;
-
-    mesh_init_params()
-        : min_x(0.0), max_x(1.0),
-          min_y(0.0), max_y(1.0),
-          Nx(4), Ny(4)
-    {}
-
-    T hx() const {
-        return (max_x - min_x)/Nx;
-    }
-
-    T hy() const {
-        return (max_y - min_y)/Ny;
-    }
-};
-
-template<typename T>
-struct mesh {
-
-    typedef point<T,2>          point_type;
-    typedef cell<T>             cell_type;
-    typedef face                face_type;
-
-    std::vector<point_type>     points;
-    std::vector<face_type>      faces;
-    std::vector<cell_type>      cells;
-
-    mesh() : mesh( mesh_init_params<T>() )
-    {}
-
-    mesh(const mesh_init_params<T>& parms)
-    {
-        auto hx = parms.hx();
-        auto hy = parms.hy();
-
-        size_t numpoints = (parms.Nx + 1) * (parms.Ny + 1);
-        points.reserve(numpoints);
-
-        for (size_t j = 0; j < parms.Ny+1; j++)
-        {
-            for(size_t i = 0; i < parms.Nx+1; i++)
-            {
-                auto px = parms.min_x + i*hx;
-                auto py = parms.min_y + j*hy;
-                point_type pt(px, py);
-                points.push_back(pt);
-            }
-        }
-
-        for (size_t j = 0; j < parms.Ny; j++)
-        {
-            for (size_t i = 0; i < parms.Nx; i++)
-            {
-                auto pt0_idx = j*(parms.Nx+1) + i;
-                auto pt1_idx = pt0_idx + 1;
-                auto pt2_idx = pt0_idx + parms.Nx + 2;
-                auto pt3_idx = pt0_idx + parms.Nx + 1;
-
-                cell_type cl;
-                cl.ptids = {{pt0_idx, pt1_idx, pt2_idx, pt3_idx}};
-                cells.push_back(cl);
-
-                face_type f0;
-                f0.ptids = {pt0_idx, pt1_idx};
-                if (j == 0) f0.is_boundary = true;
-                faces.push_back(f0);
-
-                face_type f1;
-                f1.ptids = {pt1_idx, pt2_idx};
-                if (i == parms.Nx-1) f1.is_boundary = true;
-                faces.push_back(f1);
-
-                face_type f2;
-                f2.ptids = {pt3_idx, pt2_idx};
-                if (j == parms.Ny-1) f2.is_boundary = true;
-                faces.push_back(f2);
-
-                face_type f3;
-                f3.ptids = {pt0_idx, pt3_idx};
-                if (i == 0) f3.is_boundary = true;
-                faces.push_back(f3);
-
-            }
-        }
-
-        std::sort(cells.begin(), cells.end());
-        std::sort(faces.begin(), faces.end());
-        faces.erase( std::unique(faces.begin(), faces.end()), faces.end() );
-    }
-};
-
-template<typename T, typename Function>
-std::pair<bool, point<T,2>>
-find_face_interface_intersection(const mesh<T>& msh, const typename mesh<T>::face_type& fc,
+template<typename Mesh, typename Function>
+std::pair<bool, typename Mesh::point_type>
+find_face_interface_intersection(const Mesh& msh, const typename Mesh::face_type& fc,
                                  const Function& level_set_function)
 {
     auto pts = points(msh, fc);
     auto l0 = level_set_function(pts[0]);
     auto l1 = level_set_function(pts[1]);
     if ( (l0 >= 0 && l1 >= 0) || (l0 < 0 && l1 < 0) )
-        return std::make_pair( false, typename mesh<T>::point_type() );
+        return std::make_pair( false, typename Mesh::point_type() );
 
     auto t = l0/(l0-l1);
     auto ip = (pts[1] - pts[0]) * t + pts[0];
     return std::make_pair(true, ip);
 }
 
+#if 0
 template<typename T, typename Function>
 std::shared_ptr<cell_unfitted_info<T>>
 make_cell_unfitted_info(mesh<T>& msh, const typename mesh<T>::cell_type& cl,
@@ -376,10 +103,12 @@ template<typename T, typename Function>
 void
 fill_unfitted_info(mesh<T>& msh, const Function& level_set_function)
 {
+    /*
     for (auto& cl : msh.cells)
         cl.unfitted_info = make_cell_unfitted_info(msh, cl, level_set_function);
+    */
 }
-
+#endif
 
 template<typename T>
 struct cell_info
@@ -540,654 +269,26 @@ auto make_element_info(const mesh<T>& msh, const Function& level_set_function)
 /*****************************************************************************
  *   SILO stuff
  *****************************************************************************/
-enum variable_centering_t
-{
-    nodal_variable_t,
-    zonal_variable_t
-};
 
-
-class silo_database
-{
-    DBfile          *m_siloDb;
-
-public:
-    silo_database()
-        : m_siloDb(nullptr)
-    {}
-
-    bool create(const std::string& db_name)
-    {
-        m_siloDb = DBCreate(db_name.c_str(), DB_CLOBBER, DB_LOCAL, NULL, DB_PDB);
-        if (m_siloDb)
-            return true;
-
-        std::cout << "Error creating database" << std::endl;
-        return false;
-    }
-
-    bool open(const std::string& db_name)
-    {
-        m_siloDb = DBOpen(db_name.c_str(), DB_PDB, DB_APPEND);
-        if (m_siloDb)
-            return true;
-
-        std::cout << "Error opening database" << std::endl;
-        return false;
-    }
-
-    bool close()
-    {
-        if (m_siloDb)
-            DBClose(m_siloDb);
-        m_siloDb = NULL;
-        return true;
-    }
-
-    ~silo_database()
-    {
-        if (m_siloDb)
-            DBClose(m_siloDb);
-    }
-
-    template<typename T>
-    bool add_mesh(const mesh<T>& msh, const std::string& name)
-    {
-        static_assert(std::is_same<T,double>::value, "Only double for now");
-
-        std::vector<T> x_coords, y_coords;
-        x_coords.reserve(msh.points.size());
-        y_coords.reserve(msh.points.size());
-
-        for (auto itor = msh.points.begin(); itor != msh.points.end(); itor++)
-        {
-            auto pt = *itor;
-            x_coords.push_back(pt.x());
-            y_coords.push_back(pt.y());
-        }
-
-        T *coords[] = {x_coords.data(), y_coords.data()};
-
-        std::vector<int>    nodelist;
-
-        for (auto& cl : msh.cells)
-        {
-            for (auto& ptid : cl.ptids)
-                nodelist.push_back(ptid+1);
-        }
-
-        int lnodelist       = nodelist.size();
-        int nshapetypes     = 1;
-        int shapesize       = 4;
-        int shapecount      = msh.cells.size();
-
-
-        int nnodes = msh.points.size();
-        int nzones = msh.cells.size();
-        int ndims = 2;
-
-        DBPutZonelist(m_siloDb, "zonelist", nzones, ndims, nodelist.data(), lnodelist,
-            1, &shapesize, &shapecount, nshapetypes);
-
-        DBPutUcdmesh(m_siloDb, name.c_str(), ndims, NULL, coords, nnodes, nzones,
-            "zonelist", NULL, DB_DOUBLE, NULL);
-
-        return true;
-    }
-
-    template<typename T>
-    bool add_variable(const std::string& mesh_name,
-                      const std::string& var_name,
-                      const T* data,
-                      size_t data_len,
-                      variable_centering_t centering)
-    {
-        static_assert(std::is_same<T,double>::value, "Only double for now");
-
-        if (!m_siloDb)
-        {
-            std::cout << "Silo database not opened" << std::endl;
-            return false;
-        }
-
-        if (centering == zonal_variable_t)
-        {
-            DBPutUcdvar1(m_siloDb, var_name.c_str(), mesh_name.c_str(),
-                         data, data_len, NULL, 0, DB_DOUBLE, DB_ZONECENT, NULL);
-            return true;
-        }
-
-        if (centering == nodal_variable_t)
-        {
-            DBPutUcdvar1(m_siloDb, var_name.c_str(), mesh_name.c_str(),
-                         data, data_len, NULL, 0, DB_DOUBLE, DB_NODECENT, NULL);
-            return true;
-        }
-
-        return false;
-    }
-
-};
 
 
 /*****************************************************************************
  *   Geometry
  *****************************************************************************/
-template<typename T>
-size_t
-offset(const mesh<T>& msh, const typename mesh<T>::cell_type cl)
-{
-    auto itor = std::lower_bound(msh.cells.begin(), msh.cells.end(), cl);
-    if ( itor == msh.cells.end() )
-        throw std::logic_error("Cell not found: this is likely a bug.");
 
-    return std::distance(msh.cells.begin(), itor);
-}
 
-template<typename T>
-size_t
-offset(const mesh<T>& msh, const typename mesh<T>::face_type fc)
-{
-    auto itor = std::lower_bound(msh.faces.begin(), msh.faces.end(), fc);
-    if ( itor == msh.faces.end() )
-        throw std::logic_error("Face not found: this is likely a bug.");
-
-    return std::distance(msh.faces.begin(), itor);
-}
-
-template<typename T>
-std::array< typename mesh<T>::point_type, 4 >
-points(const mesh<T>& msh, const typename mesh<T>::cell_type cl)
-{
-    std::array< typename mesh<T>::point_type, 4 > ret;
-
-    auto ptid2pt = [&](size_t ptid) -> auto {
-        return msh.points.at(ptid);
-    };
-
-    std::transform( cl.ptids.begin(), cl.ptids.end(), ret.begin(), ptid2pt );
-
-    return ret;
-}
-
-template<typename T>
-std::array< typename mesh<T>::point_type, 2 >
-points(const mesh<T>& msh, const typename mesh<T>::face_type fc)
-{
-    std::array< typename mesh<T>::point_type, 2 > ret;
-
-    auto ptid2pt = [&](size_t ptid) -> auto {
-        return msh.points.at(ptid);
-    };
-
-    std::transform( fc.ptids.begin(), fc.ptids.end(), ret.begin(), ptid2pt );
-
-    return ret;
-}
-
-template<typename T>
-std::array< typename mesh<T>::face_type, 4 >
-faces(const mesh<T>& msh, const typename mesh<T>::cell_type cl)
-{
-    typedef typename mesh<T>::face_type face_type;
-    std::array< typename mesh<T>::face_type, 4 > ret;
-
-    face_type f;
-
-    f.ptids[0] = cl.ptids[0];
-    f.ptids[1] = cl.ptids[1];
-    auto itor = std::lower_bound(msh.faces.begin(), msh.faces.end(), f);
-    if (itor == msh.faces.end())
-        throw std::logic_error("Face not found, this is likely a bug.");
-    ret[0] = *itor;
-
-    f.ptids[0] = cl.ptids[1];
-    f.ptids[1] = cl.ptids[2];
-    itor = std::lower_bound(msh.faces.begin(), msh.faces.end(), f);
-    if (itor == msh.faces.end())
-        throw std::logic_error("Face not found, this is likely a bug.");
-    ret[1] = *itor;
-
-    f.ptids[0] = cl.ptids[3];
-    f.ptids[1] = cl.ptids[2];
-    itor = std::lower_bound(msh.faces.begin(), msh.faces.end(), f);
-    if (itor == msh.faces.end())
-        throw std::logic_error("Face not found, this is likely a bug.");
-    ret[2] = *itor;
-
-    f.ptids[0] = cl.ptids[0];
-    f.ptids[1] = cl.ptids[3];
-    itor = std::lower_bound(msh.faces.begin(), msh.faces.end(), f);
-    if (itor == msh.faces.end())
-        throw std::logic_error("Face not found, this is likely a bug.");
-    ret[3] = *itor;
-
-    return ret;
-}
-
-template<typename T>
-typename mesh<T>::point_type
-barycenter(const mesh<T>& msh, const typename mesh<T>::cell_type& cl)
-{
-    auto pts = points(msh, cl);
-    return (pts[0] + pts[1] + pts[2] + pts[3])/4.0;
-}
-
-template<typename T>
-typename mesh<T>::point_type
-barycenter(const mesh<T>& msh, const typename mesh<T>::face_type& fc)
-{
-    auto pts = points(msh, fc);
-    return (pts[0] + pts[1])/2.0;
-}
-
-template<typename T>
-T
-diameter(const mesh<T>& msh, const typename mesh<T>::cell_type& cl)
-{
-    auto p0 = msh.points.at( cl.ptids[0] );
-    auto p1 = msh.points.at( cl.ptids[2] );
-
-    return (p1-p0).to_vector().norm();
-}
-
-template<typename T>
-T
-diameter(const mesh<T>& msh, const typename mesh<T>::face_type& fc)
-{
-    auto p0 = msh.points.at( fc.ptids[0] );
-    auto p1 = msh.points.at( fc.ptids[1] );
-
-    return (p1-p0).to_vector().norm();
-}
-
-template<typename T>
-T
-measure(const mesh<T>& msh, const typename mesh<T>::cell_type& cl)
-{
-    auto p0 = msh.points.at( cl.ptids[0] );
-    auto p2 = msh.points.at( cl.ptids[2] );
-
-    return (p2.x() - p0.x()) * (p2.y() - p0.y());
-}
-
-template<typename T>
-T
-measure(const mesh<T>& msh, const typename mesh<T>::face_type& fc)
-{
-    auto p0 = msh.points.at( fc.ptids[0] );
-    auto p1 = msh.points.at( fc.ptids[1] );
-
-    return (p1-p0).to_vector().norm();
-}
-
-template<typename T>
-std::array< Matrix<T,2,1>, 4 >
-normals(const mesh<T>& msh, const typename mesh<T>::cell_type& cl)
-{
-    std::array< Matrix<T,2,1>, 4 >  ret;
-
-    ret[0](0) = 0;
-    ret[0](1) = -1;
-
-    ret[1](0) = 1;
-    ret[1](1) = 0;
-
-    ret[2](0) = 0;
-    ret[2](1) = 1;
-
-    ret[3](0) = -1;
-    ret[3](1) = 0;
-
-    return ret;
-}
-
-template<typename T>
-std::vector< typename mesh<T>::point_type >
-make_test_points(const mesh<T>& msh, const typename mesh<T>::cell_type& cl)
-{
-    const size_t N = 10;
-
-    std::vector< typename mesh<T>::point_type > ret;
-
-    auto cell_pts = points(msh, cl);
-
-    auto min_x = cell_pts[0].x();
-    auto min_y = cell_pts[0].y();
-
-    auto hx = (cell_pts[2].x() - cell_pts[0].x())/N;
-    auto hy = (cell_pts[2].y() - cell_pts[0].y())/N;
-
-    for (size_t j = 0; j < N+1; j++)
-    {
-        for(size_t i = 0; i < N+1; i++)
-        {
-            auto px = min_x + i*hx;
-            auto py = min_y + j*hy;
-            typename mesh<T>::point_type pt(px, py);
-            ret.push_back(pt);
-        }
-    }
-
-    return ret;
-}
-
-template<typename T>
-std::vector< typename mesh<T>::point_type >
-make_test_points(const mesh<T>& msh, const typename mesh<T>::face_type& fc)
-{
-    const size_t N = 10;
-
-    std::vector< typename mesh<T>::point_type > ret;
-
-    auto face_pts = points(msh, fc);
-
-    auto min = face_pts[0];
-
-    auto h = (face_pts[1] - face_pts[0])/N;
-
-    for (size_t i = 0; i < N+1; i++)
-    {
-        auto p = min + i*h;
-        ret.push_back(p);
-    }
-
-    return ret;
-}
-
-template<typename T>
-T iexp_pow(T x, size_t n)
-{
-    if (n == 0)
-        return 1;
-
-    T y = 1;
-    while (n > 1)
-    {
-        if (n % 2 == 0)
-        {
-            x = x * x;
-            n = n / 2;
-        }
-        else
-        {
-            y = x * y;
-            x = x * x;
-            n = (n-1)/2;
-        }
-    }
-
-    return x*y;
-}
 
 /*****************************************************************************
  *   Bases
  *****************************************************************************/
-template<typename CT, typename VT>
-class cell_basis
-{
-    typedef typename mesh<CT>::point_type   point_type;
 
-    point_type  cell_bar;
-    CT          cell_h;
-    size_t      basis_degree, basis_size;
-
-public:
-    cell_basis(const mesh<CT>& msh, const typename mesh<CT>::cell_type& cl, size_t degree)
-    {
-        cell_bar        = barycenter(msh, cl);
-        cell_h          = diameter(msh, cl);
-        basis_degree    = degree;
-        basis_size      = (basis_degree+2)*(basis_degree+1)/2;
-    }
-
-    Matrix<VT, Dynamic, 1>
-    eval_basis(const point_type& pt)
-    {
-        Matrix<VT, Dynamic, 1> ret = Matrix<VT, Dynamic, 1>::Zero(basis_size);
-
-        auto bx = (pt.x() - cell_bar.x()) / (0.5*cell_h);
-        auto by = (pt.y() - cell_bar.y()) / (0.5*cell_h);
-
-        size_t pos = 0;
-        for (size_t k = 0; k <= basis_degree; k++)
-        {
-            for (size_t i = 0; i <= k; i++)
-            {
-                auto pow_x = k-i;
-                auto pow_y = i;
-                auto bv = iexp_pow(bx, pow_x) * iexp_pow(by, pow_y);
-                ret(pos++) = bv;
-            }
-        }
-
-        assert(pos == basis_size);
-
-        return ret;
-    }
-
-    Matrix<VT, Dynamic, 2>
-    eval_gradients(const point_type& pt)
-    {
-        Matrix<VT, Dynamic, 2> ret = Matrix<VT, Dynamic, 2>::Zero(basis_size, 2);
-
-        auto bx = (pt.x() - cell_bar.x()) / (0.5*cell_h);
-        auto by = (pt.y() - cell_bar.y()) / (0.5*cell_h);
-        auto ih = 2.0/cell_h;
-
-        size_t pos = 0;
-        for (size_t k = 0; k <= basis_degree; k++)
-        {
-            for (size_t i = 0; i <= k; i++)
-            {
-                auto pow_x = k-i;
-                auto pow_y = i;
-                auto px = iexp_pow(bx, pow_x);
-                auto py = iexp_pow(by, pow_y);
-                auto dx = (pow_x == 0) ? 0 : pow_x*ih*iexp_pow(bx, pow_x-1);
-                auto dy = (pow_y == 0) ? 0 : pow_y*ih*iexp_pow(by, pow_y-1);
-
-                ret(pos,0) = dx*py;
-                ret(pos,1) = px*dy;
-                pos++;
-            }
-        }
-
-        assert(pos == basis_size);
-
-        return ret;
-    }
-
-    size_t size() const
-    {
-        return basis_size;
-    }
-
-    static size_t size(size_t degree)
-    {
-        return (degree+2)*(degree+1)/2;
-    }
-};
-
-#if 0
-template<template<typename, typename> class Basis, typename CT, typename VT>
-class trial_function
-{
-    const Basis<CT, VT>& basis;
-
-public:
-    trial_function(const Basis<CT, VT>& b)
-        : basis(b)
-    {}
-};
-
-template<template<typename, typename> class Basis, typename CT, typename VT>
-auto trial(const Basis<CT, VT>& b)
-{
-    return trial_function<Basis, CT, VT>(b);
-}
-
-template<template<typename, typename> class Basis, typename CT, typename VT>
-class test_function
-{
-    const Basis<CT, VT>& basis;
-
-public:
-    test_function(const Basis<CT, VT>& b)
-        : basis(b)
-    {}
-};
-
-template<template<typename, typename> class Basis, typename CT, typename VT>
-auto test(const Basis<CT, VT>& b)
-{
-    return test_function<Basis, CT, VT>(b);
-}
-
-template<template <typename, typename> class BasisL, template <typename, typename> class BasisR, typename CT, typename VT>
-int
-operator,(const trial_function<BasisL,CT,VT> trial, const test_function<BasisR,CT,VT>& test)
-{
-    std::cout << "\\o/  \\o/  \\o/" << std::endl;
-    return 42;
-}
-#endif
-
-template<typename CT, typename VT>
-class face_basis
-{
-    typedef typename mesh<CT>::point_type   point_type;
-
-    point_type  face_bar;
-    point_type  base;
-    CT          face_h;
-    size_t      basis_degree, basis_size;
-
-public:
-    face_basis(const mesh<CT>& msh, const typename mesh<CT>::face_type& fc, size_t degree)
-    {
-        face_bar        = barycenter(msh, fc);
-        face_h          = diameter(msh, fc);
-        basis_degree    = degree;
-        basis_size      = degree+1;
-
-        auto pts = points(msh, fc);
-        base = face_bar - pts[0];
-    }
-
-    Matrix<VT, Dynamic, 1>
-    eval_basis(const point_type& pt)
-    {
-        Matrix<VT, Dynamic, 1> ret = Matrix<VT, Dynamic, 1>::Zero(basis_size);
-
-        auto v = base.to_vector();
-        auto t = (pt - face_bar).to_vector();
-        auto dot = v.dot(t);
-        auto ep = 4.0*dot/(face_h*face_h);
-
-        for (size_t i = 0; i <= basis_degree; i++)
-        {
-            auto bv = iexp_pow(ep, i);
-            ret(i) = bv;
-        }
-        return ret;
-    }
-
-    size_t size() const
-    {
-        return basis_size;
-    }
-
-    static size_t size(size_t degree)
-    {
-        return degree+1;
-    }
-};
 
 /*****************************************************************************
  *   Quadrature rules
  *****************************************************************************/
-template<typename T>
-std::vector<std::pair<point<T,1>, T>>
-edge_quadrature(size_t doe)
-{
-    std::vector<std::pair<point<T,1>, T>> ret;
-
-    using namespace Eigen;
 
 
-    if (doe%2 == 0)
-        doe++;
 
-    size_t num_nodes = (doe+1)/2;
-
-    //size_t num_nodes = doe+1;
-
-    if (num_nodes == 1)
-    {
-        auto qp = std::make_pair(point<T,1>({0.5}), 1.0);
-        ret.push_back(qp);
-        return ret;
-    }
-
-    Matrix<T, Dynamic, Dynamic> M = Matrix<T, Dynamic, Dynamic>::Zero(num_nodes, num_nodes);
-    for (size_t i = 1; i < num_nodes; i++)
-    {
-        T p = 4.0 - 1.0/(i*i);
-        M(i, i-1) = sqrt(1.0/p);
-    }
-
-    SelfAdjointEigenSolver<Matrix<T, Dynamic, Dynamic>> solver;
-    solver.compute(M);
-
-    Matrix<T, Dynamic, Dynamic> weights = solver.eigenvectors().row(0);
-                                weights = weights.array().square();
-    Matrix<T, Dynamic, Dynamic> nodes = solver.eigenvalues();
-
-    assert( weights.size() == nodes.size() );
-
-    for (size_t i = 0; i < nodes.size(); i++)
-    {
-        auto qp = std::make_pair(point<T,1>({(nodes(i) + 1.)/2.}), weights(i));
-        ret.push_back(qp);
-    }
-
-    return ret;
-}
-
-template<typename T>
-std::vector<std::pair<point<T,2>, T>>
-integrate(const mesh<T>& msh, const typename mesh<T>::cell_type& cl, size_t degree)
-{
-    typedef typename mesh<T>::point_type    point_type;
-
-    auto qps = edge_quadrature<T>(degree);
-    auto pts = points(msh, cl);
-
-    auto scale_x = (pts[1] - pts[0]).x();
-    auto scale_y = (pts[3] - pts[0]).y();
-    auto meas = scale_x * scale_y;
-
-    std::vector<std::pair<point<T,2>, T>> ret;
-
-    for (auto jtor = qps.begin(); jtor != qps.end(); jtor++)
-    {
-        for (auto itor = qps.begin(); itor != qps.end(); itor++)
-        {
-            auto qp_x = *itor;
-            auto qp_y = *jtor;
-
-            auto px = qp_x.first.x() * scale_x + pts[0].x();
-            auto py = qp_y.first.x() * scale_y + pts[0].y();
-
-            auto w = qp_x.second * qp_y.second * meas;
-
-            ret.push_back( std::make_pair( point_type(px, py), w ) );
-        }
-    }
-
-    return ret;
-}
 
 template<typename T>
 std::vector<std::pair<point<T,2>, T>>
@@ -1233,49 +334,16 @@ integrate(const mesh<T>& msh, const typename mesh<T>::cell_type& cl, const cell_
     return integrate(msh, cl, degree);
 }
 
-template<typename T>
-std::vector<std::pair<point<T,2>, T>>
-integrate(const mesh<T>& msh, const typename mesh<T>::face_type& fc, size_t degree)
-{
-    typedef typename mesh<T>::point_type    point_type;
 
-    auto qps = edge_quadrature<T>(degree);
-    auto pts = points(msh, fc);
-
-    auto scale = (pts[1] - pts[0]);
-    auto meas = scale.to_vector().norm();
-
-    std::vector<std::pair<point<T,2>, T>>   ret;
-
-    for (auto itor = qps.begin(); itor != qps.end(); itor++)
-    {
-        auto qp = *itor;
-        auto p = qp.first.x() * scale + pts[0];
-        auto w = qp.second * meas;
-
-        ret.push_back( std::make_pair(p, w) );
-    }
-
-    return ret;
-}
-
-
-template<typename T, size_t N>
-std::ostream&
-operator<<(std::ostream& os, const std::pair<point<T,N>, T>& pw_pair)
-{
-    os << "[ " << pw_pair.first << ", " << pw_pair.second << " ]";
-    return os;
-}
 
 /*****************************************************************************
  *   Utilities
  *****************************************************************************/
-template<typename T>
+template<typename Mesh, typename T = typename Mesh::coordinate_type>
 Matrix<T, Dynamic, Dynamic>
-make_mass_matrix(const mesh<T>& msh, const typename mesh<T>::cell_type& cl, size_t degree)
+make_mass_matrix(const Mesh& msh, const typename Mesh::cell_type& cl, size_t degree)
 {
-    cell_basis<T,T> cb(msh, cl, degree);
+    cell_basis<Mesh,T> cb(msh, cl, degree);
     auto cbs = cb.size();
 
     Matrix<T, Dynamic, Dynamic> ret = Matrix<T, Dynamic, Dynamic>::Zero(cbs, cbs);
@@ -1291,11 +359,11 @@ make_mass_matrix(const mesh<T>& msh, const typename mesh<T>::cell_type& cl, size
     return ret;
 }
 
-template<typename T>
+template<typename Mesh, typename T = typename Mesh::coordinate_type>
 Matrix<T, Dynamic, Dynamic>
-make_mass_matrix(const mesh<T>& msh, const typename mesh<T>::face_type& fc, size_t degree)
+make_mass_matrix(const Mesh& msh, const typename Mesh::face_type& fc, size_t degree)
 {
-    face_basis<T,T> fb(msh, fc, degree);
+    face_basis<Mesh,T> fb(msh, fc, degree);
     auto fbs = fb.size();
 
     Matrix<T, Dynamic, Dynamic> ret = Matrix<T, Dynamic, Dynamic>::Zero(fbs, fbs);
@@ -1311,12 +379,14 @@ make_mass_matrix(const mesh<T>& msh, const typename mesh<T>::face_type& fc, size
     return ret;
 }
 
-template<typename T, typename Function>
-Matrix<T, Dynamic, 1>
-make_rhs(const mesh<T>& msh, const typename mesh<T>::cell_type& cl,
+template<typename Mesh, typename Function>
+Matrix<typename Mesh::coordinate_type, Dynamic, 1>
+make_rhs(const Mesh& msh, const typename Mesh::cell_type& cl,
          size_t degree, const Function& f)
 {
-    cell_basis<T,T> cb(msh, cl, degree);
+    using T = typename Mesh::coordinate_type;
+
+    cell_basis<Mesh,T> cb(msh, cl, degree);
     auto cbs = cb.size();
 
     Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs);
@@ -1332,12 +402,14 @@ make_rhs(const mesh<T>& msh, const typename mesh<T>::cell_type& cl,
     return ret;
 }
 
-template<typename T, typename Function>
-Matrix<T, Dynamic, 1>
-make_rhs(const mesh<T>& msh, const typename mesh<T>::face_type& fc,
+template<typename Mesh, typename Function>
+Matrix<typename Mesh::coordinate_type, Dynamic, 1>
+make_rhs(const Mesh& msh, const typename Mesh::face_type& fc,
          size_t degree, const Function& f)
 {
-    face_basis<T,T> fb(msh, fc, degree);
+    using T = typename Mesh::coordinate_type;
+
+    face_basis<Mesh,T> fb(msh, fc, degree);
     auto fbs = fb.size();
 
     Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(fbs);
@@ -1353,13 +425,15 @@ make_rhs(const mesh<T>& msh, const typename mesh<T>::face_type& fc,
     return ret;
 }
 
-template<typename T, typename Function>
-Matrix<T, Dynamic, 1>
-project_function(const mesh<T>& msh, const typename mesh<T>::cell_type& cl,
+template<typename Mesh, typename Function>
+Matrix<typename Mesh::coordinate_type, Dynamic, 1>
+project_function(const Mesh& msh, const typename Mesh::cell_type& cl,
                  size_t degree, const Function& f)
 {
-    auto cbs = cell_basis<T,T>::size(degree);
-    auto fbs = face_basis<T,T>::size(degree);
+    using T = typename Mesh::coordinate_type;
+
+    auto cbs = cell_basis<Mesh,T>::size(degree);
+    auto fbs = face_basis<Mesh,T>::size(degree);
 
     Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs+4*fbs);
 
@@ -1382,111 +456,21 @@ project_function(const mesh<T>& msh, const typename mesh<T>::cell_type& cl,
 /*****************************************************************************
  *   HHO stuff
  *****************************************************************************/
-template<typename T>
-std::pair<Matrix<T, Dynamic, Dynamic>, Matrix<T, Dynamic, Dynamic>>
-make_hho_laplacian(const mesh<T>& msh, const typename mesh<T>::cell_type& cl, size_t degree)
-{
-    cell_basis<T,T>     cb(msh, cl, degree+1);
 
-    auto rbs = cell_basis<T,T>::size(degree+1);
-    auto cbs = cell_basis<T,T>::size(degree);
-    auto fbs = face_basis<T,T>::size(degree);
 
-    Matrix<T, Dynamic, Dynamic> stiff = Matrix<T, Dynamic, Dynamic>::Zero(rbs, rbs);
-    Matrix<T, Dynamic, Dynamic> gr_lhs = Matrix<T, Dynamic, Dynamic>::Zero(rbs-1, rbs-1);
-    Matrix<T, Dynamic, Dynamic> gr_rhs = Matrix<T, Dynamic, Dynamic>::Zero(rbs-1, cbs + 4*fbs);
-
-    auto qps = integrate(msh, cl, 2*degree+2);
-
-    for (auto& qp : qps)
-    {
-        auto dphi = cb.eval_gradients(qp.first);
-        stiff += qp.second * dphi * dphi.transpose();
-    }
-
-    gr_lhs = stiff.block(1, 1, rbs-1, rbs-1);
-    gr_rhs.block(0, 0, rbs-1, cbs) = stiff.block(1, 0, rbs-1, cbs);
-
-    auto fcs = faces(msh, cl);
-    auto ns = normals(msh, cl);
-
-    for (size_t i = 0; i < 4; i++)
-    {
-        auto fc = fcs[i];
-        auto n = ns[i];
-        face_basis<T,T> fb(msh, fc, degree);
-        auto qps_f = integrate(msh, fc, 2*degree);
-        for (auto& qp : qps_f)
-        {
-            Matrix<T, Dynamic, 1> c_phi_tmp = cb.eval_basis(qp.first);
-            Matrix<T, Dynamic, 1> c_phi = c_phi_tmp.head(cbs);
-            Matrix<T, Dynamic, 2> c_dphi_tmp = cb.eval_gradients(qp.first);
-            Matrix<T, Dynamic, 2> c_dphi = c_dphi_tmp.block(1, 0, rbs-1, 2);
-            Matrix<T, Dynamic, 1> f_phi = fb.eval_basis(qp.first);
-            gr_rhs.block(0, cbs+i*fbs, rbs-1, fbs) += qp.second * (c_dphi * n) * f_phi.transpose();
-            gr_rhs.block(0, 0, rbs-1, cbs) -= qp.second * (c_dphi * n) * c_phi.transpose();
-        }
-    }
-
-    Matrix<T, Dynamic, Dynamic> oper = gr_lhs.llt().solve(gr_rhs);
-    Matrix<T, Dynamic, Dynamic> data = gr_rhs.transpose() * oper;
-
-    return std::make_pair(oper, data);
-}
-
-template<typename T>
-std::pair<Matrix<T, Dynamic, Dynamic>, Matrix<T, Dynamic, Dynamic>>
-make_operator(const mesh<T>& msh, const typename mesh<T>::cell_type& cl, size_t degree)
+template<typename Mesh>
+std::pair<   Matrix<typename Mesh::coordinate_type, Dynamic, Dynamic>,
+             Matrix<typename Mesh::coordinate_type, Dynamic, Dynamic>  >
+make_operator(const Mesh& msh, const typename Mesh::cell_type& cl, size_t degree)
 {
     return make_hho_laplacian(msh, cl, degree);
 }
 
-template<typename T>
-Matrix<T, Dynamic, Dynamic>
-make_hho_naive_stabilization(const mesh<T>& msh, const typename mesh<T>::cell_type& cl, size_t degree)
-{
-    auto cbs = cell_basis<T,T>::size(degree);
-    auto fbs = face_basis<T,T>::size(degree);
 
-    auto fcs = faces(msh, cl);
 
-    Matrix<T, Dynamic, Dynamic> data = Matrix<T, Dynamic, Dynamic>::Zero(cbs+4*fbs, cbs+4*fbs);
-    Matrix<T, Dynamic, Dynamic> If = Matrix<T, Dynamic, Dynamic>::Identity(fbs, fbs);
-
-    cell_basis<T,T> cb(msh, cl, degree);
-
-    for (size_t i = 0; i < 4; i++)
-    {
-        auto fc = fcs[i];
-        face_basis<T,T> fb(msh, fc, degree);
-
-        Matrix<T, Dynamic, Dynamic> oper = Matrix<T, Dynamic, Dynamic>::Zero(fbs, cbs+4*fbs);
-        Matrix<T, Dynamic, Dynamic> mass = Matrix<T, Dynamic, Dynamic>::Zero(fbs, fbs);
-        Matrix<T, Dynamic, Dynamic> trace = Matrix<T, Dynamic, Dynamic>::Zero(fbs, cbs);
-
-        oper.block(0, cbs+i*fbs, fbs, fbs) = -If;
-
-        auto qps = integrate(msh, fc, 2*degree);
-        for (auto& qp : qps)
-        {
-            auto c_phi = cb.eval_basis(qp.first);
-            auto f_phi = fb.eval_basis(qp.first);
-
-            mass += qp.second * f_phi * f_phi.transpose();
-            trace += qp.second * f_phi * c_phi.transpose();
-        }
-
-        oper.block(0, 0, fbs, cbs) = mass.llt().solve(trace);
-
-        data += oper.transpose() * mass * oper; /* Don't divide by h with this stabilization. It breaks convergence! */
-    }
-
-    return data;
-}
-
-template<typename T>
-Matrix<T, Dynamic, Dynamic>
-make_stabilization(const mesh<T>& msh, const typename mesh<T>::cell_type& cl, size_t degree)
+template<typename Mesh>
+Matrix<typename Mesh::coordinate_type, Dynamic, Dynamic>
+make_stabilization(const Mesh& msh, const typename Mesh::cell_type& cl, size_t degree)
 {
     return make_hho_naive_stabilization(msh, cl, degree);
 }
@@ -1494,15 +478,17 @@ make_stabilization(const mesh<T>& msh, const typename mesh<T>::cell_type& cl, si
 /*****************************************************************************
  *   Test stuff
  *****************************************************************************/
-template<typename T>
+template<typename Mesh>
 void
-plot_basis_functions(const mesh<T>& msh)
+plot_basis_functions(const Mesh& msh)
 {
+    using T = typename Mesh::coordinate_type;
+
     std::ofstream c_ofs("cell_basis_check.dat");
 
     for (auto cl : msh.cells)
     {
-        cell_basis<double, double> cb(msh, cl, 3);
+        cell_basis<Mesh, T> cb(msh, cl, 3);
 
         auto tps = make_test_points(msh, cl);
 
@@ -1524,7 +510,7 @@ plot_basis_functions(const mesh<T>& msh)
 
     for (auto fc : msh.faces)
     {
-        face_basis<double, double> fb(msh, fc, 2);
+        face_basis<Mesh, T> fb(msh, fc, 2);
 
         auto tps = make_test_points(msh, fc);
 
@@ -1543,9 +529,9 @@ plot_basis_functions(const mesh<T>& msh)
     f_ofs.close();
 }
 
-template<typename T>
+template<typename Mesh>
 void
-plot_quadrature_points(const mesh<T>& msh, size_t degree)
+plot_quadrature_points(const Mesh& msh, size_t degree)
 {
     std::ofstream c_ofs("cell_quadrature_check.dat");
 
@@ -1579,17 +565,19 @@ plot_quadrature_points(const mesh<T>& msh, size_t degree)
 }
 
 
-template<typename T>
+template<typename Mesh>
 void
-test_mass_matrices(const mesh<T>& msh, size_t degree)
+test_mass_matrices(const Mesh& msh, size_t degree)
 {
-    auto rhs_fun = [](const typename mesh<T>::point_type& pt) -> T {
+    using T = typename Mesh::coordinate_type;
+
+    auto rhs_fun = [](const typename Mesh::point_type& pt) -> T {
         return std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
     };
 
     std::ofstream c_ofs("cell_mass_check.dat");
 
-    cell_basis<T, T>::print_structure(degree);
+    cell_basis<Mesh, T>::print_structure(degree);
 
     for (auto& cl : msh.cells)
     {
@@ -1636,12 +624,13 @@ test_mass_matrices(const mesh<T>& msh, size_t degree)
 }
 
 
-template<typename T>
+template<typename Mesh>
 class assembler
 {
+    using T = typename Mesh::coordinate_type;
     std::vector<size_t>                 compress_table;
     std::vector<size_t>                 expand_table;
-    //std::vector<Matrix<T, Dynamic, 1>>  dirichlet_data;
+
     size_t                              degree;
 
     std::vector< Triplet<T> >           triplets;
@@ -1681,10 +670,10 @@ public:
     SparseMatrix<T>         LHS;
     Matrix<T, Dynamic, 1>   RHS;
 
-    assembler(const mesh<T>& msh, size_t deg)
+    assembler(const Mesh& msh, size_t deg)
         : degree(deg)
     {
-        auto is_dirichlet = [&](const typename mesh<T>::face_type& fc) -> bool {
+        auto is_dirichlet = [&](const typename Mesh::face_type& fc) -> bool {
             return fc.is_boundary && fc.bndtype == boundary::DIRICHLET;
         };
 
@@ -1708,8 +697,8 @@ public:
             }
         }
 
-        auto cbs = cell_basis<T,T>::size(degree);
-        auto fbs = face_basis<T,T>::size(degree);
+        auto cbs = cell_basis<Mesh,T>::size(degree);
+        auto fbs = face_basis<Mesh,T>::size(degree);
         auto system_size = cbs * msh.cells.size() + fbs * num_other_faces;
 
         LHS = SparseMatrix<T>( system_size, system_size );
@@ -1725,12 +714,12 @@ public:
 
     template<typename Function>
     void
-    assemble(const mesh<T>& msh, const typename mesh<T>::cell_type& cl,
+    assemble(const Mesh& msh, const typename Mesh::cell_type& cl,
              const Matrix<T, Dynamic, Dynamic>& lhs, const Matrix<T, Dynamic, 1>& rhs,
              const Function& dirichlet_bf)
     {
-        auto cbs = cell_basis<T,T>::size(degree);
-        auto fbs = face_basis<T,T>::size(degree);
+        auto cbs = cell_basis<Mesh,T>::size(degree);
+        auto fbs = face_basis<Mesh,T>::size(degree);
 
         std::vector<assembly_index> asm_map;
         asm_map.reserve(cbs + 4*fbs);
@@ -1784,11 +773,11 @@ public:
 
     template<typename Function>
     Matrix<T, Dynamic, 1>
-    take_local_data(const mesh<T>& msh, const typename mesh<T>::cell_type& cl,
+    take_local_data(const Mesh& msh, const typename Mesh::cell_type& cl,
     const Matrix<T, Dynamic, 1>& solution, const Function& dirichlet_bf)
     {
-        auto cbs = cell_basis<T,T>::size(degree);
-        auto fbs = face_basis<T,T>::size(degree);
+        auto cbs = cell_basis<Mesh,T>::size(degree);
+        auto fbs = face_basis<Mesh,T>::size(degree);
 
         auto cell_offset        = offset(msh, cl);
         auto cell_SOL_offset    = cell_offset * cbs;
@@ -1828,74 +817,51 @@ public:
 };
 
 
-template<typename T>
-auto make_assembler(const mesh<T>& msh, size_t deg)
+template<typename Mesh>
+auto make_assembler(const Mesh& msh, size_t deg)
 {
-    return assembler<T>(msh, deg);
+    return assembler<Mesh>(msh, deg);
 }
 
 
-
-template<typename T>
-void dump_mesh(const mesh<T>& msh, const element_info<T>& eleminfo)
+struct convergence_test_params
 {
-    std::ofstream ofs("mesh_dump.m");
-    size_t i = 0;
-    ofs << "hold on;" << std::endl;
-    for (auto& fc : msh.faces)
-    {
-        auto fi = eleminfo.info(msh, fc);
-        auto pts = points(msh, fc);
-        if (fc.is_boundary)
-            ofs << "line([" << pts[0].x() << ", " << pts[1].x() << "], [" << pts[0].y() << ", " << pts[1].y() << "], 'Color', 'r');" << std::endl;
-        else
-            ofs << "line([" << pts[0].x() << ", " << pts[1].x() << "], [" << pts[0].y() << ", " << pts[1].y() << "]);" << std::endl;
+    size_t  deg_min;
+    size_t  deg_max;
+    size_t  min_N;
+    size_t  steps;
+    bool    preconditioner;
+    bool    direct;
 
-        auto bar = barycenter(msh, fc);
-        ofs << "text(" << bar.x() << ", " << bar.y() << ", '" << i << "');" << std::endl;
+    convergence_test_params() :
+        deg_min(0),
+        deg_max(6),
+        min_N(4),
+        steps(5),
+        preconditioner(true),
+        direct(false)
+    {}
+};
 
-        if (fi.intersected_by_interface)
-        {
-            auto pt = fi.intersection_point;
-            ofs << "plot(" << pt.x() << "," << pt.y() << ", '*');" << std::endl;
-        }
-
-        i++;
-    }
-
-    for (auto& cl : msh.cells)
-    {
-        auto ci = eleminfo.info(msh, cl);
-        if ( ci.is_cut_by_interface() )
-        {
-            auto p0 = ci.additional_faces[0];
-            auto p1 = ci.additional_faces[1];
-            auto q = p1 - p0;
-            ofs << "quiver(" << p0.x() << ", " << p0.y() << ", " << q.x() << ", " << q.y() << ", 0)" << std::endl;;
-        }
-    }
-
-    ofs.close();
-}
-
-int main(int argc, char **argv)
+int test_method_convergence(const convergence_test_params& ctp)
 {
     using RealType = double;
 
-    size_t deg_min = 0;
-    size_t deg_max = 6;
+    size_t deg_min = ctp.deg_min;
+    size_t deg_max = ctp.deg_max;
 
-    size_t min_elems = 4;
-    size_t steps = 5;
+    size_t min_elems = ctp.min_N;
+    size_t steps = ctp.steps;
+
+    bool preconditioner = ctp.preconditioner;
+    bool direct = ctp.direct;
 
     auto rhs_fun = [](const typename mesh<RealType>::point_type& pt) -> RealType {
         return 2.0 * M_PI * M_PI * std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
-        //return -6.0*pt.x();
     };
 
     auto sol_fun = [](const typename mesh<RealType>::point_type& pt) -> RealType {
         return std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
-        //return pt.x() * pt.x() * pt.x();
     };
 
     for (size_t k = deg_min; k < deg_max+1; k++)
@@ -1911,6 +877,14 @@ int main(int argc, char **argv)
             errors_int.at(i) = 0.0;
             errors_mm.at(i) = 0.0;
         }
+
+        std::stringstream ss;
+        if (preconditioner)
+            ss << "hho_history_precond_" << k << ".txt";
+        else
+            ss << "hho_history_" << k << ".txt";
+
+        std::ofstream hho_conv_ofs(ss.str());
 
         for (size_t i = 0, N = min_elems; i < steps; i++, N *= 2)
         {
@@ -1940,21 +914,37 @@ int main(int argc, char **argv)
 
             Matrix<RealType, Dynamic, 1> sol;
 
-#define DIRECT
-#ifdef DIRECT
-            SparseLU<SparseMatrix<RealType>>  solver;
+            if (direct)
+            {
+                SparseLU<SparseMatrix<RealType>>  solver;
 
-            solver.analyzePattern(assembler.LHS);
-            solver.factorize(assembler.LHS);
-            sol = solver.solve(assembler.RHS);
-#else
-            conjugated_gradient(assembler.LHS, assembler.RHS, sol);
-#endif
+                solver.analyzePattern(assembler.LHS);
+                solver.factorize(assembler.LHS);
+                sol = solver.solve(assembler.RHS);
+            }
+            else
+            {
+                std::stringstream ss;
+                if (preconditioner)
+                    ss << "cg_history_precond_" << N << "_" << k << ".txt";
+                else
+                    ss << "cg_history_" << N << "_" << k << ".txt";
+
+                cg_params<RealType> cgp;
+                cgp.apply_preconditioner = preconditioner;
+                cgp.convergence_threshold = 1e-12;
+                cgp.max_iter = assembler.LHS.rows();
+                cgp.histfile = ss.str();
+                auto exit_reason = conjugated_gradient(assembler.LHS, assembler.RHS, sol, cgp);
+
+                if ( exit_reason != cg_exit_reason::CONVERGED )
+                    std::cout << "Warning! Solver didn't converge..." << std::endl;
+            }
 
             size_t cell_i = 0;
             for (auto& cl : msh.cells)
             {
-                cell_basis<RealType,RealType> cb(msh, cl, k);
+                cell_basis<mesh<RealType>, RealType> cb(msh, cl, k);
                 auto cbs = cb.size();
 
                 Matrix<RealType, Dynamic, 1> cdofs = sol.block(cell_i*cbs, 0, cbs, 1);
@@ -1977,6 +967,8 @@ int main(int argc, char **argv)
                 cell_i++;
             }
 
+            hho_conv_ofs << errors_int.at(i) << " " << errors_mm.at(i) << std::endl;
+
             if (i > 0)
             {
                 auto error_prev_int = sqrt(errors_int.at(i-1));
@@ -1988,6 +980,8 @@ int main(int argc, char **argv)
                 std::cout << log10(error_prev_mm/error_cur_mm) / log10(2) << std::endl;
             }
         }
+
+        hho_conv_ofs.close();
     }
 
     return 0;
@@ -1995,7 +989,113 @@ int main(int argc, char **argv)
 
 
 
-int main2(int argc, char **argv)
+
+
+
+template<typename T>
+bool
+is_cut(const cuthho_mesh<T>& msh, const typename cuthho_mesh<T>::cell_type& cl)
+{
+    return cl.user_data.num_cuts != 0;
+}
+
+
+template<typename T, typename Function>
+void
+detect_cut_cells(cuthho_mesh<T>& msh, const Function& level_set_function)
+{
+    typedef typename cuthho_mesh<T>::face_type  face_type;
+    typedef typename cuthho_mesh<T>::point_type point_type;
+
+    size_t cell_i = 0;
+    for (auto& cl : msh.cells)
+    {
+        auto pts = points(msh, cl);
+        std::vector<int> signs;
+        signs.resize(pts.size());
+
+        auto fcs = faces(msh, cl);
+        auto tf = [&](const face_type& fc) -> auto {
+            return find_face_interface_intersection(msh, fc, level_set_function);
+        };
+
+        std::transform(fcs.begin(), fcs.end(), cl.user_data.cuts.begin(), tf);
+
+
+        auto count_cut = [](const std::pair<bool, point_type>& c) -> auto {
+            return c.first;
+        };
+        cl.user_data.num_cuts = std::count_if(cl.user_data.cuts.begin(),
+                                              cl.user_data.cuts.end(),
+                                              count_cut);
+
+
+        if (cl.user_data.num_cuts != 0 && cl.user_data.num_cuts != 2)
+        {
+            std::cout << cl.user_data.num_cuts << std::endl;
+            throw std::logic_error("invalid number of cuts in cell");
+        }
+
+        if (cl.user_data.num_cuts == 2)
+        {
+            for (size_t i = 0, k = 0; i < 4; i++)
+            {
+                if ( cl.user_data.cuts[i].first )
+                    cl.user_data.additional_faces[k++] = cl.user_data.cuts[i].second;
+            }
+
+            auto p0 = cl.user_data.additional_faces[0];
+            auto p1 = cl.user_data.additional_faces[1];
+
+            auto pt = p1 - p0;
+            auto pn = p0 + point<T,2>(-pt.y(), pt.x());
+
+            if ( level_set_function(pn) >= 0 )
+                std::swap(cl.user_data.additional_faces[0], cl.user_data.additional_faces[1]);
+        }
+
+        cell_i++;
+    }
+}
+
+
+template<typename T>
+void dump_mesh(const cuthho_mesh<T>& msh)
+{
+    std::ofstream ofs("mesh_dump.m");
+    size_t i = 0;
+    ofs << "hold on;" << std::endl;
+    for (auto& fc : msh.faces)
+    {
+        auto pts = points(msh, fc);
+        if (fc.is_boundary)
+            ofs << "line([" << pts[0].x() << ", " << pts[1].x() << "], [" << pts[0].y() << ", " << pts[1].y() << "], 'Color', 'r');" << std::endl;
+        else
+            ofs << "line([" << pts[0].x() << ", " << pts[1].x() << "], [" << pts[0].y() << ", " << pts[1].y() << "]);" << std::endl;
+
+        auto bar = barycenter(msh, fc);
+        ofs << "text(" << bar.x() << ", " << bar.y() << ", '" << i << "');" << std::endl;
+
+        i++;
+    }
+
+    for (auto& cl : msh.cells)
+    {
+        if ( is_cut(msh, cl) )
+        {
+            auto p0 = cl.user_data.additional_faces[0];
+            auto p1 = cl.user_data.additional_faces[1];
+            auto q = p1 - p0;
+            ofs << "quiver(" << p0.x() << ", " << p0.y() << ", " << q.x() << ", " << q.y() << ", 0)" << std::endl;;
+        }
+    }
+
+    ofs.close();
+}
+
+
+
+int main(int argc, char **argv)
 {
     using RealType = double;
     size_t degree = 0;
@@ -2004,8 +1104,10 @@ int main2(int argc, char **argv)
     mip.Nx = 5;
     mip.Ny = 5;
 
+    bool testing_only = false;
+
     int ch;
-    while ( (ch = getopt(argc, argv, "k:M:N:")) != -1 )
+    while ( (ch = getopt(argc, argv, "k:M:N:t")) != -1 )
     {
         switch(ch)
         {
@@ -2021,6 +1123,10 @@ int main2(int argc, char **argv)
                 mip.Ny = atoi(optarg);
                 break;
 
+            case 't':
+                testing_only = true;
+                break;
+
             case '?':
             default:
                 std::cout << "wrong arguments" << std::endl;
@@ -2031,24 +1137,21 @@ int main2(int argc, char **argv)
     argc -= optind;
     argv += optind;
 
-
-/*
-    auto eq = edge_quadrature<double>(degree);
-    for (auto p : eq)
+    if (testing_only)
     {
-        std::cout << p << std::endl;
+        convergence_test_params ctp;
+        ctp.deg_min = 5;
+        test_method_convergence(ctp);
+        return 0;
     }
 
-    return 0;
-*/
-
-    mesh<RealType> msh(mip);
+    cuthho_mesh<RealType> msh(mip);
 
     silo_database silo;
     silo.create("cuthho_square.silo");
     silo.add_mesh(msh, "mesh");
 
-    auto level_set_function = [](const typename mesh<RealType>::point_type pt) -> RealType {
+    auto level_set_function = [](const typename cuthho_mesh<RealType>::point_type pt) -> RealType {
         auto x = pt.x();
         auto y = pt.y();
         auto alpha = 0.5;
@@ -2057,19 +1160,14 @@ int main2(int argc, char **argv)
         return (x-alpha)*(x-alpha) + (y-beta)*(y-beta) - 0.15;
     };
 
-    auto eleminfo = make_element_info(msh, level_set_function);
+    detect_cut_cells(msh, level_set_function);
+    dump_mesh(msh);
 
-    fill_unfitted_info(msh, level_set_function);
-
-    //detect_cut_cells(msh, level_set_function);
-    //detect_face_intersection_points(msh, level_set_function);
-
-    dump_mesh(msh, eleminfo);
 
     std::vector<RealType> cut_cell_markers;
     for (auto& cl : msh.cells)
     {
-        if (cl.is_cut())
+        if ( is_cut(msh, cl) )
             cut_cell_markers.push_back(1.0);
         else
             cut_cell_markers.push_back(0.0);
@@ -2084,14 +1182,12 @@ int main2(int argc, char **argv)
 
 
 
-    auto rhs_fun = [](const typename mesh<RealType>::point_type& pt) -> RealType {
+    auto rhs_fun = [](const typename cuthho_mesh<RealType>::point_type& pt) -> RealType {
         return 2.0 * M_PI * M_PI * std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
-        //return -6.0*pt.x();
     };
 
-    auto sol_fun = [](const typename mesh<RealType>::point_type& pt) -> RealType {
+    auto sol_fun = [](const typename cuthho_mesh<RealType>::point_type& pt) -> RealType {
         return std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
-        //return pt.x() * pt.x() * pt.x();
     };
 
     for (auto& fc : msh.faces)
@@ -2106,24 +1202,11 @@ int main2(int argc, char **argv)
         auto gr = make_operator(msh, cl, degree);
         Matrix<RealType, Dynamic, Dynamic> stab = make_stabilization(msh, cl, degree);
         Matrix<RealType, Dynamic, Dynamic> lc = gr.second + stab;
-        //Matrix<RealType, Dynamic, 1> ft = project_function(msh, cl, degree, rhs_fun);
         Matrix<RealType, Dynamic, 1> f = make_rhs(msh, cl, degree, rhs_fun);
         assembler.assemble(msh, cl, lc, f, sol_fun);
     }
 
     assembler.finalize();
-
-#if 0
-    std::ofstream mat_ofs("matrix.dat");
-    for (int k=0; k<assembler.LHS.outerSize(); ++k)
-      for (SparseMatrix<RealType>::InnerIterator it(assembler.LHS,k); it; ++it)
-      {
-
-        mat_ofs << it.row() << " " << it.col() << " " << it.value() << std::endl;
-      }
-    mat_ofs.close();
-#endif
-
 
     std::cout << "System unknowns: " << assembler.LHS.rows() << std::endl;
     std::cout << "Cells: " << msh.cells.size() << std::endl;
@@ -2153,7 +1236,7 @@ int main2(int argc, char **argv)
     size_t cell_i = 0;
     for (auto& cl : msh.cells)
     {
-        cell_basis<RealType,RealType> cb(msh, cl, degree);
+        cell_basis<cuthho_mesh<RealType>, RealType> cb(msh, cl, degree);
         auto cbs = cb.size();
 
         Matrix<RealType, Dynamic, 1> cdofs = sol.block(cell_i*cbs, 0, cbs, 1);
