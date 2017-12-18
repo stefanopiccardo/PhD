@@ -1,0 +1,7 @@
+#pragma once
+
+#include "core_bits/basic_mesh.hpp"
+#include "core_bits/basic_geom.hpp"
+#include "core_bits/bases.hpp"
+#include "core_bits/quadratures.hpp"
+#include "core_bits/utils.hpp"
