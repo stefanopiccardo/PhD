@@ -23,21 +23,44 @@
 #pragma once
 
 #include <array>
+#include <cassert>
 
 #include "core/core"
+
+enum class element_location {
+    IN_NEGATIVE_SIDE,
+    IN_POSITIVE_SIDE,
+    ON_INTERFACE,
+    UNDEF
+};
 
 template<typename T>
 struct cell_cuthho_info
 {
-    std::array< std::pair<bool, point<T,2>>, 4 >    cuts;
-    size_t                                          num_cuts;
-    std::array< point<T,2>, 2 >                     additional_faces;
+    element_location            location;
+    point<T,2>                  p0, p1;
+    std::vector<point<T,2>>     interface;
+
+    cell_cuthho_info() :
+        location(element_location::UNDEF)
+    {}
 };
 
-template<typename T>
-class face_cuthho_info
-{
 
+
+template<typename T>
+struct face_cuthho_info
+{
+    element_location    location;
+    size_t              node_inside; /* tells which is the node inside the area
+                                        delimited by interface. Can be 0 or 1,
+                                        nothing else. */
+    point<T, 2>         intersection_point;
+
+    face_cuthho_info() :
+        location(element_location::UNDEF),
+        node_inside(0)
+    {}
 };
 
 
