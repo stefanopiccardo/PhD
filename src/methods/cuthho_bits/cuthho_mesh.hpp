@@ -63,6 +63,16 @@ struct face_cuthho_info
     {}
 };
 
+template<typename T>
+struct node_cuthho_info
+{
+    element_location    location;
+
+    node_cuthho_info() :
+        location(element_location::UNDEF)
+    {}
+};
+
 
 template<typename T>
-using cuthho_mesh = mesh<T, cell_cuthho_info<T>, face_cuthho_info<T>>;
+using cuthho_mesh = mesh<T, cell_cuthho_info<T>, face_cuthho_info<T>, node_cuthho_info<T>>;

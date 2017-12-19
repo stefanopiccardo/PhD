@@ -105,6 +105,21 @@ struct face : public mesh_element<UserData> {
 };
 
 template<typename UserData>
+struct node : public mesh_element<UserData> {
+    size_t      ptid;
+
+    bool operator<(const node& other) const
+    {
+        return (this->ptid < other.ptid);
+    }
+
+    bool operator==(const node& other) const
+    {
+        return (this->ptid == other.ptid);
+    }
+};
+
+template<typename UserData>
 std::ostream&
 operator<<(std::ostream& os, const face<UserData>& fc)
 {
@@ -141,17 +156,19 @@ struct mesh_init_params {
     }
 };
 
-template<typename T, typename CellUD = void, typename FaceUD = void>
+template<typename T, typename CellUD = void, typename FaceUD = void, typename NodeUD = void>
 struct mesh {
 
     typedef point<T,2>          point_type;
     typedef cell<CellUD>        cell_type;
     typedef face<FaceUD>        face_type;
+    typedef node<FaceUD>        node_type;
     typedef CellUD              cell_ud_type;
     typedef FaceUD              face_ud_type;
     typedef T                   coordinate_type;
 
     std::vector<point_type>     points;
+    std::vector<node_type>      nodes;
     std::vector<face_type>      faces;
     std::vector<cell_type>      cells;
 
@@ -166,6 +183,7 @@ struct mesh {
         size_t numpoints = (parms.Nx + 1) * (parms.Ny + 1);
         points.reserve(numpoints);
 
+        size_t point_num = 0;
         for (size_t j = 0; j < parms.Ny+1; j++)
         {
             for(size_t i = 0; i < parms.Nx+1; i++)
@@ -174,6 +192,9 @@ struct mesh {
                 auto py = parms.min_y + j*hy;
                 point_type pt(px, py);
                 points.push_back(pt);
+                node_type n;
+                n.ptid = point_num++;
+                nodes.push_back(n);
             }
         }
 
