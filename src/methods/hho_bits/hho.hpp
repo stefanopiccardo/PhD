@@ -27,24 +27,77 @@
 
 #include "core/core"
 
+class hho_degree_info
+{
+    size_t  cell_deg, face_deg, reconstruction_deg;
+
+public:
+    hho_degree_info()
+        : cell_deg(1), face_deg(1), reconstruction_deg(2)
+    {}
+
+    hho_degree_info(size_t degree)
+        : cell_deg(degree), face_deg(degree), reconstruction_deg(degree+1)
+    {}
+
+    hho_degree_info(size_t cd, size_t fd)
+    {
+        bool c1 = fd > 0  && (cd == fd-1 || cd == fd || cd == fd+1);
+        bool c2 = fd == 0 && (cd == fd || cd == fd+1);
+        if ( c1 || c2 )
+        {
+            cell_deg            = cd;
+            face_deg            = fd;
+            reconstruction_deg  = fd+1;
+
+        }
+        else
+        {
+            std::cout << "Invalid cell degree. Reverting to equal-order" << std::endl;
+            cell_deg            = fd;
+            face_deg            = fd;
+            reconstruction_deg  = fd+1;
+        }
+    }
+
+    size_t cell_degree() const
+    {
+        return cell_deg;
+    }
+
+    size_t face_degree() const
+    {
+        return face_deg;
+    }
+
+    size_t reconstruction_degree() const
+    {
+        return reconstruction_deg;
+    }
+};
+
 template<typename Mesh>
 std::pair<   Matrix<typename Mesh::coordinate_type, Dynamic, Dynamic>,
              Matrix<typename Mesh::coordinate_type, Dynamic, Dynamic>  >
-make_hho_laplacian(const Mesh& msh, const typename Mesh::cell_type& cl, size_t degree)
+make_hho_laplacian(const Mesh& msh, const typename Mesh::cell_type& cl, const hho_degree_info& di)
 {
     using T = typename Mesh::coordinate_type;
 
-    cell_basis<Mesh,T>     cb(msh, cl, degree+1);
+    auto recdeg = di.reconstruction_degree();
+    auto celdeg = di.cell_degree();
+    auto facdeg = di.face_degree();
 
-    auto rbs = cell_basis<Mesh,T>::size(degree+1);
-    auto cbs = cell_basis<Mesh,T>::size(degree);
-    auto fbs = face_basis<Mesh,T>::size(degree);
+    cell_basis<Mesh,T>     cb(msh, cl, recdeg);
+
+    auto rbs = cell_basis<Mesh,T>::size(recdeg);
+    auto cbs = cell_basis<Mesh,T>::size(celdeg);
+    auto fbs = face_basis<Mesh,T>::size(facdeg);
 
     Matrix<T, Dynamic, Dynamic> stiff = Matrix<T, Dynamic, Dynamic>::Zero(rbs, rbs);
     Matrix<T, Dynamic, Dynamic> gr_lhs = Matrix<T, Dynamic, Dynamic>::Zero(rbs-1, rbs-1);
     Matrix<T, Dynamic, Dynamic> gr_rhs = Matrix<T, Dynamic, Dynamic>::Zero(rbs-1, cbs + 4*fbs);
 
-    auto qps = integrate(msh, cl, 2*degree+2);
+    auto qps = integrate(msh, cl, 2*recdeg);
 
     for (auto& qp : qps)
     {
@@ -62,8 +115,8 @@ make_hho_laplacian(const Mesh& msh, const typename Mesh::cell_type& cl, size_t d
     {
         auto fc = fcs[i];
         auto n = ns[i];
-        face_basis<Mesh,T> fb(msh, fc, degree);
-        auto qps_f = integrate(msh, fc, 2*degree);
+        face_basis<Mesh,T> fb(msh, fc, facdeg);
+        auto qps_f = integrate(msh, fc, 2*facdeg);
         for (auto& qp : qps_f)
         {
             Matrix<T, Dynamic, 1> c_phi_tmp = cb.eval_basis(qp.first);
@@ -85,24 +138,27 @@ make_hho_laplacian(const Mesh& msh, const typename Mesh::cell_type& cl, size_t d
 
 template<typename Mesh>
 Matrix<typename Mesh::coordinate_type, Dynamic, Dynamic>
-make_hho_naive_stabilization(const Mesh& msh, const typename Mesh::cell_type& cl, size_t degree)
+make_hho_naive_stabilization(const Mesh& msh, const typename Mesh::cell_type& cl, const hho_degree_info& di)
 {
     using T = typename Mesh::coordinate_type;
 
-    auto cbs = cell_basis<Mesh,T>::size(degree);
-    auto fbs = face_basis<Mesh,T>::size(degree);
+    auto celdeg = di.cell_degree();
+    auto facdeg = di.face_degree();
+
+    auto cbs = cell_basis<Mesh,T>::size(celdeg);
+    auto fbs = face_basis<Mesh,T>::size(facdeg);
 
     auto fcs = faces(msh, cl);
 
     Matrix<T, Dynamic, Dynamic> data = Matrix<T, Dynamic, Dynamic>::Zero(cbs+4*fbs, cbs+4*fbs);
     Matrix<T, Dynamic, Dynamic> If = Matrix<T, Dynamic, Dynamic>::Identity(fbs, fbs);
 
-    cell_basis<Mesh,T> cb(msh, cl, degree);
+    cell_basis<Mesh,T> cb(msh, cl, celdeg);
 
     for (size_t i = 0; i < 4; i++)
     {
         auto fc = fcs[i];
-        face_basis<Mesh,T> fb(msh, fc, degree);
+        face_basis<Mesh,T> fb(msh, fc, facdeg);
 
         Matrix<T, Dynamic, Dynamic> oper = Matrix<T, Dynamic, Dynamic>::Zero(fbs, cbs+4*fbs);
         Matrix<T, Dynamic, Dynamic> mass = Matrix<T, Dynamic, Dynamic>::Zero(fbs, fbs);
@@ -110,7 +166,7 @@ make_hho_naive_stabilization(const Mesh& msh, const typename Mesh::cell_type& cl
 
         oper.block(0, cbs+i*fbs, fbs, fbs) = -If;
 
-        auto qps = integrate(msh, fc, 2*degree);
+        auto qps = integrate(msh, fc, 2*facdeg);
         for (auto& qp : qps)
         {
             auto c_phi = cb.eval_basis(qp.first);

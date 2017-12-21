@@ -312,12 +312,45 @@ integrate(const cuthho_mesh<T>& msh, const typename cuthho_mesh<T>::cell_type& c
     return ret;
 }
 
+template<typename T>
+std::vector< std::pair<point<T,2>, T> >
+integrate_interface(const cuthho_mesh<T>& msh, const typename cuthho_mesh<T>::cell_type& cl,
+                    size_t degree)
+{
+    assert( is_cut(msh, cl) );
+
+    std::vector< std::pair<point<T,2>, T> > ret;
+
+    auto qps = edge_quadrature<T>(degree);  // <-- This has to be changed! Slows down everything!
+
+    for (size_t i = 1; i < cl.user_data.interface.size(); i++)
+    {
+        auto p0 = cl.user_data.interface.at(i-1);
+        auto p1 = cl.user_data.interface.at(i);
+
+        auto scale = p1 - p0;
+        auto meas = scale.to_vector().norm();
+
+        for (auto itor = qps.begin(); itor != qps.end(); itor++)
+        {
+            auto qp = *itor;
+            auto p = qp.first.x() * scale + p0;
+            auto w = qp.second * meas;
+
+            ret.push_back( std::make_pair(p, w) );
+        }
+    }
+
+    return ret;
+}
+
 template<typename T, typename Function>
-T
+std::pair<T, T>
 test_integration(const cuthho_mesh<T>& msh, const Function& f)
 {
     T int_val = 0.0;
-    size_t num_elems = 0;
+    T circ_int_val = 0.0;
+
     for (auto& cl : msh.cells)
     {
         bool in_negative_side = (location(msh, cl) == element_location::IN_NEGATIVE_SIDE);
@@ -330,12 +363,16 @@ test_integration(const cuthho_mesh<T>& msh, const Function& f)
         for (auto& qp : qpts)
             int_val += qp.second * f(qp.first);
 
-        num_elems++;
+        if (on_interface)
+        {
+            auto iqpts = integrate_interface(msh, cl, 1);
+            for (auto& qp : iqpts)
+                circ_int_val += qp.second * f(qp.first);
+        }
+
     }
 
-    std::cout << "Elements considered for integration: " << num_elems << std::endl;
-
-    return int_val;
+    return std::make_pair(int_val, circ_int_val);
 }
 
 
@@ -407,9 +444,11 @@ int main(int argc, char **argv)
     auto intfunc = [](const point<RealType,2>& pt) -> RealType {
         return 1;
     };
-    auto intval = test_integration(msh, intfunc);
+    auto ints = test_integration(msh, intfunc);
     auto expval = radius*radius*M_PI;
-    std::cout << "Integral relative error: " << 100*std::abs(intval-expval)/expval << "%" <<std::endl;
+    std::cout << "Integral relative error: " << 100*std::abs(ints.first-expval)/expval << "%" <<std::endl;
+    expval = 2*M_PI*radius;
+    std::cout << "Integral relative error: " << 100*std::abs(ints.second-expval)/expval << "%" <<std::endl;
 
 
     std::vector<RealType> cut_cell_markers;
