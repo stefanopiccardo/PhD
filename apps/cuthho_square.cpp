@@ -25,6 +25,7 @@
 #include <vector>
 #include <array>
 #include <algorithm>
+#include <numeric>
 #include <cassert>
 #include <cmath>
 #include <memory>
@@ -63,11 +64,11 @@ find_zero_crossing(const point<T,2>& p0, const point<T,2>& p1, const Function& l
 
     T x_diff_sq, y_diff_sq;
 
-    /* A threshold of 1/1000 the diameter of the element is considered
-     * acceptable. Since with 20 iterations we reduce the error by 1024
+    /* A threshold of 1/10000 the diameter of the element is considered
+     * acceptable. Since with 24 iterations we reduce the error by 16384
      * and the worst case is that the two points are at the opposite sides
-     * of the element, we put this limit. */
-    size_t max_iter = 20;
+     * of the element, we put 30 as limit. */
+    size_t max_iter = 30;
 
     do {
         auto la = level_set_function(pa);
@@ -101,6 +102,20 @@ find_zero_crossing(const point<T,2>& p0, const point<T,2>& p1, const Function& l
 
 template<typename T, typename Function>
 void
+detect_node_position(cuthho_mesh<T>& msh, const Function& level_set_function)
+{
+    for (auto& n : msh.nodes)
+    {
+        auto pt = points(msh, n);
+        if ( level_set_function(pt) < 0 )
+            n.user_data.location = element_location::IN_NEGATIVE_SIDE;
+        else
+            n.user_data.location = element_location::IN_POSITIVE_SIDE;
+    }
+}
+
+template<typename T, typename Function>
+void
 detect_cut_faces(cuthho_mesh<T>& msh, const Function& level_set_function)
 {
     for (auto& fc : msh.faces)
@@ -120,7 +135,7 @@ detect_cut_faces(cuthho_mesh<T>& msh, const Function& level_set_function)
             continue;
         }
 
-        auto threshold = diameter(msh, fc) / 1000.0;
+        auto threshold = diameter(msh, fc) / 10000.0;
         auto pm = find_zero_crossing(pts[0], pts[1], level_set_function, threshold);
 
         /* If node 0 is in the negative region, mark it as node inside, otherwise mark node 1 */
@@ -337,6 +352,14 @@ location(const cuthho_mesh<T>& msh, const typename cuthho_mesh<T>::face_type& fc
     return fc.user_data.location;
 }
 
+template<typename T>
+element_location
+location(const cuthho_mesh<T>& msh, const typename cuthho_mesh<T>::node_type& n)
+{
+    assert(n.user_data.location != element_location::UNDEF);
+    return n.user_data.location;
+}
+
 
 
 template<typename T, typename Function>
@@ -433,12 +456,12 @@ refine_interface(cuthho_mesh<T>& msh, typename cuthho_mesh<T>::cell_type& cl,
 
     if ( !((lm >= 0 && ls1 >= 0) || (lm < 0 && ls1 < 0)) )
     {
-        auto threshold = diameter(msh, cl) / 1000.0;
+        auto threshold = diameter(msh, cl) / 10000.0;
         ip = find_zero_crossing(pm, ps1, level_set_function, threshold);
     }
     else if ( !((lm >= 0 && ls2 >= 0) || (lm < 0 && ls2 < 0)) )
     {
-        auto threshold = diameter(msh, cl) / 1000.0;
+        auto threshold = diameter(msh, cl) / 10000.0;
         ip = find_zero_crossing(pm, ps2, level_set_function, threshold);
     }
     else
@@ -472,6 +495,184 @@ refine_interface(cuthho_mesh<T>& msh, const Function& level_set_function, size_t
     }
 }
 
+template<typename T>
+std::vector< typename cuthho_mesh<T>::point_type >
+collect_triangulation_points(const cuthho_mesh<T>& msh,
+                             const typename cuthho_mesh<T>::cell_type& cl,
+                             const element_location& where)
+{
+    typedef typename cuthho_mesh<T>::point_type     point_type;
+    typedef typename cuthho_mesh<T>::node_type      node_type;
+
+    assert( is_cut(msh, cl) );
+    auto ns = nodes(msh, cl);
+
+    std::vector< point_type > ret;
+
+    auto node2pt = [&](const node_type& n) -> auto {
+        return msh.points.at(n.ptid);
+    };
+
+    auto insert_interface = [&](void) -> void {
+        if (where == element_location::IN_NEGATIVE_SIDE)
+            ret.insert(ret.end(), cl.user_data.interface.begin(), cl.user_data.interface.end());
+        else if (where == element_location::IN_POSITIVE_SIDE)
+            ret.insert(ret.end(), cl.user_data.interface.rbegin(), cl.user_data.interface.rend());
+        else
+            throw std::logic_error("If you've got here there is some issue...");
+    };
+
+    bool case1 = location(msh, ns.front()) == where && location(msh, ns.back()) != where;
+    bool case2 = location(msh, ns.front()) != where && location(msh, ns.back()) == where;
+    bool case3 = location(msh, ns.front()) != where && location(msh, ns.back()) != where;
+    //bool case4 = location(msh, ns.front()) == where && location(msh, ns.back()) == where;
+
+    if ( case1 || case2 || case3 )
+    {
+        for (size_t i = 0; i < ns.size(); i++)
+            if ( location(msh, ns[i]) == where )
+                ret.push_back( node2pt(ns[i]) );
+
+        insert_interface();
+    }
+    else // case4, the only possible remaining
+    {
+        size_t i = 0;
+        while ( i < ns.size() && location(msh, ns.at(i)) == where )
+            ret.push_back( node2pt(ns.at(i++)) );
+        insert_interface();
+        while ( i < ns.size() && location(msh, ns.at(i)) != where )
+            i++;
+        while ( i < ns.size() && location(msh, ns.at(i)) == where )
+            ret.push_back( node2pt(ns.at(i++)) );
+    }
+
+    return ret;
+}
+
+template<typename T>
+auto
+barycenter_of_polygon_as_points(const std::vector< point<T, 2> >& pts)
+{
+    point<T, 2> ret;
+
+    T den = 0.0;
+
+    for (size_t i = 2; i < pts.size(); i++)
+    {
+        auto pprev  = pts[i-1]-pts[0];
+        auto pcur   = pts[i]-pts[0];
+        auto d      = det(pprev, pcur) / 2.0;
+        ret         = ret + (pprev + pcur) * d;
+        den         += d;
+    }
+
+    return pts[0] + ret/(den*3);
+}
+
+template<typename T>
+struct temp_tri
+{
+    std::array< point<T,2>, 3 > pts;
+};
+
+template<typename T>
+std::ostream&
+operator<<(std::ostream& os, const temp_tri<T>& t)
+{
+    os << "line([" << t.pts[0].x() << "," << t.pts[1].x() << "],[" << t.pts[0].y() << "," << t.pts[1].y() << "]);" << std::endl;
+    os << "line([" << t.pts[1].x() << "," << t.pts[2].x() << "],[" << t.pts[1].y() << "," << t.pts[2].y() << "]);" << std::endl;
+    os << "line([" << t.pts[2].x() << "," << t.pts[0].x() << "],[" << t.pts[2].y() << "," << t.pts[0].y() << "]);" << std::endl;
+    return os;
+}
+
+template<typename T>
+std::vector<temp_tri<T>>
+triangulate(const cuthho_mesh<T>& msh, const typename cuthho_mesh<T>::cell_type& cl,
+            element_location where)
+{
+    assert( is_cut(msh, cl) );
+
+    auto tp = collect_triangulation_points(msh, cl, where);
+    auto bar = barycenter_of_polygon_as_points(tp);
+
+    std::vector<temp_tri<T>> tris;
+
+    for (size_t i = 0; i < tp.size(); i++)
+    {
+        temp_tri<T> t;
+        t.pts[0] = bar;
+        t.pts[1] = tp[i];
+        t.pts[2] = tp[(i+1)%tp.size()];
+
+        tris.push_back(t);
+    }
+
+    return tris;
+}
+
+template<typename T>
+void test_triangulation(const cuthho_mesh<T>& msh)
+{
+    std::ofstream ofs("triangulation_dump.m");
+    for (auto& cl : msh.cells)
+    {
+        if ( !is_cut(msh, cl) )
+            continue;
+
+        auto tris = triangulate(msh, cl, element_location::IN_NEGATIVE_SIDE);
+
+        for (auto& tri : tris)
+            ofs << tri << std::endl;
+    }
+
+    ofs.close();
+}
+
+template<typename T>
+std::vector< std::pair<point<T,2>, T> >
+integrate(const cuthho_mesh<T>& msh, const typename cuthho_mesh<T>::cell_type& cl,
+          size_t degree, const element_location& where)
+{
+    if ( !is_cut(msh, cl) ) /* Element is not cut, use std. integration */
+        return integrate(msh, cl, degree);
+
+    std::vector< std::pair<point<T,2>, T> > ret;
+    auto tris = triangulate(msh, cl, where);
+    for (auto& tri : tris)
+    {
+        auto qpts = triangle_quadrature(tri.pts[0], tri.pts[1], tri.pts[2], degree);
+        ret.insert(ret.end(), qpts.begin(), qpts.end());
+    }
+
+    return ret;
+}
+
+template<typename T, typename Function>
+T
+test_integration(const cuthho_mesh<T>& msh, const Function& f)
+{
+    T int_val = 0.0;
+    size_t num_elems = 0;
+    for (auto& cl : msh.cells)
+    {
+        bool in_negative_side = (location(msh, cl) == element_location::IN_NEGATIVE_SIDE);
+        bool on_interface = (location(msh, cl) == element_location::ON_INTERFACE);
+        if ( !in_negative_side && !on_interface )
+            continue;
+
+        auto qpts = integrate(msh, cl, 1, element_location::IN_NEGATIVE_SIDE);
+
+        for (auto& qp : qpts)
+            int_val += qp.second * f(qp.first);
+
+        num_elems++;
+    }
+
+    std::cout << "Elements considered for integration: " << num_elems << std::endl;
+
+    return int_val;
+}
 
 template<typename T>
 void dump_mesh(const cuthho_mesh<T>& msh)
@@ -504,8 +705,24 @@ void dump_mesh(const cuthho_mesh<T>& msh)
             auto q = p1 - p0;
             ofs << "quiver(" << p0.x() << ", " << p0.y() << ", " << q.x() << ", " << q.y() << ", 0)" << std::endl;
 
+            for (size_t i = 1; i < cl.user_data.interface.size(); i++)
+            {
+                auto s = cl.user_data.interface.at(i-1);
+                auto l = cl.user_data.interface.at(i) - s;
+                ofs << "quiver(" << s.x() << ", " << s.y() << ", " << l.x() << ", " << l.y() << ", 0)" << std::endl;
+            }
+
             for (auto& ip : cl.user_data.interface)
                 ofs << "plot(" << ip.x() << ", " << ip.y() << ", '*k');" << std::endl;
+
+            auto tpn = collect_triangulation_points(msh, cl, element_location::IN_NEGATIVE_SIDE);
+            auto bn = barycenter_of_polygon_as_points(tpn);
+            ofs << "plot(" << bn.x() << ", " << bn.y() << ", 'dr');" << std::endl;
+
+            auto tpp = collect_triangulation_points(msh, cl, element_location::IN_POSITIVE_SIDE);
+            auto bp = barycenter_of_polygon_as_points(tpp);
+            ofs << "plot(" << bp.x() << ", " << bp.y() << ", 'db');" << std::endl;
+
         }
     }
 
@@ -558,19 +775,32 @@ int main(int argc, char **argv)
     silo.create("cuthho_square.silo");
     silo.add_mesh(msh, "mesh");
 
-    auto level_set_function = [](const typename cuthho_mesh<RealType>::point_type pt) -> RealType {
+    RealType radius = 0.35;
+
+    auto level_set_function = [&](const typename cuthho_mesh<RealType>::point_type pt) -> RealType {
         auto x = pt.x();
         auto y = pt.y();
+
         auto alpha = 0.5;
         auto beta = 0.5;
 
-        return (x-alpha)*(x-alpha) + (y-beta)*(y-beta) - 0.15;
+        return (x-alpha)*(x-alpha) + (y-beta)*(y-beta) - radius*radius;
+        //return std::abs(x+y) + std::abs(x-y) - (1./3.);
     };
 
+    detect_node_position(msh, level_set_function);
     detect_cut_faces(msh, level_set_function);
     detect_cut_cells(msh, level_set_function);
     refine_interface(msh, level_set_function, 3);
     dump_mesh(msh);
+    test_triangulation(msh);
+
+    auto intfunc = [](const point<RealType,2>& pt) -> RealType {
+        return 1;
+    };
+    auto intval = test_integration(msh, intfunc);
+    auto expval = radius*radius*M_PI;
+    std::cout << "Integral relative error: " << 100*std::abs(intval-expval)/expval << "%" <<std::endl;
 
 
     std::vector<RealType> cut_cell_markers;
@@ -593,6 +823,10 @@ int main(int argc, char **argv)
         level_set_vals.push_back( level_set_function(pt) );
     silo.add_variable("mesh", "level_set", level_set_vals.data(), level_set_vals.size(), nodal_variable_t);
 
+    std::vector<RealType> node_pos;
+    for (auto& n : msh.nodes)
+        node_pos.push_back( location(msh, n) == element_location::IN_POSITIVE_SIDE ? +1.0 : -1.0 );
+    silo.add_variable("mesh", "node_pos", node_pos.data(), node_pos.size(), nodal_variable_t);
 
 
     auto rhs_fun = [](const typename cuthho_mesh<RealType>::point_type& pt) -> RealType {

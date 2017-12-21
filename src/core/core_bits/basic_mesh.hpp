@@ -162,7 +162,7 @@ struct mesh {
     typedef point<T,2>          point_type;
     typedef cell<CellUD>        cell_type;
     typedef face<FaceUD>        face_type;
-    typedef node<FaceUD>        node_type;
+    typedef node<NodeUD>        node_type;
     typedef CellUD              cell_ud_type;
     typedef FaceUD              face_ud_type;
     typedef T                   coordinate_type;

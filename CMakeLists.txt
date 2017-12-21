@@ -42,5 +42,7 @@ include_directories("${PROJECT_BINARY_DIR}")
 include_directories("${PROJECT_SOURCE_DIR}")
 
 include_directories(src)
+include_directories(contrib)
 add_subdirectory(apps)
 add_subdirectory(tests)
+

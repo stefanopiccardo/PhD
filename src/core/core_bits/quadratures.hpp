@@ -76,6 +76,56 @@ edge_quadrature(size_t doe)
     return ret;
 }
 
+template<typename T>
+std::vector<std::pair<point<T,2>, T>>
+triangle_quadrature(const point<T,2>& p0, const point<T,2>& p1, const point<T,2>& p2, size_t deg)
+{
+    std::vector<std::pair<point<T,2>, T>>   ret;
+
+    auto v0 = p1 - p0;
+    auto v1 = p2 - p0;
+
+    auto area = std::abs( (v0.x() * v1.y() - v0.y() * v1.x())/2.0 );
+
+    point<T,2>      qp;
+    T               qw;
+
+    switch(deg)
+    {
+        case 0:
+        case 1:
+            qw = area;
+            qp = (p0 + p1 + p2)/3;      ret.push_back( std::make_pair(qp, qw) );
+            return ret;
+
+        case 2:
+            qw = area/3;
+            qp = p0/6 + p1/6 + 2*p2/3;  ret.push_back( std::make_pair(qp, qw) );
+            qp = p0/6 + 2*p1/3 + p2/6;  ret.push_back( std::make_pair(qp, qw) );
+            qp = 2*p0/3 + p1/6 + p2/6;  ret.push_back( std::make_pair(qp, qw) );
+            return ret;
+
+        case 3:
+            qw = 9*area/20;
+            qp = (p0 + p1 + p2)/2;      ret.push_back( std::make_pair(qp, qw) );
+            qw = 2*area/15;
+            qp = (p0 + p1)/2;           ret.push_back( std::make_pair(qp, qw) );
+            qp = (p0 + p2)/2;           ret.push_back( std::make_pair(qp, qw) );
+            qp = (p1 + p2)/2;           ret.push_back( std::make_pair(qp, qw) );
+            qw = area/20;
+            qp = p0;                    ret.push_back( std::make_pair(qp, qw) );
+            qp = p1;                    ret.push_back( std::make_pair(qp, qw) );
+            qp = p2;                    ret.push_back( std::make_pair(qp, qw) );
+            return ret;
+
+        default:
+            throw std::invalid_argument("Quadrature order too high");
+
+    }
+
+    return ret;
+}
+
 
 
 template<typename Mesh>

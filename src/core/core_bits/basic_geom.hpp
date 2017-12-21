@@ -29,7 +29,7 @@
 
 template<typename Mesh>
 size_t
-offset(const Mesh& msh, const typename Mesh::cell_type cl)
+offset(const Mesh& msh, const typename Mesh::cell_type& cl)
 {
     auto itor = std::lower_bound(msh.cells.begin(), msh.cells.end(), cl);
     if ( itor == msh.cells.end() )
@@ -40,7 +40,7 @@ offset(const Mesh& msh, const typename Mesh::cell_type cl)
 
 template<typename Mesh>
 size_t
-offset(const Mesh& msh, const typename Mesh::face_type fc)
+offset(const Mesh& msh, const typename Mesh::face_type& fc)
 {
     auto itor = std::lower_bound(msh.faces.begin(), msh.faces.end(), fc);
     if ( itor == msh.faces.end() )
@@ -50,8 +50,23 @@ offset(const Mesh& msh, const typename Mesh::face_type fc)
 }
 
 template<typename Mesh>
+std::array< typename Mesh::node_type, 4 >
+nodes(const Mesh& msh, const typename Mesh::cell_type& cl)
+{
+    std::array< typename Mesh::node_type, 4 > ret;
+
+    auto ptid2node = [&](size_t ptid) -> auto {
+        return msh.nodes.at(ptid);
+    };
+
+    std::transform( cl.ptids.begin(), cl.ptids.end(), ret.begin(), ptid2node );
+
+    return ret;
+}
+
+template<typename Mesh>
 std::array< typename Mesh::point_type, 4 >
-points(const Mesh& msh, const typename Mesh::cell_type cl)
+points(const Mesh& msh, const typename Mesh::cell_type& cl)
 {
     std::array< typename Mesh::point_type, 4 > ret;
 
@@ -66,7 +81,7 @@ points(const Mesh& msh, const typename Mesh::cell_type cl)
 
 template<typename Mesh>
 std::array< typename Mesh::point_type, 2 >
-points(const Mesh& msh, const typename Mesh::face_type fc)
+points(const Mesh& msh, const typename Mesh::face_type& fc)
 {
     std::array< typename Mesh::point_type, 2 > ret;
 
@@ -80,8 +95,15 @@ points(const Mesh& msh, const typename Mesh::face_type fc)
 }
 
 template<typename Mesh>
+typename Mesh::point_type
+points(const Mesh& msh, const typename Mesh::node_type& node)
+{
+    return msh.points.at( node.ptid );
+}
+
+template<typename Mesh>
 std::array< typename Mesh::face_type, 4 >
-faces(const Mesh& msh, const typename Mesh::cell_type cl)
+faces(const Mesh& msh, const typename Mesh::cell_type& cl)
 {
     typedef typename Mesh::face_type face_type;
     std::array< typename Mesh::face_type, 4 > ret;
