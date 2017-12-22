@@ -43,14 +43,25 @@ using namespace Eigen;
 #include "core/solvers"
 #include "methods/hho"
 
+#include "sol2/sol.hpp"
+
+enum class method_type
+{
+    MIXED_ORDER_INF,
+    EQUAL_ORDER,
+    MIXED_ORDER_SUP
+};
+
 struct convergence_test_params
 {
-    size_t  deg_min;
-    size_t  deg_max;
-    size_t  min_N;
-    size_t  steps;
-    bool    preconditioner;
-    bool    direct;
+    size_t      deg_min;
+    size_t      deg_max;
+    size_t      min_N;
+    size_t      steps;
+    bool        preconditioner;
+    bool        direct;
+    bool        stab_hho;
+    method_type mt;
 
     convergence_test_params() :
         deg_min(0),
@@ -58,7 +69,9 @@ struct convergence_test_params
         min_N(4),
         steps(5),
         preconditioner(true),
-        direct(false)
+        direct(false),
+        stab_hho(true),
+        mt( method_type::EQUAL_ORDER )
     {}
 };
 
@@ -85,7 +98,7 @@ int test_method_convergence(const convergence_test_params& ctp)
 
     for (size_t k = deg_min; k < deg_max+1; k++)
     {
-        std::cout << "Testing degree " << k << ". Expected rate " << k+1 << std::endl;
+        std::cout << "Testing degree " << k << std::endl;
 
         std::vector<RealType> errors_int, errors_mm;
         errors_int.resize(steps);
@@ -105,6 +118,8 @@ int test_method_convergence(const convergence_test_params& ctp)
 
         std::ofstream hho_conv_ofs(ss.str());
 
+        hho_degree_info hdi(k, k);
+
         for (size_t i = 0, N = min_elems; i < steps; i++, N *= 2)
         {
             mesh_init_params<RealType> mip;
@@ -119,13 +134,19 @@ int test_method_convergence(const convergence_test_params& ctp)
                     fc.bndtype = boundary::DIRICHLET;
             }
 
-            auto assembler = make_assembler(msh, k);
+            auto assembler = make_assembler(msh, hdi);
             for (auto& cl : msh.cells)
             {
-                auto gr = make_hho_laplacian(msh, cl, k);
-                Matrix<RealType, Dynamic, Dynamic> stab = make_hho_naive_stabilization(msh, cl, k);
+                auto gr = make_hho_laplacian(msh, cl, hdi);
+
+                Matrix<RealType, Dynamic, Dynamic> stab;
+                if ( ctp.stab_hho )
+                    stab = make_hho_fancy_stabilization(msh, cl, gr.first, hdi);
+                else
+                    stab = make_hho_naive_stabilization(msh, cl, hdi);
+
                 Matrix<RealType, Dynamic, Dynamic> lc = gr.second + stab;
-                Matrix<RealType, Dynamic, 1> f = make_rhs(msh, cl, k, rhs_fun);
+                Matrix<RealType, Dynamic, 1> f = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun);
                 assembler.assemble(msh, cl, lc, f, sol_fun);
             }
 
@@ -152,7 +173,7 @@ int test_method_convergence(const convergence_test_params& ctp)
                 cg_params<RealType> cgp;
                 cgp.apply_preconditioner = preconditioner;
                 cgp.convergence_threshold = 1e-12;
-                cgp.max_iter = assembler.LHS.rows();
+                cgp.max_iter = 3*assembler.LHS.rows();
                 cgp.histfile = ss.str();
                 auto exit_reason = conjugated_gradient(assembler.LHS, assembler.RHS, sol, cgp);
 
@@ -163,12 +184,12 @@ int test_method_convergence(const convergence_test_params& ctp)
             size_t cell_i = 0;
             for (auto& cl : msh.cells)
             {
-                cell_basis<mesh<RealType>, RealType> cb(msh, cl, k);
+                cell_basis<mesh<RealType>, RealType> cb(msh, cl, hdi.cell_degree());
                 auto cbs = cb.size();
 
                 Matrix<RealType, Dynamic, 1> cdofs = sol.block(cell_i*cbs, 0, cbs, 1);
 
-                auto qps = integrate(msh, cl, 2*k);
+                auto qps = integrate(msh, cl, 2*hdi.cell_degree());
                 for (auto& qp : qps)
                 {
                     Matrix<RealType, Dynamic, 1> phi = cb.eval_basis(qp.first);
@@ -176,8 +197,8 @@ int test_method_convergence(const convergence_test_params& ctp)
                     auto real_val = sol_fun( qp.first );
                     errors_int.at(i) += qp.second*(real_val - val)*(real_val - val);
 
-                    Matrix<RealType, Dynamic, Dynamic> mass = make_mass_matrix(msh, cl, k);
-                    Matrix<RealType, Dynamic, 1> rhs = make_rhs(msh, cl, k, sol_fun);
+                    Matrix<RealType, Dynamic, Dynamic> mass = make_mass_matrix(msh, cl, hdi.cell_degree());
+                    Matrix<RealType, Dynamic, 1> rhs = make_rhs(msh, cl, hdi.cell_degree(), sol_fun);
                     Matrix<RealType, Dynamic, 1> real_dofs = mass.llt().solve(rhs);
                     Matrix<RealType, Dynamic, 1> diff = real_dofs - cdofs;
                     errors_mm.at(i) += diff.dot(mass*diff);
@@ -186,7 +207,8 @@ int test_method_convergence(const convergence_test_params& ctp)
                 cell_i++;
             }
 
-            hho_conv_ofs << errors_int.at(i) << " " << errors_mm.at(i) << std::endl;
+            auto mesh_h = diameter(msh, msh.cells.front());
+            hho_conv_ofs << mesh_h << " " << errors_int.at(i) << " " << errors_mm.at(i) << std::endl;
 
             if (i > 0)
             {
@@ -208,7 +230,45 @@ int test_method_convergence(const convergence_test_params& ctp)
 
 int main(int argc, char **argv)
 {
+    sol::state lua;
+    lua.open_libraries(sol::lib::math, sol::lib::base);
+
+    if (argc < 2)
+    {
+        convergence_test_params ctp;
+        test_method_convergence(ctp);
+        return 0;
+    }
+
+    auto r = lua.do_file(argv[1]);
+    if ( !r.valid() )
+    {
+        std::cout << "Problems opening configuration file" << std::endl;
+        return 1;
+    }
+
     convergence_test_params ctp;
+
+    auto deg_min    = lua["deg_min"];   if (deg_min.valid())    ctp.deg_min = deg_min;
+    auto deg_max    = lua["deg_max"];   if (deg_max.valid())    ctp.deg_max = deg_max;
+    auto min_N      = lua["min_N"];     if (min_N.valid())      ctp.min_N = min_N;
+    auto steps      = lua["steps"];     if (steps.valid())      ctp.steps = steps;
+    auto precond    = lua["precond"];   if (precond.valid())    ctp.preconditioner = precond;
+    auto direct     = lua["direct"];    if (direct.valid())     ctp.direct = direct;
+    auto stab_hho   = lua["stab_hho"];  if (stab_hho.valid())   ctp.stab_hho = stab_hho;
+
     test_method_convergence(ctp);
     return 0;
 }
+
+
+/*
+size_t      deg_min;
+size_t      deg_max;
+size_t      min_N;
+size_t      steps;
+bool        preconditioner;
+bool        direct;
+bool        stab_hho;
+method_type mt;
+ */

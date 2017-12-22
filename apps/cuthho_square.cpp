@@ -55,18 +55,18 @@ using namespace Eigen;
 template<typename Mesh>
 std::pair<   Matrix<typename Mesh::coordinate_type, Dynamic, Dynamic>,
              Matrix<typename Mesh::coordinate_type, Dynamic, Dynamic>  >
-make_operator(const Mesh& msh, const typename Mesh::cell_type& cl, size_t degree)
+make_operator(const Mesh& msh, const typename Mesh::cell_type& cl, hho_degree_info hdi)
 {
-    return make_hho_laplacian(msh, cl, degree);
+    return make_hho_laplacian(msh, cl, hdi);
 }
 
 
 
 template<typename Mesh>
 Matrix<typename Mesh::coordinate_type, Dynamic, Dynamic>
-make_stabilization(const Mesh& msh, const typename Mesh::cell_type& cl, size_t degree)
+make_stabilization(const Mesh& msh, const typename Mesh::cell_type& cl, hho_degree_info hdi)
 {
-    return make_hho_naive_stabilization(msh, cl, degree);
+    return make_hho_naive_stabilization(msh, cl, hdi);
 }
 
 /*****************************************************************************
@@ -491,13 +491,15 @@ int main(int argc, char **argv)
             fc.bndtype = boundary::DIRICHLET;
     }
 
-    auto assembler = make_assembler(msh, degree);
+    hho_degree_info hdi(degree+1, degree);
+
+    auto assembler = make_assembler(msh, hdi);
     for (auto& cl : msh.cells)
     {
-        auto gr = make_operator(msh, cl, degree);
-        Matrix<RealType, Dynamic, Dynamic> stab = make_stabilization(msh, cl, degree);
+        auto gr = make_operator(msh, cl, hdi);
+        Matrix<RealType, Dynamic, Dynamic> stab = make_stabilization(msh, cl, hdi);
         Matrix<RealType, Dynamic, Dynamic> lc = gr.second + stab;
-        Matrix<RealType, Dynamic, 1> f = make_rhs(msh, cl, degree, rhs_fun);
+        Matrix<RealType, Dynamic, 1> f = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun);
         assembler.assemble(msh, cl, lc, f, sol_fun);
     }
 
@@ -531,7 +533,7 @@ int main(int argc, char **argv)
     size_t cell_i = 0;
     for (auto& cl : msh.cells)
     {
-        cell_basis<cuthho_mesh<RealType>, RealType> cb(msh, cl, degree);
+        cell_basis<cuthho_mesh<RealType>, RealType> cb(msh, cl, hdi.cell_degree());
         auto cbs = cb.size();
 
         Matrix<RealType, Dynamic, 1> cdofs = sol.block(cell_i*cbs, 0, cbs, 1);
@@ -545,7 +547,7 @@ int main(int argc, char **argv)
         }
 
         RealType e_int_c = 0.0;
-        auto qps = integrate(msh, cl, 2*degree);
+        auto qps = integrate(msh, cl, 2*hdi.cell_degree());
         for (auto& qp : qps)
         {
             Matrix<RealType, Dynamic, 1> phi = cb.eval_basis(qp.first);
@@ -556,8 +558,8 @@ int main(int argc, char **argv)
         error_int_percell.push_back(e_int_c);
         error_int += e_int_c;
 
-        Matrix<RealType, Dynamic, Dynamic> mass = make_mass_matrix(msh, cl, degree);
-        Matrix<RealType, Dynamic, 1> rhs = make_rhs(msh, cl, degree, sol_fun);
+        Matrix<RealType, Dynamic, Dynamic> mass = make_mass_matrix(msh, cl, hdi.cell_degree());
+        Matrix<RealType, Dynamic, 1> rhs = make_rhs(msh, cl, hdi.cell_degree(), sol_fun);
         Matrix<RealType, Dynamic, 1> real_dofs = mass.llt().solve(rhs);
         Matrix<RealType, Dynamic, 1> diff = real_dofs - cdofs;
         RealType e_mm_c = diff.dot(mass*diff);
@@ -571,7 +573,7 @@ int main(int argc, char **argv)
             solution_val.push_back(val);
         }
 
-        Matrix<RealType, Dynamic, Dynamic> stab = make_stabilization(msh, cl, degree);
+        Matrix<RealType, Dynamic, Dynamic> stab = make_stabilization(msh, cl, hdi);
         Matrix<RealType, Dynamic, 1> c_alldofs = assembler.take_local_data(msh, cl, sol, sol_fun);
         auto sv = c_alldofs.dot(stab*c_alldofs);
         stab_val.push_back(sv);
