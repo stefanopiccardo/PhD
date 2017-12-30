@@ -50,6 +50,44 @@ using namespace Eigen;
 
 
 
+template<typename T>
+struct circle_level_set
+{
+    T radius, alpha, beta;
+
+    circle_level_set(T r, T a, T b)
+        : radius(r), alpha(a), beta(b)
+    {}
+
+    T operator()(const typename cuthho_mesh<T>::point_type pt) const
+    {
+        auto x = pt.x();
+        auto y = pt.y();
+
+        return (x-alpha)*(x-alpha) + (y-beta)*(y-beta) - radius*radius;
+    }
+
+    Eigen::Matrix<T,2,1> gradient(const typename cuthho_mesh<T>::point_type pt) const
+    {
+        Eigen::Matrix<T,2,1> ret;
+        ret(0) = 2*pt.x() - 2*alpha;
+        ret(1) = 2*pt.y() - 2*beta;
+        return ret;
+    }
+
+    Eigen::Matrix<T,2,1> normal(const typename cuthho_mesh<T>::point_type pt) const
+    {
+        Eigen::Matrix<T,2,1> ret;
+
+        ret = gradient(pt);
+        return ret/ret.norm();
+    }
+
+};
+
+
+
+
 
 
 template<typename Mesh>
@@ -345,11 +383,57 @@ integrate_interface(const cuthho_mesh<T>& msh, const typename cuthho_mesh<T>::ce
 }
 
 template<typename T, typename Function>
+void
+make_hho_cut_operator(const cuthho_mesh<T>& msh, const typename cuthho_mesh<T>::cell_type& cl,
+                      const Function& level_set_function, hho_degree_info di)
+{
+    assert( is_cut(msh, cl) );
+
+    auto recdeg = di.reconstruction_degree();
+    auto celdeg = di.cell_degree();
+    auto facdeg = di.face_degree();
+
+    cell_basis<cuthho_mesh<T>,T>     cb(msh, cl, recdeg);
+
+    auto rbs = cell_basis<cuthho_mesh<T>,T>::size(recdeg);
+    auto cbs = cell_basis<cuthho_mesh<T>,T>::size(celdeg);
+    auto fbs = cell_basis<cuthho_mesh<T>,T>::size(facdeg);
+
+    Matrix<T, Dynamic, Dynamic> stiff = Matrix<T, Dynamic, Dynamic>::Zero(rbs, rbs);
+    Matrix<T, Dynamic, Dynamic> gr_lhs = Matrix<T, Dynamic, Dynamic>::Zero(rbs-1, rbs-1);
+    Matrix<T, Dynamic, Dynamic> gr_rhs = Matrix<T, Dynamic, Dynamic>::Zero(rbs-1, cbs + 4*fbs);
+
+    auto qps = integrate(msh, cl, 2*recdeg);
+
+    for (auto& qp : qps)
+    {
+        auto dphi = cb.eval_gradients(qp.first);
+        stiff += qp.second * dphi * dphi.transpose();
+    }
+
+
+    auto iqps = integrate_interface(msh, cl, 2*recdeg);
+
+    for (auto& qp : iqps)
+    {
+        auto phi    = cb.eval_basis(qp.first);
+        auto dphi   = cb.eval_gradients(qp.first);
+        auto n      = level_set_function.normal(qp.first);
+
+        stiff -= 2 * qp.second * phi * (dphi * n).transpose();
+        stiff += qp.second * phi * phi.transpose();
+    }
+
+    std::cout << "Stiffness matrix" << std::endl;
+    std::cout << stiff << std::endl;
+}
+
+template<typename T, typename Function>
 std::pair<T, T>
 test_integration(const cuthho_mesh<T>& msh, const Function& f)
 {
-    T int_val = 0.0;
-    T circ_int_val = 0.0;
+    T surf_int_val = 0.0;
+    T line_int_val = 0.0;
 
     for (auto& cl : msh.cells)
     {
@@ -361,23 +445,19 @@ test_integration(const cuthho_mesh<T>& msh, const Function& f)
         auto qpts = integrate(msh, cl, 1, element_location::IN_NEGATIVE_SIDE);
 
         for (auto& qp : qpts)
-            int_val += qp.second * f(qp.first);
+            surf_int_val += qp.second * f(qp.first);
 
         if (on_interface)
         {
             auto iqpts = integrate_interface(msh, cl, 1);
             for (auto& qp : iqpts)
-                circ_int_val += qp.second * f(qp.first);
+                line_int_val += qp.second * f(qp.first);
         }
 
     }
 
-    return std::make_pair(int_val, circ_int_val);
+    return std::make_pair(surf_int_val, line_int_val);
 }
-
-
-
-
 
 int main(int argc, char **argv)
 {
@@ -423,6 +503,7 @@ int main(int argc, char **argv)
 
     RealType radius = 0.35;
 
+    #if 0
     auto level_set_function = [&](const typename cuthho_mesh<RealType>::point_type pt) -> RealType {
         auto x = pt.x();
         auto y = pt.y();
@@ -433,6 +514,10 @@ int main(int argc, char **argv)
         return (x-alpha)*(x-alpha) + (y-beta)*(y-beta) - radius*radius;
         //return std::abs(x+y) + std::abs(x-y) - (1./3.);
     };
+    #endif
+
+    auto level_set_function = circle_level_set<RealType>(radius, 0.5, 0.5);
+
 
     detect_node_position(msh, level_set_function);
     detect_cut_faces(msh, level_set_function);
@@ -497,6 +582,10 @@ int main(int argc, char **argv)
     for (auto& cl : msh.cells)
     {
         auto gr = make_operator(msh, cl, hdi);
+
+        if (is_cut(msh, cl))
+            make_hho_cut_operator(msh, cl, level_set_function, hdi);
+
         Matrix<RealType, Dynamic, Dynamic> stab = make_stabilization(msh, cl, hdi);
         Matrix<RealType, Dynamic, Dynamic> lc = gr.second + stab;
         Matrix<RealType, Dynamic, 1> f = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun);
