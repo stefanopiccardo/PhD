@@ -96,13 +96,21 @@ int test_method_convergence(const convergence_test_params& ctp)
         return std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
     };
 
+    auto sol_grad = [](const typename mesh<RealType>::point_type& pt) -> Matrix<RealType, 1, 2> {
+        Matrix<RealType, 1, 2> ret;
+        ret(0) = M_PI*std::cos(M_PI*pt.x())*std::sin(M_PI*pt.y());
+        ret(1) = M_PI*std::sin(M_PI*pt.x())*std::cos(M_PI*pt.y());
+        return ret;
+    };
+
     for (size_t k = deg_min; k < deg_max+1; k++)
     {
         std::cout << "Testing degree " << k << std::endl;
 
-        std::vector<RealType> errors_int, errors_mm;
+        std::vector<RealType> errors_int, errors_mm, errors_energy;
         errors_int.resize(steps);
         errors_mm.resize(steps);
+        errors_energy.resize(steps);
 
         for (size_t i = 0; i < steps; i++)
         {
@@ -118,7 +126,7 @@ int test_method_convergence(const convergence_test_params& ctp)
 
         std::ofstream hho_conv_ofs(ss.str());
 
-        hho_degree_info hdi(k, k);
+        hho_degree_info hdi(k+1, k);
 
         for (size_t i = 0, N = min_elems; i < steps; i++, N *= 2)
         {
@@ -204,6 +212,26 @@ int test_method_convergence(const convergence_test_params& ctp)
                     errors_mm.at(i) += diff.dot(mass*diff);
                 }
 
+                cell_basis<mesh<RealType>, RealType> rb(msh, cl, hdi.reconstruction_degree());
+                auto rbs = rb.size();
+
+                auto qps2 = integrate(msh, cl, 2*hdi.reconstruction_degree());
+                for (auto& qp : qps)
+                {
+                    auto alldofs = assembler.take_local_data(msh, cl, sol, sol_fun);
+                    auto gr = make_hho_laplacian(msh, cl, hdi);
+
+                    Matrix<RealType, Dynamic, 1> recdofs = gr.first * alldofs;
+                    Matrix<RealType, Dynamic, 2> dphi = rb.eval_gradients(qp.first);
+                    Matrix<RealType, 1, 2> gval = Matrix<RealType, 1, 2>::Zero();
+
+                    for (size_t i = 1; i < dphi.rows(); i++)
+                        gval = gval + recdofs(i-1)*dphi.block(i, 0, 1, 2);
+
+                    auto real_gval = sol_grad( qp.first );
+                    errors_energy.at(i) += qp.second*(real_gval - gval).dot(real_gval - gval);
+                }
+
                 cell_i++;
             }
 
@@ -218,7 +246,11 @@ int test_method_convergence(const convergence_test_params& ctp)
 
                 auto error_prev_mm = sqrt(errors_mm.at(i-1));
                 auto error_cur_mm = sqrt(errors_mm.at(i));
-                std::cout << log10(error_prev_mm/error_cur_mm) / log10(2) << std::endl;
+                std::cout << log10(error_prev_mm/error_cur_mm) / log10(2) << "\t\t";
+
+                auto error_prev_energy = sqrt(errors_energy.at(i-1));
+                auto error_cur_energy = sqrt(errors_energy.at(i));
+                std::cout << log10(error_prev_energy/error_cur_energy) / log10(2) << std::endl;
             }
         }
 

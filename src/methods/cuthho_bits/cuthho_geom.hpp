@@ -226,6 +226,52 @@ detect_cut_cells(cuthho_mesh<T>& msh, const Function& level_set_function)
     }
 }
 
+template<typename T>
+std::array< typename cuthho_mesh<T>::point_type, 2 >
+points(const cuthho_mesh<T>& msh,
+       const typename cuthho_mesh<T>::face_type& fc,
+       const element_location& where)
+{
+    if ( location(msh, fc) != where && location(msh, fc) != element_location::ON_INTERFACE )
+        throw std::invalid_argument("This face has no points where requested");
+
+    auto nds = nodes(msh, fc);
+
+    auto pts = points(msh, fc);
+
+    if ( !is_cut(msh, fc) )
+        return pts;
+
+    if ( location(msh, nds[0]) == where && location(msh, nds[1]) != where )
+        pts[1] = fc.user_data.intersection_point;
+    else if ( location(msh, nds[0]) != where && location(msh, nds[1]) == where )
+        pts[0] = fc.user_data.intersection_point;
+    else
+        throw std::logic_error("Invalid point configuration");
+
+    return pts;
+}
+
+template<typename T>
+auto
+barycenter(const std::vector< point<T, 2> >& pts)
+{
+    point<T, 2> ret;
+
+    T den = 0.0;
+
+    for (size_t i = 2; i < pts.size(); i++)
+    {
+        auto pprev  = pts[i-1]-pts[0];
+        auto pcur   = pts[i]-pts[0];
+        auto d      = det(pprev, pcur) / 2.0;
+        ret         = ret + (pprev + pcur) * d;
+        den         += d;
+    }
+
+    return pts[0] + ret/(den*3);
+}
+
 template<typename T, typename Function>
 void
 refine_interface(cuthho_mesh<T>& msh, typename cuthho_mesh<T>::cell_type& cl,
@@ -347,25 +393,134 @@ collect_triangulation_points(const cuthho_mesh<T>& msh,
     return ret;
 }
 
+
 template<typename T>
-auto
-barycenter(const std::vector< point<T, 2> >& pts)
+struct temp_tri
 {
-    point<T, 2> ret;
+    std::array< point<T,2>, 3 > pts;
+};
 
-    T den = 0.0;
+template<typename T>
+std::ostream&
+operator<<(std::ostream& os, const temp_tri<T>& t)
+{
+    os << "line([" << t.pts[0].x() << "," << t.pts[1].x() << "],[" << t.pts[0].y() << "," << t.pts[1].y() << "]);" << std::endl;
+    os << "line([" << t.pts[1].x() << "," << t.pts[2].x() << "],[" << t.pts[1].y() << "," << t.pts[2].y() << "]);" << std::endl;
+    os << "line([" << t.pts[2].x() << "," << t.pts[0].x() << "],[" << t.pts[2].y() << "," << t.pts[0].y() << "]);" << std::endl;
+    return os;
+}
 
-    for (size_t i = 2; i < pts.size(); i++)
+template<typename T>
+std::vector<temp_tri<T>>
+triangulate(const cuthho_mesh<T>& msh, const typename cuthho_mesh<T>::cell_type& cl,
+            element_location where)
+{
+    assert( is_cut(msh, cl) );
+
+    auto tp = collect_triangulation_points(msh, cl, where);
+    auto bar = barycenter(tp);
+
+    std::vector<temp_tri<T>> tris;
+
+    for (size_t i = 0; i < tp.size(); i++)
     {
-        auto pprev  = pts[i-1]-pts[0];
-        auto pcur   = pts[i]-pts[0];
-        auto d      = det(pprev, pcur) / 2.0;
-        ret         = ret + (pprev + pcur) * d;
-        den         += d;
+        temp_tri<T> t;
+        t.pts[0] = bar;
+        t.pts[1] = tp[i];
+        t.pts[2] = tp[(i+1)%tp.size()];
+
+        tris.push_back(t);
     }
 
-    return pts[0] + ret/(den*3);
+    return tris;
 }
+
+template<typename T>
+std::vector< std::pair<point<T,2>, T> >
+integrate(const cuthho_mesh<T>& msh, const typename cuthho_mesh<T>::cell_type& cl,
+          size_t degree, const element_location& where)
+{
+    if ( !is_cut(msh, cl) ) /* Element is not cut, use std. integration */
+        return integrate(msh, cl, degree);
+
+    std::vector< std::pair<point<T,2>, T> > ret;
+    auto tris = triangulate(msh, cl, where);
+    for (auto& tri : tris)
+    {
+        auto qpts = triangle_quadrature(tri.pts[0], tri.pts[1], tri.pts[2], degree);
+        ret.insert(ret.end(), qpts.begin(), qpts.end());
+    }
+
+    return ret;
+}
+
+template<typename T>
+std::vector< std::pair<point<T,2>, T> >
+integrate(const cuthho_mesh<T>& msh, const typename cuthho_mesh<T>::face_type& fc,
+          size_t degree, const element_location& where)
+{
+    std::vector< std::pair<point<T,2>, T> > ret;
+
+    if ( location(msh, fc) != where && location(msh, fc) != element_location::ON_INTERFACE )
+        return ret;
+
+    if ( !is_cut(msh, fc) ) /* Element is not cut, use std. integration */
+        return integrate(msh, fc, degree);
+
+    auto pts = points(msh, fc, where);
+
+    auto scale = pts[1] - pts[0];
+    auto meas = scale.to_vector().norm();
+
+    auto qps = edge_quadrature<T>(degree);  // <-- This has to be changed! Slows down everything!
+
+    for (auto itor = qps.begin(); itor != qps.end(); itor++)
+    {
+        auto qp = *itor;
+        auto p = qp.first.x() * scale + pts[0];
+        auto w = qp.second * meas;
+
+        ret.push_back( std::make_pair(p, w) );
+    }
+
+    return ret;
+}
+
+template<typename T>
+std::vector< std::pair<point<T,2>, T> >
+integrate_interface(const cuthho_mesh<T>& msh, const typename cuthho_mesh<T>::cell_type& cl,
+                    size_t degree)
+{
+    assert( is_cut(msh, cl) );
+
+    std::vector< std::pair<point<T,2>, T> > ret;
+
+    auto qps = edge_quadrature<T>(degree);  // <-- This has to be changed! Slows down everything!
+
+    for (size_t i = 1; i < cl.user_data.interface.size(); i++)
+    {
+        auto p0 = cl.user_data.interface.at(i-1);
+        auto p1 = cl.user_data.interface.at(i);
+
+        auto scale = p1 - p0;
+        auto meas = scale.to_vector().norm();
+
+        for (auto itor = qps.begin(); itor != qps.end(); itor++)
+        {
+            auto qp = *itor;
+            auto p = qp.first.x() * scale + p0;
+            auto w = qp.second * meas;
+
+            ret.push_back( std::make_pair(p, w) );
+        }
+    }
+
+    return ret;
+}
+
+
+
+
 
 
 template<typename T>

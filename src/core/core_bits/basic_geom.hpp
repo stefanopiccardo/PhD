@@ -65,6 +65,21 @@ nodes(const Mesh& msh, const typename Mesh::cell_type& cl)
 }
 
 template<typename Mesh>
+std::array< typename Mesh::node_type, 2 >
+nodes(const Mesh& msh, const typename Mesh::face_type& fc)
+{
+    std::array< typename Mesh::node_type, 2 > ret;
+
+    auto ptid2node = [&](size_t ptid) -> auto {
+        return msh.nodes.at(ptid);
+    };
+
+    std::transform( fc.ptids.begin(), fc.ptids.end(), ret.begin(), ptid2node );
+
+    return ret;
+}
+
+template<typename Mesh>
 std::array< typename Mesh::point_type, 4 >
 points(const Mesh& msh, const typename Mesh::cell_type& cl)
 {

@@ -86,27 +86,6 @@ struct circle_level_set
 };
 
 
-
-
-
-
-template<typename Mesh>
-std::pair<   Matrix<typename Mesh::coordinate_type, Dynamic, Dynamic>,
-             Matrix<typename Mesh::coordinate_type, Dynamic, Dynamic>  >
-make_operator(const Mesh& msh, const typename Mesh::cell_type& cl, hho_degree_info hdi)
-{
-    return make_hho_laplacian(msh, cl, hdi);
-}
-
-
-
-template<typename Mesh>
-Matrix<typename Mesh::coordinate_type, Dynamic, Dynamic>
-make_stabilization(const Mesh& msh, const typename Mesh::cell_type& cl, hho_degree_info hdi)
-{
-    return make_hho_naive_stabilization(msh, cl, hdi);
-}
-
 /*****************************************************************************
  *   Test stuff
  *****************************************************************************/
@@ -272,46 +251,7 @@ test_mass_matrices(const Mesh& msh, size_t degree)
 
 
 
-template<typename T>
-struct temp_tri
-{
-    std::array< point<T,2>, 3 > pts;
-};
 
-template<typename T>
-std::ostream&
-operator<<(std::ostream& os, const temp_tri<T>& t)
-{
-    os << "line([" << t.pts[0].x() << "," << t.pts[1].x() << "],[" << t.pts[0].y() << "," << t.pts[1].y() << "]);" << std::endl;
-    os << "line([" << t.pts[1].x() << "," << t.pts[2].x() << "],[" << t.pts[1].y() << "," << t.pts[2].y() << "]);" << std::endl;
-    os << "line([" << t.pts[2].x() << "," << t.pts[0].x() << "],[" << t.pts[2].y() << "," << t.pts[0].y() << "]);" << std::endl;
-    return os;
-}
-
-template<typename T>
-std::vector<temp_tri<T>>
-triangulate(const cuthho_mesh<T>& msh, const typename cuthho_mesh<T>::cell_type& cl,
-            element_location where)
-{
-    assert( is_cut(msh, cl) );
-
-    auto tp = collect_triangulation_points(msh, cl, where);
-    auto bar = barycenter(tp);
-
-    std::vector<temp_tri<T>> tris;
-
-    for (size_t i = 0; i < tp.size(); i++)
-    {
-        temp_tri<T> t;
-        t.pts[0] = bar;
-        t.pts[1] = tp[i];
-        t.pts[2] = tp[(i+1)%tp.size()];
-
-        tris.push_back(t);
-    }
-
-    return tris;
-}
 
 template<typename T>
 void test_triangulation(const cuthho_mesh<T>& msh)
@@ -331,61 +271,12 @@ void test_triangulation(const cuthho_mesh<T>& msh)
     ofs.close();
 }
 
-template<typename T>
-std::vector< std::pair<point<T,2>, T> >
-integrate(const cuthho_mesh<T>& msh, const typename cuthho_mesh<T>::cell_type& cl,
-          size_t degree, const element_location& where)
-{
-    if ( !is_cut(msh, cl) ) /* Element is not cut, use std. integration */
-        return integrate(msh, cl, degree);
-
-    std::vector< std::pair<point<T,2>, T> > ret;
-    auto tris = triangulate(msh, cl, where);
-    for (auto& tri : tris)
-    {
-        auto qpts = triangle_quadrature(tri.pts[0], tri.pts[1], tri.pts[2], degree);
-        ret.insert(ret.end(), qpts.begin(), qpts.end());
-    }
-
-    return ret;
-}
-
-template<typename T>
-std::vector< std::pair<point<T,2>, T> >
-integrate_interface(const cuthho_mesh<T>& msh, const typename cuthho_mesh<T>::cell_type& cl,
-                    size_t degree)
-{
-    assert( is_cut(msh, cl) );
-
-    std::vector< std::pair<point<T,2>, T> > ret;
-
-    auto qps = edge_quadrature<T>(degree);  // <-- This has to be changed! Slows down everything!
-
-    for (size_t i = 1; i < cl.user_data.interface.size(); i++)
-    {
-        auto p0 = cl.user_data.interface.at(i-1);
-        auto p1 = cl.user_data.interface.at(i);
-
-        auto scale = p1 - p0;
-        auto meas = scale.to_vector().norm();
-
-        for (auto itor = qps.begin(); itor != qps.end(); itor++)
-        {
-            auto qp = *itor;
-            auto p = qp.first.x() * scale + p0;
-            auto w = qp.second * meas;
-
-            ret.push_back( std::make_pair(p, w) );
-        }
-    }
-
-    return ret;
-}
 
 template<typename T, typename Function>
-void
-make_hho_cut_operator(const cuthho_mesh<T>& msh, const typename cuthho_mesh<T>::cell_type& cl,
-                      const Function& level_set_function, hho_degree_info di)
+std::pair<   Matrix<typename cuthho_mesh<T>::coordinate_type, Dynamic, Dynamic>,
+             Matrix<typename cuthho_mesh<T>::coordinate_type, Dynamic, Dynamic>  >
+make_hho_cut_laplacian(const cuthho_mesh<T>& msh, const typename cuthho_mesh<T>::cell_type& cl,
+                       const Function& level_set_function, hho_degree_info di)
 {
     assert( is_cut(msh, cl) );
 
@@ -397,7 +288,7 @@ make_hho_cut_operator(const cuthho_mesh<T>& msh, const typename cuthho_mesh<T>::
 
     auto rbs = cell_basis<cuthho_mesh<T>,T>::size(recdeg);
     auto cbs = cell_basis<cuthho_mesh<T>,T>::size(celdeg);
-    auto fbs = cell_basis<cuthho_mesh<T>,T>::size(facdeg);
+    auto fbs = face_basis<cuthho_mesh<T>,T>::size(facdeg);
 
     Matrix<T, Dynamic, Dynamic> stiff = Matrix<T, Dynamic, Dynamic>::Zero(rbs, rbs);
     Matrix<T, Dynamic, Dynamic> gr_lhs = Matrix<T, Dynamic, Dynamic>::Zero(rbs-1, rbs-1);
@@ -413,27 +304,90 @@ make_hho_cut_operator(const cuthho_mesh<T>& msh, const typename cuthho_mesh<T>::
 
 
     auto iqps = integrate_interface(msh, cl, 2*recdeg);
-
     for (auto& qp : iqps)
     {
         auto phi    = cb.eval_basis(qp.first);
         auto dphi   = cb.eval_gradients(qp.first);
         auto n      = level_set_function.normal(qp.first);
 
-        stiff -= 2 * qp.second * phi * (dphi * n).transpose();
+        stiff -= qp.second * phi * (dphi * n).transpose();
+        stiff -= qp.second * (dphi * n) * phi.transpose();
         stiff += qp.second * phi * phi.transpose();
     }
 
-    std::cout << "Stiffness matrix" << std::endl;
-    std::cout << stiff << std::endl;
+    gr_lhs = stiff.block(1, 1, rbs-1, rbs-1);
+    gr_rhs.block(0, 0, rbs-1, cbs) = stiff.block(1, 0, rbs-1, cbs);
+
+    auto ns = normals(msh, cl);
+    auto fcs = faces(msh, cl);
+    for (size_t i = 0; i < fcs.size(); i++)
+    {
+        auto fc = fcs[i];
+        auto n = ns[i];
+
+        face_basis<cuthho_mesh<T>,T> fb(msh, fc, facdeg);
+
+        auto qps = integrate(msh, fc, 2*recdeg, element_location::IN_NEGATIVE_SIDE);
+        for (auto& qp : qps)
+        {
+            auto c_phi = cb.eval_basis(qp.first);
+            auto f_phi = fb.eval_basis(qp.first);
+            auto r_dphi_tmp = cb.eval_gradients(qp.first);
+            auto r_dphi = r_dphi_tmp.block(1, 0, rbs-1, 2);
+            gr_rhs.block(0, cbs+i*fbs, rbs-1, fbs) += qp.second * (r_dphi * n) * f_phi.transpose();
+            gr_rhs.block(0, 0, rbs-1, cbs) -= qp.second * (r_dphi * n) * c_phi.transpose();
+        }
+    }
+
+    Matrix<T, Dynamic, Dynamic> oper = gr_lhs.llt().solve(gr_rhs);
+    Matrix<T, Dynamic, Dynamic> data = gr_rhs.transpose() * oper;
+
+    return std::make_pair(oper, data);
 }
 
+
 template<typename T, typename Function>
+std::pair<   Matrix<typename cuthho_mesh<T>::coordinate_type, Dynamic, Dynamic>,
+             Matrix<typename cuthho_mesh<T>::coordinate_type, Dynamic, Dynamic>  >
+make_operator(const cuthho_mesh<T>& msh, const typename cuthho_mesh<T>::cell_type& cl,
+              const Function& level_set_function, hho_degree_info hdi)
+{
+    if ( is_cut(msh, cl) )
+        return make_hho_cut_laplacian(msh, cl, level_set_function, hdi);
+    else
+        return make_hho_laplacian(msh, cl, hdi);
+}
+
+
+
+template<typename Mesh>
+Matrix<typename Mesh::coordinate_type, Dynamic, Dynamic>
+make_stabilization(const Mesh& msh, const typename Mesh::cell_type& cl, hho_degree_info hdi)
+{
+    return make_hho_naive_stabilization(msh, cl, hdi);
+}
+
+
+
+template<typename T>
+std::string quiver(const point<T,2>& p, const Eigen::Matrix<T,2,1>& v)
+{
+    std::stringstream ss;
+
+    ss << "quiver(" << p.x() << ", " << p.y() << ", ";
+    ss << v(0) << ", " << v(1) << ", 0);";
+
+    return ss.str();
+}
+
+template<typename T, typename Function1, typename Function2>
 std::pair<T, T>
-test_integration(const cuthho_mesh<T>& msh, const Function& f)
+test_integration(const cuthho_mesh<T>& msh, const Function1& f, const Function2& level_set_function)
 {
     T surf_int_val = 0.0;
     T line_int_val = 0.0;
+
+    std::ofstream ofs("normals.m");
 
     for (auto& cl : msh.cells)
     {
@@ -451,10 +405,30 @@ test_integration(const cuthho_mesh<T>& msh, const Function& f)
         {
             auto iqpts = integrate_interface(msh, cl, 1);
             for (auto& qp : iqpts)
+            {
                 line_int_val += qp.second * f(qp.first);
+                auto n = level_set_function.normal(qp.first);
+                ofs << quiver(qp.first, n) << std::endl;
+            }
         }
 
     }
+
+    ofs.close();
+
+    std::ofstream ofs_int("face_ints.m");
+
+    for (auto& fc : msh.faces)
+    {
+        auto qpts = integrate(msh, fc, 2, element_location::IN_NEGATIVE_SIDE);
+        for (auto& qp : qpts)
+        {
+            ofs_int << "hold on;" << std::endl;
+            ofs_int << "plot(" << qp.first.x() << ", " << qp.first.y() << ", 'ko');" << std::endl;
+        }
+    }
+
+    ofs_int.close();
 
     return std::make_pair(surf_int_val, line_int_val);
 }
@@ -529,7 +503,7 @@ int main(int argc, char **argv)
     auto intfunc = [](const point<RealType,2>& pt) -> RealType {
         return 1;
     };
-    auto ints = test_integration(msh, intfunc);
+    auto ints = test_integration(msh, intfunc, level_set_function);
     auto expval = radius*radius*M_PI;
     std::cout << "Integral relative error: " << 100*std::abs(ints.first-expval)/expval << "%" <<std::endl;
     expval = 2*M_PI*radius;
@@ -581,10 +555,7 @@ int main(int argc, char **argv)
     auto assembler = make_assembler(msh, hdi);
     for (auto& cl : msh.cells)
     {
-        auto gr = make_operator(msh, cl, hdi);
-
-        if (is_cut(msh, cl))
-            make_hho_cut_operator(msh, cl, level_set_function, hdi);
+        auto gr = make_operator(msh, cl, level_set_function, hdi);
 
         Matrix<RealType, Dynamic, Dynamic> stab = make_stabilization(msh, cl, hdi);
         Matrix<RealType, Dynamic, Dynamic> lc = gr.second + stab;
