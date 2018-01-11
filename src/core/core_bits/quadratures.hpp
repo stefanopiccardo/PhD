@@ -90,6 +90,11 @@ triangle_quadrature(const point<T,2>& p0, const point<T,2>& p1, const point<T,2>
     point<T,2>      qp;
     T               qw;
 
+    T               a1 = (6. - std::sqrt(15.)) / 21;
+    T               a2 = (6. + std::sqrt(15.)) / 21;
+    T               w1 = (155. - std::sqrt(15.)) / 1200;
+    T               w2 = (155. + std::sqrt(15.)) / 1200;
+
     switch(deg)
     {
         case 0:
@@ -107,7 +112,7 @@ triangle_quadrature(const point<T,2>& p0, const point<T,2>& p1, const point<T,2>
 
         case 3:
             qw = 9*area/20;
-            qp = (p0 + p1 + p2)/2;      ret.push_back( std::make_pair(qp, qw) );
+            qp = (p0 + p1 + p2)/3;      ret.push_back( std::make_pair(qp, qw) );
             qw = 2*area/15;
             qp = (p0 + p1)/2;           ret.push_back( std::make_pair(qp, qw) );
             qp = (p0 + p2)/2;           ret.push_back( std::make_pair(qp, qw) );
@@ -118,6 +123,20 @@ triangle_quadrature(const point<T,2>& p0, const point<T,2>& p1, const point<T,2>
             qp = p2;                    ret.push_back( std::make_pair(qp, qw) );
             return ret;
 
+        case 4:
+        case 5:
+            qw = 9*area/40;
+            qp = (p0 + p1 + p2)/3;      ret.push_back( std::make_pair(qp, qw) );
+            qw = w1 * area;
+            qp = a1*p0 + a1*p1 + (1-2*a1)*p2;   ret.push_back( std::make_pair(qp, qw) );
+            qp = a1*p0 + (1-2*a1)*p1 + a1*p2;   ret.push_back( std::make_pair(qp, qw) );
+            qp = (1-2*a1)*p0 + a1*p1 + a1*p2;   ret.push_back( std::make_pair(qp, qw) );
+            qw = w2 * area;
+            qp = a2*p0 + a2*p1 + (1-2*a2)*p2;   ret.push_back( std::make_pair(qp, qw) );
+            qp = a2*p0 + (1-2*a2)*p1 + a2*p2;   ret.push_back( std::make_pair(qp, qw) );
+            qp = (1-2*a2)*p0 + a2*p1 + a2*p2;   ret.push_back( std::make_pair(qp, qw) );
+            return ret;
+            
         default:
             throw std::invalid_argument("Quadrature order too high");
 
