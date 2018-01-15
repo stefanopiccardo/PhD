@@ -283,7 +283,7 @@ template<typename T>
 T
 cell_eta(const cuthho_mesh<T>& msh, const typename cuthho_mesh<T>::cell_type& cl)
 {
-    return 20*measure(msh, cl);
+    return measure(msh, cl);
 }
 
 
@@ -309,8 +309,8 @@ make_hho_cut_laplacian(const cuthho_mesh<T>& msh, const typename cuthho_mesh<T>:
     Matrix<T, Dynamic, Dynamic> gr_lhs = Matrix<T, Dynamic, Dynamic>::Zero(rbs-1, rbs-1);
     Matrix<T, Dynamic, Dynamic> gr_rhs = Matrix<T, Dynamic, Dynamic>::Zero(rbs-1, cbs + 4*fbs);
 
+    /* Cell term (cut) */
     auto qps = integrate(msh, cl, 2*recdeg, element_location::IN_NEGATIVE_SIDE);
-
     for (auto& qp : qps)
     {
         auto dphi = cb.eval_gradients(qp.first);
@@ -319,6 +319,7 @@ make_hho_cut_laplacian(const cuthho_mesh<T>& msh, const typename cuthho_mesh<T>:
 
     auto hT = measure(msh, cl);
 
+    /* Interface term */
     auto iqps = integrate_interface(msh, cl, 2*recdeg);
     for (auto& qp : iqps)
     {
@@ -342,7 +343,7 @@ make_hho_cut_laplacian(const cuthho_mesh<T>& msh, const typename cuthho_mesh<T>:
         auto n = ns[i];
 
         face_basis<cuthho_mesh<T>,T> fb(msh, fc, facdeg);
-
+        /* Terms on faces */
         auto qps = integrate(msh, fc, 2*recdeg, element_location::IN_NEGATIVE_SIDE);
         for (auto& qp : qps)
         {
@@ -461,7 +462,8 @@ make_rhs(const cuthho_mesh<T>& msh, const typename cuthho_mesh<T>::cell_type& cl
             auto phi = cb.eval_basis(qp.first);
             ret += qp.second * phi * f(qp.first);
         }
-/*
+
+        /*
         auto qpsi = integrate_interface(msh, cl, degree);
         for (auto& qp : qpsi)
         {
@@ -471,7 +473,8 @@ make_rhs(const cuthho_mesh<T>& msh, const typename cuthho_mesh<T>::cell_type& cl
 
             ret += qp.second * bcs(qp.first) * ( phi * cell_eta(msh, cl)/hT - dphi*n);
         }
-*/
+        */
+
         return ret;  
     }
     else
@@ -698,13 +701,15 @@ int main(int argc, char **argv)
     std::vector<RealType>   solution_val;
     std::vector<RealType>   stab_val;
 
+    Matrix<RealType, Dynamic, 1> realsol = assembler.expand_solution(msh, sol);
+
     size_t cell_i = 0;
     for (auto& cl : msh.cells)
     {
         cell_basis<cuthho_mesh<RealType>, RealType> cb(msh, cl, hdi.cell_degree());
         auto cbs = cb.size();
 
-        Matrix<RealType, Dynamic, 1> cdofs = sol.block(cell_i*cbs, 0, cbs, 1);
+        Matrix<RealType, Dynamic, 1> cdofs = realsol.block(cell_i*cbs, 0, cbs, 1);
 
         auto tps = make_test_points(msh, cl);
         for (auto& tp : tps)

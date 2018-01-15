@@ -235,13 +235,11 @@ points(const cuthho_mesh<T>& msh,
     if ( location(msh, fc) != where && location(msh, fc) != element_location::ON_INTERFACE )
         throw std::invalid_argument("This face has no points where requested");
 
-    auto nds = nodes(msh, fc);
-
     auto pts = points(msh, fc);
-
     if ( !is_cut(msh, fc) )
         return pts;
 
+    auto nds = nodes(msh, fc);
     if ( location(msh, nds[0]) == where && location(msh, nds[1]) != where )
         pts[1] = fc.user_data.intersection_point;
     else if ( location(msh, nds[0]) != where && location(msh, nds[1]) == where )
@@ -578,4 +576,303 @@ void dump_mesh(const cuthho_mesh<T>& msh)
     ofs << "t = linspace(0,2*pi,1000);plot(sqrt(0.15)*cos(t)+0.5, sqrt(0.15)*sin(t)+0.5)" << std::endl;
 
     ofs.close();
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+template<typename T>
+class assembler<cuthho_mesh<T>>
+{
+    std::vector<size_t>                 cell_compress_table, face_compress_table;
+    std::vector<size_t>                 cell_expand_table, face_expand_table;
+
+    hho_degree_info                     di;
+
+    std::vector< Triplet<T> >           triplets;
+
+    size_t num_all_cells, num_asm_cells, num_notasm_cells;
+    size_t num_all_faces, num_asm_faces, num_notasm_faces;
+    
+    class assembly_index
+    {
+        size_t  idx;
+        bool    assem;
+
+    public:
+        assembly_index(size_t i, bool as)
+            : idx(i), assem(as)
+        {}
+
+        operator size_t() const
+        {
+            if (!assem)
+                throw std::logic_error("Invalid assembly_index");
+
+            return idx;
+        }
+
+        bool assemble() const
+        {
+            return assem;
+        }
+
+        friend std::ostream& operator<<(std::ostream& os, const assembly_index& as)
+        {
+            os << "(" << as.idx << "," << as.assem << ")";
+            return os;
+        }
+    };
+
+    bool cell_needs_assembly(const cuthho_mesh<T>& msh,
+                             const typename cuthho_mesh<T>::cell_type& cl)
+    {
+        return location(msh, cl) == element_location::IN_NEGATIVE_SIDE ||
+               location(msh, cl) == element_location::ON_INTERFACE;
+    }
+
+    bool face_needs_assembly(const cuthho_mesh<T>& msh,
+                             const typename cuthho_mesh<T>::face_type& fc)
+    {
+        return location(msh, fc) == element_location::IN_NEGATIVE_SIDE ||
+               location(msh, fc) == element_location::ON_INTERFACE;
+    }
+
+public:
+
+    SparseMatrix<T>         LHS;
+    Matrix<T, Dynamic, 1>   RHS;
+
+    assembler(const cuthho_mesh<T>& msh, hho_degree_info hdi)
+        : di(hdi)
+    {
+        auto fna = [&](const typename cuthho_mesh<T>::face_type& fc) -> bool {
+            return face_needs_assembly(msh, fc);
+        };
+        
+        num_all_faces = msh.faces.size();
+        num_asm_faces = std::count_if(msh.faces.begin(), msh.faces.end(), fna);
+        num_notasm_faces = num_all_faces - num_asm_faces;
+
+        auto cna = [&](const typename cuthho_mesh<T>::cell_type& cl) -> bool {
+            return cell_needs_assembly(msh, cl);
+        }
+        ;
+        num_all_cells = msh.cells.size();
+        num_asm_cells = std::count_if(msh.cells.begin(), msh.cells.end(), cna);
+        num_notasm_cells = num_all_cells - num_asm_cells;
+
+        cell_compress_table.resize( num_all_cells );
+        cell_expand_table.resize( num_asm_cells );
+        face_compress_table.resize( num_all_faces );
+        face_expand_table.resize( num_asm_faces );
+
+        size_t compressed_offset = 0;
+        for (size_t i = 0; i < num_all_cells; i++)
+        {
+            auto cl = msh.cells[i];
+            if ( cell_needs_assembly(msh, cl) )
+            {
+                cell_compress_table.at(i) = compressed_offset;
+                cell_expand_table.at(compressed_offset) = i;
+                compressed_offset++;
+            }
+        }
+
+        compressed_offset = 0;
+        for (size_t i = 0; i < num_all_faces; i++)
+        {
+            auto fc = msh.faces[i];
+            if ( face_needs_assembly(msh, fc) )
+            {
+                face_compress_table.at(i) = compressed_offset;
+                face_expand_table.at(compressed_offset) = i;
+                compressed_offset++;
+            }
+        }
+
+        auto celdeg = di.cell_degree();
+        auto facdeg = di.face_degree();
+
+        auto cbs = cell_basis<cuthho_mesh<T>,T>::size(celdeg);
+        auto fbs = face_basis<cuthho_mesh<T>,T>::size(facdeg);
+
+        auto system_size = cbs * num_asm_cells + fbs * num_asm_faces;
+
+        LHS = SparseMatrix<T>( system_size, system_size );
+        RHS = Matrix<T, Dynamic, 1>::Zero( system_size );
+    }
+
+    void dump_tables() const
+    {
+        std::cout << "Compress table: " << std::endl;
+        for (size_t i = 0; i < cell_compress_table.size(); i++)
+            std::cout << i << " -> " << cell_compress_table.at(i) << std::endl;
+    }
+
+    template<typename Function>
+    void
+    assemble(const cuthho_mesh<T>& msh, const typename cuthho_mesh<T>::cell_type& cl,
+             const Matrix<T, Dynamic, Dynamic>& lhs, const Matrix<T, Dynamic, 1>& rhs,
+             const Function& dirichlet_bf)
+    {
+        if ( !cell_needs_assembly(msh, cl) )
+            return;
+
+        auto celdeg = di.cell_degree();
+        auto facdeg = di.face_degree();
+
+        auto cbs = cell_basis<cuthho_mesh<T>,T>::size(celdeg);
+        auto fbs = face_basis<cuthho_mesh<T>,T>::size(facdeg);
+
+        std::vector<assembly_index> asm_map;
+        asm_map.reserve(cbs + 4*fbs);
+
+        auto cell_offset        = offset(msh, cl);
+        auto cell_LHS_offset    = cell_compress_table.at(cell_offset) * cbs;
+
+        for (size_t i = 0; i < cbs; i++)
+            asm_map.push_back( assembly_index(cell_LHS_offset+i, true) );
+
+        auto fcs = faces(msh, cl);
+        for (size_t face_i = 0; face_i < 4; face_i++)
+        {
+            auto fc = fcs[face_i];
+            auto face_offset = offset(msh, fc);
+            auto face_LHS_offset = cbs * num_asm_cells + face_compress_table.at(face_offset)*fbs;
+
+            bool asm_face = face_needs_assembly(msh, fc);
+
+            for (size_t i = 0; i < fbs; i++)
+                asm_map.push_back( assembly_index(face_LHS_offset+i, asm_face) );
+        }
+
+        assert( asm_map.size() == lhs.rows() && asm_map.size() == lhs.cols() );
+
+        for (size_t i = 0; i < lhs.rows(); i++)
+        {
+            if (!asm_map[i].assemble())
+                continue;
+
+            for (size_t j = 0; j < lhs.cols(); j++)
+                if ( asm_map[j].assemble() )
+                    triplets.push_back( Triplet<T>(asm_map[i], asm_map[j], lhs(i,j)) );
+        }
+
+        RHS.block(cell_LHS_offset, 0, cbs, 1) += rhs.block(0, 0, cbs, 1);
+    } // assemble()
+
+    template<typename Function>
+    Matrix<T, Dynamic, 1>
+    take_local_data(const cuthho_mesh<T>& msh, const typename cuthho_mesh<T>::cell_type& cl,
+    const Matrix<T, Dynamic, 1>& solution, const Function& dirichlet_bf)
+    {
+        auto celdeg = di.cell_degree();
+        auto facdeg = di.face_degree();
+
+        auto cbs = cell_basis<cuthho_mesh<T>,T>::size(celdeg);
+        auto fbs = face_basis<cuthho_mesh<T>,T>::size(facdeg);
+
+        if ( !cell_needs_assembly(msh, cl) )
+        {
+            Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs + 4*fbs);
+            return ret;
+        }
+
+        auto cell_offset        = offset(msh, cl);
+        auto cell_SOL_offset    = cell_compress_table.at(cell_offset) * cbs;
+
+        Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs + 4*fbs);
+        ret.block(0, 0, cbs, 1) = solution.block(cell_SOL_offset, 0, cbs, 1);
+
+        auto fcs = faces(msh, cl);
+        for (size_t face_i = 0; face_i < 4; face_i++)
+        {
+            auto fc = fcs[face_i];
+
+            bool dirichlet = fc.is_boundary && fc.bndtype == boundary::DIRICHLET;
+
+            if (dirichlet)
+            {
+                Matrix<T, Dynamic, Dynamic> mass = make_mass_matrix(msh, fc, facdeg);
+                Matrix<T, Dynamic, 1> rhs = make_rhs(msh, fc, facdeg, dirichlet_bf);
+                ret.block(cbs+face_i*fbs, 0, fbs, 1) = mass.llt().solve(rhs);
+            }
+            else
+            {
+                auto face_offset = offset(msh, fc);
+                auto face_SOL_offset = cbs * num_asm_cells + face_compress_table.at(face_offset)*fbs;
+                ret.block(cbs+face_i*fbs, 0, fbs, 1) = solution.block(face_SOL_offset, 0, fbs, 1);
+            }
+        }
+
+        return ret;
+    }
+
+    Matrix<T, Dynamic, 1>
+    expand_solution(const cuthho_mesh<T>& msh,
+                    const Matrix<T, Dynamic, 1>& solution)
+    {
+        auto celdeg = di.cell_degree();
+        auto facdeg = di.face_degree();
+
+        auto cbs = cell_basis<cuthho_mesh<T>,T>::size(celdeg);
+        auto fbs = face_basis<cuthho_mesh<T>,T>::size(facdeg);
+
+        auto solsize = msh.cells.size() * cbs + msh.faces.size() * fbs;
+
+        Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(solsize);
+
+        for (size_t i = 0; i < num_asm_cells; i++)
+        {
+            auto exp_index = cell_expand_table.at(i);
+            ret.block(exp_index*cbs, 0, cbs, 1) = solution.block(i*cbs, 0, cbs, 1);
+        }
+
+        return ret;
+    }
+
+    void finalize(void)
+    {
+        LHS.setFromTriplets( triplets.begin(), triplets.end() );
+        triplets.clear();
+    }
+};
+
+
+template<typename T>
+auto make_assembler(const cuthho_mesh<T>& msh, hho_degree_info hdi)
+{
+    return assembler<cuthho_mesh<T>>(msh, hdi);
 }
