@@ -46,7 +46,8 @@ edge_quadrature(size_t doe)
 
     if (num_nodes == 1)
     {
-        auto qp = std::make_pair(point<T,1>({0.5}), 1.0);
+        //auto qp = std::make_pair(point<T,1>({0.5}), 1.0);
+        auto qp = std::make_pair(point<T,1>({0.}), 2.0);
         ret.push_back(qp);
         return ret;
     }
@@ -69,7 +70,9 @@ edge_quadrature(size_t doe)
 
     for (size_t i = 0; i < nodes.size(); i++)
     {
-        auto qp = std::make_pair(point<T,1>({(nodes(i) + 1.)/2.}), weights(i));
+        //auto qp = std::make_pair(point<T,1>({(nodes(i) + 1.)/2.}), weights(i));
+        auto qp = std::make_pair(point<T,1>({nodes(i)}), 2*weights(i));
+        //std::cout << "Q: " << qp.first << " " << qp.second << std::endl;
         ret.push_back(qp);
     }
 
@@ -148,6 +151,43 @@ triangle_quadrature(const point<T,2>& p0, const point<T,2>& p1, const point<T,2>
 
 
 template<typename Mesh>
+struct reference_transform;
+
+template<typename T, typename CU, typename FU, typename NU>
+struct reference_transform< quad_mesh<T, CU, FU, NU> >
+{
+    using mesh_type = quad_mesh<T, CU, FU, NU>;
+    using cell_type = typename mesh_type::cell_type;
+    using point_type = typename mesh_type::point_type;
+
+    std::array<point_type, 4> pts;
+
+    reference_transform(const mesh_type& msh, const cell_type& cl)
+    {
+        pts = points(msh, cl);
+    }
+
+    point_type ref_to_phys(const point_type& pt)
+    {
+        auto xi  = pt.x();
+        auto eta = pt.y();
+
+        return 0.25 * pts[0] * (1-xi)*(1-eta) +
+               0.25 * pts[1] * (1+xi)*(1-eta) +
+               0.25 * pts[2] * (1+xi)*(1+eta) +
+               0.25 * pts[3] * (1-xi)*(1+eta);
+    }
+
+};
+
+template<typename Mesh>
+auto make_reference_transform(const Mesh& msh, const typename Mesh::cell_type& cl)
+{
+    return reference_transform<Mesh>(msh, cl);
+}
+
+
+template<typename Mesh>
 std::vector<std::pair<point<typename Mesh::coordinate_type,2>, typename Mesh::coordinate_type>>
 integrate(const Mesh& msh, const typename Mesh::cell_type& cl, size_t degree)
 {
@@ -158,12 +198,39 @@ integrate(const Mesh& msh, const typename Mesh::cell_type& cl, size_t degree)
     auto qps = edge_quadrature<T>(degree);
     auto pts = points(msh, cl);
 
-    auto scale_x = (pts[1] - pts[0]).x();
-    auto scale_y = (pts[3] - pts[0]).y();
-    auto meas = scale_x * scale_y;
+    auto v0 = pts[1] - pts[0];
+    auto v1 = pts[2] - pts[1];
+    auto v2 = pts[3] - pts[2];
+    auto v3 = pts[3] - pts[0];
+
+    auto meas = 0.5*(v0.x()*v3.y() - v0.y()*v3.x()) + 0.5*(v1.x()*v2.y() - v1.y()*v2.x());
 
     std::vector<std::pair<point<T,2>, T>> ret;
 
+    auto P = [&](T xi, T eta) -> T {
+        return 0.25 * pts[0].x() * (1-xi)*(1-eta) +
+               0.25 * pts[1].x() * (1+xi)*(1-eta) +
+               0.25 * pts[2].x() * (1+xi)*(1+eta) +
+               0.25 * pts[3].x() * (1-xi)*(1+eta);
+    };
+
+    auto Q = [&](T xi, T eta) -> T {
+        return 0.25 * pts[0].y() * (1-xi)*(1-eta) +
+               0.25 * pts[1].y() * (1+xi)*(1-eta) +
+               0.25 * pts[2].y() * (1+xi)*(1+eta) +
+               0.25 * pts[3].y() * (1-xi)*(1+eta);
+    };
+
+    auto J = [&](T xi, T eta) -> T {
+        auto j11 = 0.25*((pts[1].x() - pts[0].x())*(1-eta) + (pts[2].x() - pts[3].x())*(1+eta));
+        auto j12 = 0.25*((pts[1].y() - pts[0].y())*(1-eta) + (pts[2].y() - pts[3].y())*(1+eta));
+        auto j21 = 0.25*((pts[3].x() - pts[0].x())*(1-xi) + (pts[2].x() - pts[1].x())*(1+xi));
+        auto j22 = 0.25*((pts[3].y() - pts[0].y())*(1-xi) + (pts[2].y() - pts[1].y())*(1+xi));
+
+        return std::abs(j11*j22 - j12*j21);
+    };
+
+    T sw = 0.0, swq = 0.0;
     for (auto jtor = qps.begin(); jtor != qps.end(); jtor++)
     {
         for (auto itor = qps.begin(); itor != qps.end(); itor++)
@@ -171,10 +238,13 @@ integrate(const Mesh& msh, const typename Mesh::cell_type& cl, size_t degree)
             auto qp_x = *itor;
             auto qp_y = *jtor;
 
-            auto px = qp_x.first.x() * scale_x + pts[0].x();
-            auto py = qp_y.first.x() * scale_y + pts[0].y();
+            auto xi = qp_x.first.x();
+            auto eta = qp_y.first.x();
 
-            auto w = qp_x.second * qp_y.second * meas;
+            auto px = P(xi, eta);
+            auto py = Q(xi, eta);
+
+            auto w = qp_x.second * qp_y.second * J(xi, eta);
 
             ret.push_back( std::make_pair( point_type(px, py), w ) );
         }
@@ -202,8 +272,10 @@ integrate(const Mesh& msh, const typename Mesh::face_type& fc, size_t degree)
     for (auto itor = qps.begin(); itor != qps.end(); itor++)
     {
         auto qp = *itor;
-        auto p = qp.first.x() * scale + pts[0];
-        auto w = qp.second * meas;
+        //auto p = qp.first.x() * scale + pts[0];
+        auto t = qp.first.x();
+        auto p = 0.5*(1-t)*pts[0] + 0.5*(1+t)*pts[1];
+        auto w = qp.second * meas * 0.5;
 
         ret.push_back( std::make_pair(p, w) );
     }

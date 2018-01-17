@@ -43,9 +43,9 @@ template<>
 struct mesh_element<void>
 {};
 
-template<typename UserData = void>
+template<typename UserData, size_t N>
 struct cell : public mesh_element<UserData> {
-    std::array<size_t, 4>   ptids;
+    std::array<size_t, N>   ptids;
 
     cell()
     {}
@@ -61,12 +61,20 @@ struct cell : public mesh_element<UserData> {
     }
 };
 
-template<typename UserData>
+template<typename UserData = void>
+using quad_cell = cell<UserData, 4>;
+
+template<typename UserData = void>
+using tri_cell = cell<UserData, 3>;
+
+template<typename UserData, size_t N>
 std::ostream&
-operator<<(std::ostream& os, const cell<UserData>& cl)
+operator<<(std::ostream& os, const cell<UserData, N>& cl)
 {
-    os << "Cell: " << cl.ptids[0] << " " << cl.ptids[1];
-    os << " " << cl.ptids[2] << " " << cl.ptids[3];
+    os << "Cell: ";
+    for (size_t i = 0; i < N; i++)
+        os << cl.ptids[i] << " ";
+
     return os;
 }
 
@@ -156,15 +164,27 @@ struct mesh_init_params {
     }
 };
 
-template<typename T, typename CellUD = void, typename FaceUD = void, typename NodeUD = void>
-struct mesh {
+
+
+
+struct elem_simplex;
+struct elem_quad;
+struct elem_mixed;
+
+template<typename T, typename KT, typename CellUD = void, typename FaceUD = void, typename NodeUD = void>
+struct mesh_impl;
+
+
+template<typename T, typename CellUD, typename FaceUD, typename NodeUD>
+struct mesh_impl<T, elem_quad, CellUD, FaceUD, NodeUD> {
 
     typedef point<T,2>          point_type;
-    typedef cell<CellUD>        cell_type;
+    typedef quad_cell<CellUD>   cell_type;
     typedef face<FaceUD>        face_type;
     typedef node<NodeUD>        node_type;
     typedef CellUD              cell_ud_type;
     typedef FaceUD              face_ud_type;
+    typedef NodeUD              node_ud_type;
     typedef T                   coordinate_type;
 
     std::vector<point_type>     points;
@@ -172,10 +192,10 @@ struct mesh {
     std::vector<face_type>      faces;
     std::vector<cell_type>      cells;
 
-    mesh() : mesh( mesh_init_params<T>() )
+    mesh_impl() : mesh_impl( mesh_init_params<T>() )
     {}
 
-    mesh(const mesh_init_params<T>& parms)
+    mesh_impl(const mesh_init_params<T>& parms)
     {
         auto hx = parms.hx();
         auto hy = parms.hy();
@@ -239,3 +259,114 @@ struct mesh {
         faces.erase( std::unique(faces.begin(), faces.end()), faces.end() );
     }
 };
+
+
+template<typename T, typename ET, typename CellUD = void, typename FaceUD = void, typename NodeUD = void>
+using mesh = mesh_impl<T, ET, CellUD, FaceUD, NodeUD>;
+
+template<typename T, typename CellUD = void, typename FaceUD = void, typename NodeUD = void>
+using quad_mesh = mesh_impl<T, elem_quad, CellUD, FaceUD, NodeUD>;
+
+
+
+#if 0
+
+
+
+
+
+
+template<typename T>
+bool load_netgen_2d(const std::string& filename, mesh<T>& msh)
+{
+    std::ifstream ifs(filename);
+    if (!ifs.is_open())
+    {
+        std::cout << "Problem opening input mesh" << std::endl;
+        return false;
+    }
+
+    size_t count;
+
+    ifs >> count;
+    msh.points.reserve(count);
+
+    for (size_t i = 0; i < count; i++)
+    {
+        T x, y;
+        ifs >> x >> y;
+        msh.points.push_back( typename mesh<T>::point_type(x,y) );
+    }
+
+    std::cout << "Points: " << msh.points.size() << std::endl;
+
+    ifs >> count;
+    msh.cells.reserve(count);
+
+    for (size_t i = 0; i < count; i++)
+    {
+        size_t dom, p0, p1, p2;
+        ifs >> dom >> p0 >> p1 >> p2;
+
+        if (dom == 0 || p0 == 0 || p1 == 0 || p2 == 0 )
+        {
+            std::cout << "Indices in netgen file should be 1-based, found a 0.";
+            std::cout << std::endl;
+            return false;
+        }
+
+        polygon p;
+        p.domain_id = dom-1;
+        p.point_ids.push_back(p0-1);
+        p.point_ids.push_back(p1-1);
+        p.point_ids.push_back(p2-1);
+        msh.cells.push_back(p);
+    }
+
+    std::cout << "Cells: " << msh.cells.size() << std::endl;
+    std::sort(msh.cells.begin(), msh.cells.end());
+
+    msh.faces.reserve( 3 * msh.cells.size() );
+
+    for (auto& cl : msh.cells)
+    {
+        assert(cl.point_ids.size() == 3);
+
+        for (size_t i = 0; i < 3; i++)
+        {
+            auto p0 = cl.point_ids[i];
+            auto p1 = cl.point_ids[(i+1)%3];
+
+            if (p1 < p0)
+                std::swap(p0, p1);
+
+            typename mesh<T>::face_type face;
+            face.point_ids[0] = p0;
+            face.point_ids[1] = p1;
+
+            msh.faces.push_back(face);
+        }
+    }
+
+    std::sort(msh.faces.begin(), msh.faces.end());
+    msh.faces.erase(std::unique(msh.faces.begin(), msh.faces.end()), msh.faces.end());
+
+    std::cout << "Faces: " << msh.faces.size() << std::endl;
+
+    for (size_t i = 0; i < msh.points.size(); i++)
+    {
+        typename mesh<T>::node_type node;
+        node.point_id = i;
+        msh.nodes.push_back(node);
+    }
+
+    std::cout << "Nodes: " << msh.nodes.size() << std::endl;
+
+    ifs.close();
+    return true;
+}
+
+
+
+
+#endif

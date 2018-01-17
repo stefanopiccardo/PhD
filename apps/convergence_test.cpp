@@ -29,6 +29,7 @@
 #include <cmath>
 #include <memory>
 #include <sstream>
+#include <random>
 
 #include <Eigen/Dense>
 #include <Eigen/SparseCore>
@@ -44,6 +45,8 @@ using namespace Eigen;
 #include "methods/hho"
 
 #include "sol2/sol.hpp"
+
+#include "dataio/silo_io.hpp"
 
 enum class method_type
 {
@@ -79,6 +82,11 @@ int test_method_convergence(const convergence_test_params& ctp)
 {
     using RealType = double;
 
+
+    std::random_device r;
+    std::default_random_engine e1(r());
+
+
     size_t deg_min = ctp.deg_min;
     size_t deg_max = ctp.deg_max;
 
@@ -88,15 +96,15 @@ int test_method_convergence(const convergence_test_params& ctp)
     bool preconditioner = ctp.preconditioner;
     bool direct = ctp.direct;
 
-    auto rhs_fun = [](const typename mesh<RealType>::point_type& pt) -> RealType {
+    auto rhs_fun = [](const typename quad_mesh<RealType>::point_type& pt) -> RealType {
         return 2.0 * M_PI * M_PI * std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
     };
 
-    auto sol_fun = [](const typename mesh<RealType>::point_type& pt) -> RealType {
+    auto sol_fun = [](const typename quad_mesh<RealType>::point_type& pt) -> RealType {
         return std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
     };
 
-    auto sol_grad = [](const typename mesh<RealType>::point_type& pt) -> Matrix<RealType, 1, 2> {
+    auto sol_grad = [](const typename quad_mesh<RealType>::point_type& pt) -> Matrix<RealType, 1, 2> {
         Matrix<RealType, 1, 2> ret;
         ret(0) = M_PI*std::cos(M_PI*pt.x())*std::sin(M_PI*pt.y());
         ret(1) = M_PI*std::sin(M_PI*pt.x())*std::cos(M_PI*pt.y());
@@ -134,7 +142,28 @@ int test_method_convergence(const convergence_test_params& ctp)
             mip.Nx = N;
             mip.Ny = N;
 
-            mesh<RealType> msh(mip);
+            quad_mesh<RealType> msh(mip);
+
+            std::stringstream ss;
+            ss << "convergence_test_N_" << N << "_k_" << k << ".silo";
+
+            RealType delta = 0.1/N;
+            std::uniform_real_distribution<RealType> uniform_dist(-delta, delta);
+            
+            for (size_t i = 0; i < msh.points.size(); i++)
+            {
+                RealType dx = uniform_dist(e1);
+                RealType dy = uniform_dist(e1);
+                auto pt = msh.points[i];
+                auto rx = pt.x() + dx;
+                auto ry = pt.y() + dy;
+                msh.points[i] = typename quad_mesh<RealType>::point_type({rx, ry});
+            }
+            
+
+            silo_database silo;
+            silo.create(ss.str());
+            silo.add_mesh(msh, "mesh");
 
             for (auto& fc : msh.faces)
             {
@@ -192,7 +221,7 @@ int test_method_convergence(const convergence_test_params& ctp)
             size_t cell_i = 0;
             for (auto& cl : msh.cells)
             {
-                cell_basis<mesh<RealType>, RealType> cb(msh, cl, hdi.cell_degree());
+                cell_basis<quad_mesh<RealType>, RealType> cb(msh, cl, hdi.cell_degree());
                 auto cbs = cb.size();
 
                 Matrix<RealType, Dynamic, 1> cdofs = sol.block(cell_i*cbs, 0, cbs, 1);
@@ -212,7 +241,7 @@ int test_method_convergence(const convergence_test_params& ctp)
                     errors_mm.at(i) += diff.dot(mass*diff);
                 }
 
-                cell_basis<mesh<RealType>, RealType> rb(msh, cl, hdi.reconstruction_degree());
+                cell_basis<quad_mesh<RealType>, RealType> rb(msh, cl, hdi.reconstruction_degree());
                 auto rbs = rb.size();
 
                 auto qps2 = integrate(msh, cl, 2*hdi.reconstruction_degree());

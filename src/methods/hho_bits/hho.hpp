@@ -113,11 +113,12 @@ make_hho_laplacian(const Mesh& msh, const typename Mesh::cell_type& cl, const hh
     auto fcs = faces(msh, cl);
     auto ns = normals(msh, cl);
 
-    for (size_t i = 0; i < 4; i++)
+    for (size_t i = 0; i < fcs.size(); i++)
     {
         auto fc = fcs[i];
         auto n = ns[i];
         face_basis<Mesh,T> fb(msh, fc, facdeg);
+        
         auto qps_f = integrate(msh, fc, 2*facdeg);
         for (auto& qp : qps_f)
         {

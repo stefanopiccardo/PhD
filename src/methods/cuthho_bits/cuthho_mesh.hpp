@@ -67,12 +67,22 @@ template<typename T>
 struct node_cuthho_info
 {
     element_location    location;
+    bool                too_close;
+    T                   displacement;
 
     node_cuthho_info() :
-        location(element_location::UNDEF)
+        location(element_location::UNDEF), too_close(false)
     {}
 };
 
 
+template<typename T, typename ET>
+using cuthho_mesh = mesh<T, ET, cell_cuthho_info<T>, face_cuthho_info<T>, node_cuthho_info<T>>;
+
 template<typename T>
-using cuthho_mesh = mesh<T, cell_cuthho_info<T>, face_cuthho_info<T>, node_cuthho_info<T>>;
+using cuthho_quad_mesh = mesh<T, elem_quad, cell_cuthho_info<T>, face_cuthho_info<T>, node_cuthho_info<T>>;
+
+
+
+
+
