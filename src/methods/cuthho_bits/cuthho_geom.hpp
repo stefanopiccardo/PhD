@@ -255,7 +255,7 @@ move_nodes(cuthho_mesh<T, ET>& msh, const Function& level_set_function)
                 continue;
 
             auto ofs = offset(msh, ntc);
-            
+
             T displacement;
 
             if ( location(msh, ntc) == element_location::IN_NEGATIVE_SIDE )
@@ -263,7 +263,7 @@ move_nodes(cuthho_mesh<T, ET>& msh, const Function& level_set_function)
             else
                 displacement = std::abs(0.5-closeness)*lf*0.9;
 
-            auto normal = level_set_function.normal(fc.user_data.intersection_point) * displacement;
+            Matrix<T, 2, Dynamic> normal = level_set_function.normal(fc.user_data.intersection_point) * displacement;
 
             typename cuthho_mesh<T, ET>::point_type p({normal(0), normal(1)});
 
@@ -697,7 +697,7 @@ class assembler<cuthho_mesh<T, ET>>
 
     size_t num_all_cells, num_asm_cells, num_notasm_cells;
     size_t num_all_faces, num_asm_faces, num_notasm_faces;
-    
+
     class assembly_index
     {
         size_t  idx;
@@ -753,7 +753,7 @@ public:
         auto fna = [&](const typename cuthho_mesh<T, ET>::face_type& fc) -> bool {
             return face_needs_assembly(msh, fc);
         };
-        
+
         num_all_faces = msh.faces.size();
         num_asm_faces = std::count_if(msh.faces.begin(), msh.faces.end(), fna);
         num_notasm_faces = num_all_faces - num_asm_faces;
