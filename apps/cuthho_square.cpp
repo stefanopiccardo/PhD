@@ -319,6 +319,11 @@ make_hho_cut_laplacian(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh
 
     auto hT = measure(msh, cl);
 
+    Matrix<T, Dynamic, Dynamic> nitsche_a = Matrix<T, Dynamic, Dynamic>::Zero(rbs, rbs);
+    Matrix<T, Dynamic, Dynamic> nitsche_b = Matrix<T, Dynamic, Dynamic>::Zero(rbs, rbs);
+    Matrix<T, Dynamic, Dynamic> nitsche_c = Matrix<T, Dynamic, Dynamic>::Zero(rbs, rbs);
+
+    std::cout << "  *** \x1b[33mINTERFACE TERM\x1b[0m ***" << std::endl;
     /* Interface term */
     auto iqps = integrate_interface(msh, cl, 2*recdeg);
     for (auto& qp : iqps)
@@ -327,13 +332,38 @@ make_hho_cut_laplacian(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh
         auto dphi   = cb.eval_gradients(qp.first);
         auto n      = level_set_function.normal(qp.first);
 
-        stiff -= qp.second * phi * (dphi * n).transpose();
-        stiff -= qp.second * (dphi * n) * phi.transpose();
-        stiff += qp.second * phi * phi.transpose();// * cell_eta(msh, cl) / hT;
+        std::cout << qp.first << " " << qp.second << std::endl;
+
+        std::cout << "  -- phi --" << std::endl;
+        std::cout << phi.transpose() << std::endl << std::endl;
+        std::cout << "  -- dphi --" << std::endl;
+        std::cout << dphi.transpose() << std::endl << std::endl;
+        std::cout << "  -- n --" << std::endl;
+        std::cout << n.transpose() << std::endl << std::endl;
+
+        nitsche_a += qp.second * phi * (dphi * n).transpose();
+        nitsche_b += qp.second * (dphi * n) * phi.transpose();
+        nitsche_c += qp.second * phi * phi.transpose()*100/hT;// * cell_eta(msh, cl) / hT;
     }
+
+    stiff += nitsche_c - nitsche_a - nitsche_b;
+
+    Matrix<T, Dynamic, 1> zz = Matrix<T, Dynamic, 1>::Ones(rbs-1);
+
+    std::cout << "\x1b[35mCoercivity test.\x1b[0m n(v,v) = " << zz.dot(stiff.block(1,1,rbs-1, rbs-1) * zz) << ", |v|^2 = " << zz.norm()*zz.norm() << std::endl;
+
+
+    std::cout << "  -- stiff --" << std::endl;
+    std::cout << stiff << std::endl << std::endl;
 
     gr_lhs = stiff.block(1, 1, rbs-1, rbs-1);
     gr_rhs.block(0, 0, rbs-1, cbs) = stiff.block(1, 0, rbs-1, cbs);
+
+    std::cout << "  -- gr_lhs --" << std::endl;
+    std::cout << gr_lhs << std::endl << std::endl;
+
+    std::cout << "  -- gr_rhs --" << std::endl;
+    std::cout << gr_rhs << std::endl << std::endl;
 
     auto ns = normals(msh, cl);
     auto fcs = faces(msh, cl);
@@ -356,7 +386,7 @@ make_hho_cut_laplacian(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh
         }
     }
 
-    Matrix<T, Dynamic, Dynamic> oper = gr_lhs.llt().solve(gr_rhs);
+    Matrix<T, Dynamic, Dynamic> oper = gr_lhs.ldlt().solve(gr_rhs);
     Matrix<T, Dynamic, Dynamic> data = gr_rhs.transpose() * oper;
 
     return std::make_pair(oper, data);
@@ -713,6 +743,7 @@ int main(int argc, char **argv)
     size_t cell_i = 0;
     for (auto& cl : msh.cells)
     {
+        std::cout << "\x1b[31m --- .oO CELL " << cell_i << " BEGIN Oo. ---\x1b[0m" << std::endl;
         cell_basis<cuthho_quad_mesh<RealType>, RealType> cb(msh, cl, hdi.cell_degree());
         auto cbs = cb.size();
 
@@ -760,6 +791,8 @@ int main(int argc, char **argv)
 
             ofs << prec.dot( t_phi.tail(rbs-1) ) + proj(0) << std::endl;
         }
+
+        std::cout << "\x1b[31m --- .oO CELL " << cell_i << " END Oo. ---\x1b[0m" << std::endl;
 
         cell_i++;
     }
