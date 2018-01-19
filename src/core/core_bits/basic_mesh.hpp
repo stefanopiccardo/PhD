@@ -257,6 +257,12 @@ struct mesh_impl<T, elem_quad, CellUD, FaceUD, NodeUD> {
         std::sort(cells.begin(), cells.end());
         std::sort(faces.begin(), faces.end());
         faces.erase( std::unique(faces.begin(), faces.end()), faces.end() );
+
+        for (auto& fc : faces)
+        {
+            if (fc.is_boundary)
+                fc.bndtype = boundary::DIRICHLET;
+        }
     }
 };
 

@@ -460,6 +460,13 @@ template<typename T>
 struct temp_tri
 {
     std::array< point<T,2>, 3 > pts;
+
+    T area() const {
+        auto v1 = pts[1] - pts[0];
+        auto v2 = pts[2] - pts[0];
+
+        return std::abs( v1.x()*v2.y() - v2.x()*v1.y() ) / 2.0;
+    }
 };
 
 template<typename T>
@@ -495,6 +502,25 @@ triangulate(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::ce
     }
 
     return tris;
+}
+
+template<typename T, typename ET>
+T
+measure(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
+        const element_location& where)
+{
+    if ( !is_cut(msh, cl) ) /* Element is not cut, use std. integration */
+        return measure(msh, cl);
+
+    std::vector< std::pair<point<T,2>, T> > ret;
+    auto tris = triangulate(msh, cl, where);
+
+    T totmeas = 0.0;
+
+    for (auto& tri : tris)
+        totmeas += tri.area();
+
+    return totmeas;
 }
 
 template<typename T, typename ET>
@@ -663,6 +689,8 @@ void dump_mesh(const cuthho_mesh<T, ET>& msh)
     ofs.close();
 }
 
+
+#if 0
 
 template<typename T, typename ET>
 class assembler<cuthho_mesh<T, ET>>
@@ -920,3 +948,5 @@ auto make_assembler(const cuthho_mesh<T, ET>& msh, hho_degree_info hdi)
 {
     return assembler<cuthho_mesh<T, ET>>(msh, hdi);
 }
+
+#endif

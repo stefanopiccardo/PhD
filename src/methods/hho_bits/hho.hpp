@@ -132,8 +132,10 @@ make_hho_laplacian(const Mesh& msh, const typename Mesh::cell_type& cl, const hh
         }
     }
 
-    std::cout << gr_lhs << std::endl << std::endl;
-    std::cout << gr_rhs << std::endl << std::endl;
+    std::cout << cyan << gr_lhs << nocolor << std::endl;
+    std::cout << "Determinant is " << gr_lhs.determinant() << std::endl;
+    std::cout << "Condition number is " << condition_number(gr_lhs) << std::endl << std::endl;
+    std::cout << magenta << gr_rhs << nocolor << std::endl << std::endl;
 
     Matrix<T, Dynamic, Dynamic> oper = gr_lhs.llt().solve(gr_rhs);
     Matrix<T, Dynamic, Dynamic> data = gr_rhs.transpose() * oper;

@@ -85,6 +85,41 @@ struct circle_level_set
 
 };
 
+template<typename T>
+struct line_level_set
+{
+    T cut_y;
+
+    line_level_set(T cy)
+        : cut_y(cy)
+    {}
+
+    T operator()(const point<T,2>& pt) const
+    {
+        auto x = pt.x();
+        auto y = pt.y();
+
+        return y - cut_y;
+    }
+
+    Eigen::Matrix<T,2,1> gradient(const point<T,2>& pt) const
+    {
+        Eigen::Matrix<T,2,1> ret;
+        ret(0) = 0;
+        ret(1) = 1;
+        return ret;
+    }
+
+    Eigen::Matrix<T,2,1> normal(const point<T,2>& pt) const
+    {
+        Eigen::Matrix<T,2,1> ret;
+
+        ret = gradient(pt);
+        return ret/ret.norm();
+    }
+
+};
+
 
 /*****************************************************************************
  *   Test stuff
@@ -283,7 +318,7 @@ template<typename T, typename ET>
 T
 cell_eta(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl)
 {
-    return 40*measure(msh, cl);
+    return 1;
 }
 
 
@@ -312,6 +347,10 @@ make_hho_laplacian(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, 
     Matrix<T, Dynamic, Dynamic> gr_lhs = Matrix<T, Dynamic, Dynamic>::Zero(rbs-1, rbs-1);
     Matrix<T, Dynamic, Dynamic> gr_rhs = Matrix<T, Dynamic, Dynamic>::Zero(rbs-1, cbs + 4*fbs);
 
+    Matrix<T, Dynamic, Dynamic> na = Matrix<T, Dynamic, Dynamic>::Zero(rbs, rbs);
+    Matrix<T, Dynamic, Dynamic> nb = Matrix<T, Dynamic, Dynamic>::Zero(rbs, rbs);
+    Matrix<T, Dynamic, Dynamic> nc = Matrix<T, Dynamic, Dynamic>::Zero(rbs, rbs);
+
     /* Cell term (cut) */
     auto qps = integrate(msh, cl, 2*recdeg, where);
     for (auto& qp : qps)
@@ -326,7 +365,6 @@ make_hho_laplacian(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, 
     auto iqps = integrate_interface(msh, cl, 2*recdeg, where);
     for (auto& qp : iqps)
     {
-        std::cout << qp.first << " " << qp.second << std::endl;
         auto phi    = cb.eval_basis(qp.first);
         auto dphi   = cb.eval_gradients(qp.first);
         Matrix<T,2,1> n      = level_set_function.normal(qp.first);
@@ -334,10 +372,16 @@ make_hho_laplacian(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, 
         //if (where == element_location::IN_POSITIVE_SIDE)
         //    n = -n;
 
-        stiff -= qp.second * phi * (dphi * n).transpose();
-        stiff -= qp.second * (dphi * n) * phi.transpose();
-        stiff += qp.second * phi * phi.transpose() * cell_eta(msh, cl) / hT;
+        na += qp.second * phi * (dphi * n).transpose();
+        nb += qp.second * (dphi * n) * phi.transpose();
+        nc += qp.second * phi * phi.transpose() * cell_eta(msh, cl) / hT;
     }
+
+    std::cout << na << std::endl << std::endl;
+    std::cout << nb << std::endl << std::endl;
+    std::cout << nc << std::endl << std::endl;
+
+    stiff += na + nb + nc;
 
     gr_lhs = stiff.block(1, 1, rbs-1, rbs-1);
     gr_rhs.block(0, 0, rbs-1, cbs) = stiff.block(1, 0, rbs-1, cbs);
@@ -363,10 +407,12 @@ make_hho_laplacian(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, 
         }
     }
 
-    std::cout << gr_lhs << std::endl << std::endl;
-    std::cout << gr_rhs << std::endl << std::endl;
+    std::cout << cyan << gr_lhs << nocolor << std::endl;
+    std::cout << "Determinant is " << gr_lhs.determinant() << std::endl;
+    std::cout << "Condition number is " << condition_number(gr_lhs) << std::endl << std::endl;
+    std::cout << magenta << gr_rhs << nocolor << std::endl << std::endl;
 
-    Matrix<T, Dynamic, Dynamic> oper = gr_lhs.ldlt().solve(gr_rhs);
+    Matrix<T, Dynamic, Dynamic> oper = gr_lhs.llt().solve(gr_rhs);
     Matrix<T, Dynamic, Dynamic> data = gr_rhs.transpose() * oper;
 
     return std::make_pair(oper, data);
@@ -452,6 +498,7 @@ make_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_
             ret += qp.second * phi * f(qp.first);
         }
 
+        /*
         auto qpsi = integrate_interface(msh, cl, degree, where);
         for (auto& qp : qpsi)
         {
@@ -461,6 +508,7 @@ make_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_
 
             ret += qp.second * bcs(qp.first) * ( phi * cell_eta(msh, cl)/hT - dphi*n);
         }
+        */
 
         return ret;
     }
@@ -538,76 +586,18 @@ test_integration(const cuthho_mesh<T, ET>& msh, const Function1& f, const Functi
     return std::make_pair(surf_int_val, line_int_val);
 }
 
-int main(int argc, char **argv)
+template<typename Mesh, typename Function>
+void
+run_cuthho(const Mesh& msh, const Function& level_set_function, size_t degree)
 {
-    using RealType = double;
-    size_t degree = 0;
+    using RealType = typename Mesh::coordinate_type;
 
-    mesh_init_params<RealType> mip;
-    mip.Nx = 5;
-    mip.Ny = 5;
-
-    int ch;
-    while ( (ch = getopt(argc, argv, "k:M:N:t")) != -1 )
-    {
-        switch(ch)
-        {
-            case 'k':
-                degree = atoi(optarg);
-                break;
-
-            case 'M':
-                mip.Nx = atoi(optarg);
-                break;
-
-            case 'N':
-                mip.Ny = atoi(optarg);
-                break;
-
-            case '?':
-            default:
-                std::cout << "wrong arguments" << std::endl;
-                exit(1);
-        }
-    }
-
-    argc -= optind;
-    argv += optind;
-
-    cuthho_quad_mesh<RealType> msh(mip);
-
-    RealType radius = 0.35;
-
-    auto level_set_function = circle_level_set<RealType>(radius, 0.5, 0.5);
-
-
-    detect_node_position(msh, level_set_function);
-    detect_cut_faces(msh, level_set_function);
-
-    move_nodes(msh, level_set_function);
-    detect_cut_faces(msh, level_set_function);
-    move_nodes(msh, level_set_function);
-    detect_cut_faces(msh, level_set_function);
-
-    detect_cut_cells(msh, level_set_function);
-    refine_interface(msh, level_set_function, 0);
-    dump_mesh(msh);
-    test_triangulation(msh);
-
+    /************** OPEN SILO DATABASE **************/
     silo_database silo;
     silo.create("cuthho_square.silo");
     silo.add_mesh(msh, "mesh");
 
-    auto intfunc = [](const point<RealType,2>& pt) -> RealType {
-        return 1;
-    };
-    auto ints = test_integration(msh, intfunc, level_set_function);
-    auto expval = radius*radius*M_PI;
-    std::cout << "Integral relative error: " << 100*std::abs(ints.first-expval)/expval << "%" <<std::endl;
-    expval = 2*M_PI*radius;
-    std::cout << "Integral relative error: " << 100*std::abs(ints.second-expval)/expval << "%" <<std::endl;
-
-
+    /************** MAKE A SILO VARIABLE FOR CELL POSITIONING **************/
     std::vector<RealType> cut_cell_markers;
     for (auto& cl : msh.cells)
     {
@@ -622,51 +612,56 @@ int main(int argc, char **argv)
     }
     silo.add_variable("mesh", "cut_cells", cut_cell_markers.data(), cut_cell_markers.size(), zonal_variable_t);
 
-
+    /************** MAKE A SILO VARIABLE FOR LEVEL SET FUNCTION **************/
     std::vector<RealType> level_set_vals;
     for (auto& pt : msh.points)
         level_set_vals.push_back( level_set_function(pt) );
     silo.add_variable("mesh", "level_set", level_set_vals.data(), level_set_vals.size(), nodal_variable_t);
 
+    /************** MAKE A SILO VARIABLE FOR NODE POSITIONING **************/
     std::vector<RealType> node_pos;
     for (auto& n : msh.nodes)
         node_pos.push_back( location(msh, n) == element_location::IN_POSITIVE_SIDE ? +1.0 : -1.0 );
     silo.add_variable("mesh", "node_pos", node_pos.data(), node_pos.size(), nodal_variable_t);
 
 
+    /************** DEFINE PROBLEM RHS, SOLUTION AND BCS **************/
     auto rhs_fun = [](const typename cuthho_quad_mesh<RealType>::point_type& pt) -> RealType {
-        return 2.0 * M_PI * M_PI * std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
-        //return 1;
+        return 5.0 * M_PI * M_PI * std::sin(M_PI*pt.x()) * std::sin(2.0 * M_PI*pt.y());
     };
 
     auto sol_fun = [](const typename cuthho_quad_mesh<RealType>::point_type& pt) -> RealType {
-        return std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
-        //return 0;
+        return std::sin(M_PI*pt.x()) * std::sin(2.0 * M_PI*pt.y());
     };
 
-    for (auto& fc : msh.faces)
-    {
-        if (fc.is_boundary)
-            fc.bndtype = boundary::DIRICHLET;
-    }
+    auto bcs_fun = [&](const typename cuthho_quad_mesh<RealType>::point_type& pt) -> RealType {
+        return sol_fun(pt);
+    };
 
+
+    /************** ASSEMBLE PROBLEM **************/
     hho_degree_info hdi(degree+1, degree);
 
-    element_location where = element_location::IN_NEGATIVE_SIDE;
+    element_location where = element_location::IN_POSITIVE_SIDE;
 
     auto assembler = make_assembler(msh, hdi);
     for (auto& cl : msh.cells)
     {
         auto gr = make_hho_laplacian(msh, cl, level_set_function, hdi, where);
-
         Matrix<RealType, Dynamic, Dynamic> stab = make_hho_cut_stabilization(msh, cl, hdi, where);
         Matrix<RealType, Dynamic, Dynamic> lc = gr.second + stab;
 
+        //auto grn = make_hho_laplacian(msh, cl, level_set_function, hdi, element_location::IN_NEGATIVE_SIDE);
+        //auto grp = make_hho_laplacian(msh, cl, level_set_function, hdi, element_location::IN_POSITIVE_SIDE);
+        //Matrix<RealType, Dynamic, Dynamic> stabn = make_hho_cut_stabilization(msh, cl, hdi, element_location::IN_NEGATIVE_SIDE);
+        //Matrix<RealType, Dynamic, Dynamic> stabp = make_hho_cut_stabilization(msh, cl, hdi, element_location::IN_POSITIVE_SIDE);
+        //Matrix<RealType, Dynamic, Dynamic> lc = grn.second + grp.second + stabn + stabp;
+
         Matrix<RealType, Dynamic, 1> f = Matrix<RealType, Dynamic, 1>::Zero(lc.rows());
 
-        f = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun, where, level_set_function, sol_fun);
+        f = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun, where, level_set_function, bcs_fun);
 
-        assembler.assemble(msh, cl, lc, f, sol_fun);
+        assembler.assemble(msh, cl, lc, f, bcs_fun);
     }
 
     assembler.finalize();
@@ -675,6 +670,8 @@ int main(int argc, char **argv)
     std::cout << "Cells: " << msh.cells.size() << std::endl;
     std::cout << "Faces: " << msh.faces.size() << std::endl;
 
+
+    /************** SOLVE **************/
 //#if 0
     SparseLU<SparseMatrix<RealType>>  solver;
 
@@ -692,6 +689,9 @@ int main(int argc, char **argv)
         //return 0;
     };
 
+
+    /************** POSTPROCESS **************/
+
     std::vector<RealType>   solution_uT, solution_Ru, optest, optest_r;
 
     std::ofstream ofs("basis_check.dat");
@@ -699,7 +699,7 @@ int main(int argc, char **argv)
     size_t cell_i = 0;
     for (auto& cl : msh.cells)
     {
-        std::cout << "\x1b[31m --- .oO CELL " << cell_i << " BEGIN Oo. ---\x1b[0m" << std::endl;
+        std::cout << red << " --- .oO CELL " << cell_i << " BEGIN Oo. ---" << nocolor << std::endl;
         cell_basis<cuthho_quad_mesh<RealType>, RealType> cb(msh, cl, hdi.cell_degree());
         auto cbs = cb.size();
 
@@ -748,7 +748,7 @@ int main(int argc, char **argv)
             ofs << prec.dot( t_phi.tail(rbs-1) ) + proj(0) << std::endl;
         }
 
-        std::cout << "\x1b[31m --- .oO CELL " << cell_i << " END Oo. ---\x1b[0m" << std::endl;
+        std::cout << red << " --- .oO CELL " << cell_i << " END Oo. ---" << nocolor << std::endl;
 
         cell_i++;
     }
@@ -759,22 +759,118 @@ int main(int argc, char **argv)
     silo.add_variable("mesh", "Ru", solution_Ru.data(), solution_Ru.size(), zonal_variable_t);
     silo.add_variable("mesh", "optest", optest.data(), optest.size(), zonal_variable_t);
     silo.add_variable("mesh", "optest_r", optest_r.data(), optest_r.size(), zonal_variable_t);
+}
+
+int main(int argc, char **argv)
+{
+    using RealType = double;
+    size_t degree = 0;
+
+    mesh_init_params<RealType> mip;
+    mip.Nx = 5;
+    mip.Ny = 5;
+
+    int ch;
+    while ( (ch = getopt(argc, argv, "k:M:N:t")) != -1 )
+    {
+        switch(ch)
+        {
+            case 'k':
+                degree = atoi(optarg);
+                break;
+
+            case 'M':
+                mip.Nx = atoi(optarg);
+                break;
+
+            case 'N':
+                mip.Ny = atoi(optarg);
+                break;
+
+            case '?':
+            default:
+                std::cout << "wrong arguments" << std::endl;
+                exit(1);
+        }
+    }
+
+    argc -= optind;
+    argv += optind;
+
+    /************** BUILD MESH **************/
+    cuthho_quad_mesh<RealType> msh(mip);
+
+    /************** LEVEL SET FUNCTION **************/
+    RealType radius = 0.35;
+    //auto level_set_function = circle_level_set<RealType>(radius, 0.5, 0.5);
+    auto level_set_function = line_level_set<RealType>(0.5);
+    /************** DO cutHHO MESH PROCESSING **************/
+    detect_node_position(msh, level_set_function);
+    detect_cut_faces(msh, level_set_function);
+
+    //move_nodes(msh, level_set_function);
+    //detect_cut_faces(msh, level_set_function);
+    //move_nodes(msh, level_set_function);
+    //detect_cut_faces(msh, level_set_function);
+
+    detect_cut_cells(msh, level_set_function);
+    refine_interface(msh, level_set_function, 0);
+    dump_mesh(msh);
+    test_triangulation(msh);
+    
+    run_cuthho(msh, level_set_function, degree);
 
 
-    cell_i = 0;
+
+
+
+
+
+
+
+
+
+
+
+    auto intfunc = [](const point<RealType,2>& pt) -> RealType {
+        return 1;
+    };
+    auto ints = test_integration(msh, intfunc, level_set_function);
+    auto expval = radius*radius*M_PI;
+    std::cout << "Integral relative error: " << 100*std::abs(ints.first-expval)/expval << "%" <<std::endl;
+    expval = 2*M_PI*radius;
+    std::cout << "Integral relative error: " << 100*std::abs(ints.second-expval)/expval << "%" <<std::endl;
+
+    hho_degree_info hdi(degree+1, degree);
+
+    size_t cell_i = 0;
     for (auto& cl : msh.cells)
     {
         if (!is_cut(msh, cl))
+        {
+            cell_i++;
             continue;
+        }
 
-        std::cout << "\x1b[31m --- .oO CELL " << cell_i << " BEGIN Oo. ---\x1b[0m" << std::endl;
+        std::cout << red << bold << " --- .oO CELL " << cell_i << " BEGIN Oo. ---\x1b[0m" << reset << std::endl;
 
-        std::cout << "NEGATIVE SIDE" << std::endl;
+        std::cout << bold << "NEGATIVE SIDE" << reset << std::endl;
         auto gr1 = make_hho_laplacian(msh, cl, level_set_function, hdi, element_location::IN_NEGATIVE_SIDE);
-        std::cout << "POSITIVE SIDE" << std::endl;
+        std::cout << yellow << gr1.first << nocolor << std::endl << std::endl;
+
+        std::cout << bold << "POSITIVE SIDE" << reset << std::endl;
         auto gr2 = make_hho_laplacian(msh, cl, level_set_function, hdi, element_location::IN_POSITIVE_SIDE);
-        std::cout << "WHOLE" << std::endl;
+        std::cout << yellow << gr2.first << nocolor << std::endl << std::endl;
+
+        std::cout << bold << "WHOLE" << reset << std::endl;
         auto gr3 = make_hho_laplacian(msh, cl, hdi);
+        std::cout << yellow << gr3.first << nocolor << std::endl << std::endl;
+
+        cell_basis<cuthho_quad_mesh<RealType>, RealType> cb(msh, cl, hdi.cell_degree());
+        auto bar = barycenter(msh, cl);
+
+        Matrix<RealType, Dynamic, Dynamic> dphi = cb.eval_gradients(bar);
+        std::cout << green << dphi.transpose() << nocolor << std::endl;
 
         cell_i++;
     }

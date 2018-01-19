@@ -212,10 +212,19 @@ template<typename Mesh>
 typename Mesh::coordinate_type
 diameter(const Mesh& msh, const typename Mesh::cell_type& cl)
 {
-    auto p0 = msh.points.at( cl.ptids[0] );
-    auto p1 = msh.points.at( cl.ptids[2] );
+    auto diam = 0.0;
 
-    return (p1-p0).to_vector().norm();
+    for (size_t i = 0; i < cl.ptids.size(); i++)
+    {
+        for (size_t j = i+1; j < cl.ptids.size(); j++)
+        {
+            auto p0 = msh.points.at( cl.ptids[i] );
+            auto p1 = msh.points.at( cl.ptids[j] );
+            diam = std::max( diam, (p1-p0).to_vector().norm() );
+        }
+    }
+
+    return diam;
 }
 
 template<typename Mesh>
