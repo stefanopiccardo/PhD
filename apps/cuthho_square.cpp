@@ -290,10 +290,13 @@ cell_eta(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_
 template<typename T, typename ET, typename Function>
 std::pair<   Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>,
              Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>  >
-make_hho_cut_laplacian(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
-                       const Function& level_set_function, hho_degree_info di)
+make_hho_laplacian(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
+                   const Function& level_set_function, hho_degree_info di,
+                   element_location where)
 {
-    assert( is_cut(msh, cl) );
+
+    if ( !is_cut(msh, cl) )
+        return make_hho_laplacian(msh, cl, di);
 
     auto recdeg = di.reconstruction_degree();
     auto celdeg = di.cell_degree();
@@ -310,7 +313,7 @@ make_hho_cut_laplacian(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh
     Matrix<T, Dynamic, Dynamic> gr_rhs = Matrix<T, Dynamic, Dynamic>::Zero(rbs-1, cbs + 4*fbs);
 
     /* Cell term (cut) */
-    auto qps = integrate(msh, cl, 2*recdeg, element_location::IN_NEGATIVE_SIDE);
+    auto qps = integrate(msh, cl, 2*recdeg, where);
     for (auto& qp : qps)
     {
         auto dphi = cb.eval_gradients(qp.first);
@@ -319,51 +322,25 @@ make_hho_cut_laplacian(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh
 
     auto hT = measure(msh, cl);
 
-    Matrix<T, Dynamic, Dynamic> nitsche_a = Matrix<T, Dynamic, Dynamic>::Zero(rbs, rbs);
-    Matrix<T, Dynamic, Dynamic> nitsche_b = Matrix<T, Dynamic, Dynamic>::Zero(rbs, rbs);
-    Matrix<T, Dynamic, Dynamic> nitsche_c = Matrix<T, Dynamic, Dynamic>::Zero(rbs, rbs);
-
-    std::cout << "  *** \x1b[33mINTERFACE TERM\x1b[0m ***" << std::endl;
     /* Interface term */
-    auto iqps = integrate_interface(msh, cl, 2*recdeg);
+    auto iqps = integrate_interface(msh, cl, 2*recdeg, where);
     for (auto& qp : iqps)
     {
+        std::cout << qp.first << " " << qp.second << std::endl;
         auto phi    = cb.eval_basis(qp.first);
         auto dphi   = cb.eval_gradients(qp.first);
-        auto n      = level_set_function.normal(qp.first);
+        Matrix<T,2,1> n      = level_set_function.normal(qp.first);
 
-        std::cout << qp.first << " " << qp.second << std::endl;
+        //if (where == element_location::IN_POSITIVE_SIDE)
+        //    n = -n;
 
-        std::cout << "  -- phi --" << std::endl;
-        std::cout << phi.transpose() << std::endl << std::endl;
-        std::cout << "  -- dphi --" << std::endl;
-        std::cout << dphi.transpose() << std::endl << std::endl;
-        std::cout << "  -- n --" << std::endl;
-        std::cout << n.transpose() << std::endl << std::endl;
-
-        nitsche_a += qp.second * phi * (dphi * n).transpose();
-        nitsche_b += qp.second * (dphi * n) * phi.transpose();
-        nitsche_c += qp.second * phi * phi.transpose()*100/hT;// * cell_eta(msh, cl) / hT;
+        stiff -= qp.second * phi * (dphi * n).transpose();
+        stiff -= qp.second * (dphi * n) * phi.transpose();
+        stiff += qp.second * phi * phi.transpose() * cell_eta(msh, cl) / hT;
     }
-
-    stiff += nitsche_c - nitsche_a - nitsche_b;
-
-    Matrix<T, Dynamic, 1> zz = Matrix<T, Dynamic, 1>::Ones(rbs-1);
-
-    std::cout << "\x1b[35mCoercivity test.\x1b[0m n(v,v) = " << zz.dot(stiff.block(1,1,rbs-1, rbs-1) * zz) << ", |v|^2 = " << zz.norm()*zz.norm() << std::endl;
-
-
-    std::cout << "  -- stiff --" << std::endl;
-    std::cout << stiff << std::endl << std::endl;
 
     gr_lhs = stiff.block(1, 1, rbs-1, rbs-1);
     gr_rhs.block(0, 0, rbs-1, cbs) = stiff.block(1, 0, rbs-1, cbs);
-
-    std::cout << "  -- gr_lhs --" << std::endl;
-    std::cout << gr_lhs << std::endl << std::endl;
-
-    std::cout << "  -- gr_rhs --" << std::endl;
-    std::cout << gr_rhs << std::endl << std::endl;
 
     auto ns = normals(msh, cl);
     auto fcs = faces(msh, cl);
@@ -374,7 +351,7 @@ make_hho_cut_laplacian(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh
 
         face_basis<cuthho_mesh<T, ET>,T> fb(msh, fc, facdeg);
         /* Terms on faces */
-        auto qps = integrate(msh, fc, 2*recdeg, element_location::IN_NEGATIVE_SIDE);
+        auto qps = integrate(msh, fc, 2*recdeg, where);
         for (auto& qp : qps)
         {
             auto c_phi = cb.eval_basis(qp.first);
@@ -385,6 +362,9 @@ make_hho_cut_laplacian(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh
             gr_rhs.block(0, 0, rbs-1, cbs) -= qp.second * (r_dphi * n) * c_phi.transpose();
         }
     }
+
+    std::cout << gr_lhs << std::endl << std::endl;
+    std::cout << gr_rhs << std::endl << std::endl;
 
     Matrix<T, Dynamic, Dynamic> oper = gr_lhs.ldlt().solve(gr_rhs);
     Matrix<T, Dynamic, Dynamic> data = gr_rhs.transpose() * oper;
@@ -397,8 +377,11 @@ template<typename T, typename ET>
 Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>
 make_hho_cut_stabilization(const cuthho_mesh<T, ET>& msh,
                            const typename cuthho_mesh<T, ET>::cell_type& cl,
-                           const hho_degree_info& di)
+                           const hho_degree_info& di, element_location where)
 {
+    if ( !is_cut(msh, cl) )
+        return make_hho_naive_stabilization(msh, cl, di);
+
     auto celdeg = di.cell_degree();
     auto facdeg = di.face_degree();
 
@@ -425,7 +408,7 @@ make_hho_cut_stabilization(const cuthho_mesh<T, ET>& msh,
 
         oper.block(0, cbs+i*fbs, fbs, fbs) = -If;
 
-        auto qps = integrate(msh, fc, 2*facdeg, element_location::IN_NEGATIVE_SIDE);
+        auto qps = integrate(msh, fc, 2*facdeg, where);
         for (auto& qp : qps)
         {
             auto c_phi = cb.eval_basis(qp.first);
@@ -445,32 +428,6 @@ make_hho_cut_stabilization(const cuthho_mesh<T, ET>& msh,
 
     return data;
 }
-
-
-template<typename T, typename ET, typename Function>
-std::pair<   Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>,
-             Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>  >
-make_operator(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
-              const Function& level_set_function, hho_degree_info hdi)
-{
-    if ( is_cut(msh, cl) )
-        return make_hho_cut_laplacian(msh, cl, level_set_function, hdi);
-    else
-        return make_hho_laplacian(msh, cl, hdi);
-}
-
-
-
-template<typename T, typename ET>
-Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>
-make_stabilization(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl, hho_degree_info hdi)
-{
-    if ( is_cut(msh, cl) )
-        return make_hho_cut_stabilization(msh, cl, hdi);
-    else
-        return make_hho_naive_stabilization(msh, cl, hdi);
-}
-
 
 template<typename T, typename ET, typename F1, typename F2, typename F3>
 Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, 1>
@@ -495,8 +452,7 @@ make_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_
             ret += qp.second * phi * f(qp.first);
         }
 
-        /*
-        auto qpsi = integrate_interface(msh, cl, degree);
+        auto qpsi = integrate_interface(msh, cl, degree, where);
         for (auto& qp : qpsi)
         {
             auto phi = cb.eval_basis(qp.first);
@@ -505,9 +461,8 @@ make_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_
 
             ret += qp.second * bcs(qp.first) * ( phi * cell_eta(msh, cl)/hT - dphi*n);
         }
-        */
 
-        return ret;  
+        return ret;
     }
     else
     {
@@ -553,7 +508,7 @@ test_integration(const cuthho_mesh<T, ET>& msh, const Function1& f, const Functi
 
         if (on_interface)
         {
-            auto iqpts = integrate_interface(msh, cl, 1);
+            auto iqpts = integrate_interface(msh, cl, 1, element_location::IN_NEGATIVE_SIDE);
             for (auto& qp : iqpts)
             {
                 line_int_val += qp.second * f(qp.first);
@@ -582,7 +537,6 @@ test_integration(const cuthho_mesh<T, ET>& msh, const Function1& f, const Functi
 
     return std::make_pair(surf_int_val, line_int_val);
 }
-
 
 int main(int argc, char **argv)
 {
@@ -629,14 +583,14 @@ int main(int argc, char **argv)
 
     detect_node_position(msh, level_set_function);
     detect_cut_faces(msh, level_set_function);
-    
+
     move_nodes(msh, level_set_function);
     detect_cut_faces(msh, level_set_function);
     move_nodes(msh, level_set_function);
     detect_cut_faces(msh, level_set_function);
-    
+
     detect_cut_cells(msh, level_set_function);
-    refine_interface(msh, level_set_function, 2);
+    refine_interface(msh, level_set_function, 0);
     dump_mesh(msh);
     test_triangulation(msh);
 
@@ -698,17 +652,19 @@ int main(int argc, char **argv)
 
     hho_degree_info hdi(degree+1, degree);
 
+    element_location where = element_location::IN_NEGATIVE_SIDE;
+
     auto assembler = make_assembler(msh, hdi);
     for (auto& cl : msh.cells)
     {
-        auto gr = make_operator(msh, cl, level_set_function, hdi);
+        auto gr = make_hho_laplacian(msh, cl, level_set_function, hdi, where);
 
-        Matrix<RealType, Dynamic, Dynamic> stab = make_stabilization(msh, cl, hdi);
+        Matrix<RealType, Dynamic, Dynamic> stab = make_hho_cut_stabilization(msh, cl, hdi, where);
         Matrix<RealType, Dynamic, Dynamic> lc = gr.second + stab;
 
         Matrix<RealType, Dynamic, 1> f = Matrix<RealType, Dynamic, 1>::Zero(lc.rows());
 
-        f = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun, element_location::IN_NEGATIVE_SIDE, level_set_function, sol_fun);
+        f = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun, where, level_set_function, sol_fun);
 
         assembler.assemble(msh, cl, lc, f, sol_fun);
     }
@@ -750,13 +706,13 @@ int main(int argc, char **argv)
         cell_basis<cuthho_quad_mesh<RealType>, RealType> rb(msh, cl, hdi.reconstruction_degree());
         auto rbs = rb.size();
 
-        auto gr = make_operator(msh, cl, level_set_function, hdi);
+        auto gr = make_hho_laplacian(msh, cl, level_set_function, hdi, where);
         Matrix<RealType, Dynamic, 1> locdata = assembler.take_local_data(msh, cl, sol, sol_fun);
         Matrix<RealType, Dynamic, 1> cell_dofs = locdata.head(cbs);
         Matrix<RealType, Dynamic, 1> rec_dofs = gr.first * locdata;
 
         auto bar = barycenter(msh, cl/*, element_location::IN_NEGATIVE_SIDE*/);
-        
+
         Matrix<RealType, Dynamic, 1> c_phi = cb.eval_basis(bar);
         auto c_val = cell_dofs.dot( c_phi );
         solution_uT.push_back(c_val);
@@ -765,9 +721,9 @@ int main(int argc, char **argv)
         auto r_val = rec_dofs.dot( r_phi.tail(rbs-1) ) + locdata(0);
         solution_Ru.push_back(r_val);
 
-        Matrix<RealType, Dynamic, 1> proj = project_function(msh, cl, hdi, element_location::IN_NEGATIVE_SIDE, optest_fun);
+        Matrix<RealType, Dynamic, 1> proj = project_function(msh, cl, hdi, where, optest_fun);
         Matrix<RealType, Dynamic, 1> prec = gr.first * proj;
-        
+
         auto p_val = proj.head(cbs).dot( c_phi );
         optest.push_back(p_val);
 
@@ -803,6 +759,38 @@ int main(int argc, char **argv)
     silo.add_variable("mesh", "Ru", solution_Ru.data(), solution_Ru.size(), zonal_variable_t);
     silo.add_variable("mesh", "optest", optest.data(), optest.size(), zonal_variable_t);
     silo.add_variable("mesh", "optest_r", optest_r.data(), optest_r.size(), zonal_variable_t);
+
+
+    cell_i = 0;
+    for (auto& cl : msh.cells)
+    {
+        if (!is_cut(msh, cl))
+            continue;
+
+        std::cout << "\x1b[31m --- .oO CELL " << cell_i << " BEGIN Oo. ---\x1b[0m" << std::endl;
+
+        std::cout << "NEGATIVE SIDE" << std::endl;
+        auto gr1 = make_hho_laplacian(msh, cl, level_set_function, hdi, element_location::IN_NEGATIVE_SIDE);
+        std::cout << "POSITIVE SIDE" << std::endl;
+        auto gr2 = make_hho_laplacian(msh, cl, level_set_function, hdi, element_location::IN_POSITIVE_SIDE);
+        std::cout << "WHOLE" << std::endl;
+        auto gr3 = make_hho_laplacian(msh, cl, hdi);
+
+        cell_i++;
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
     return 0;

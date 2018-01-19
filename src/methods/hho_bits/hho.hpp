@@ -118,7 +118,7 @@ make_hho_laplacian(const Mesh& msh, const typename Mesh::cell_type& cl, const hh
         auto fc = fcs[i];
         auto n = ns[i];
         face_basis<Mesh,T> fb(msh, fc, facdeg);
-        
+
         auto qps_f = integrate(msh, fc, 2*facdeg);
         for (auto& qp : qps_f)
         {
@@ -131,6 +131,9 @@ make_hho_laplacian(const Mesh& msh, const typename Mesh::cell_type& cl, const hh
             gr_rhs.block(0, 0, rbs-1, cbs) -= qp.second * (c_dphi * n) * c_phi.transpose();
         }
     }
+
+    std::cout << gr_lhs << std::endl << std::endl;
+    std::cout << gr_rhs << std::endl << std::endl;
 
     Matrix<T, Dynamic, Dynamic> oper = gr_lhs.llt().solve(gr_rhs);
     Matrix<T, Dynamic, Dynamic> data = gr_rhs.transpose() * oper;

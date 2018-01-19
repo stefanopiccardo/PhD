@@ -553,11 +553,23 @@ integrate(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::face
 template<typename T, typename ET>
 std::vector< std::pair<point<T,2>, T> >
 integrate_interface(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
-                    size_t degree)
+                    size_t degree, element_location where)
 {
     assert( is_cut(msh, cl) );
 
+    typedef typename cuthho_mesh<T, ET>::point_type point_type;
+
     std::vector< std::pair<point<T,2>, T> > ret;
+
+    auto pa = cl.user_data.interface.at(0);
+    auto pb = cl.user_data.interface.at(1);
+    auto bar = barycenter(msh, cl, where);
+
+    auto va = (pa - bar).to_vector();
+    auto vb_temp = pb - pa;
+    auto vb = point_type({vb_temp.y(), -vb_temp.x()}).to_vector();
+
+    auto int_sign = va.dot(vb) < 0 ? -1.0 : +1.0;
 
     auto qps = edge_quadrature<T>(degree);  // <-- This has to be changed! Slows down everything!
 
@@ -575,7 +587,7 @@ integrate_interface(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T,
             //auto p = qp.first.x() * scale + p0;
             auto t = qp.first.x();
             auto p = 0.5*(1-t)*p0 + 0.5*(1+t)*p1;
-            auto w = qp.second * meas * 0.5;
+            auto w = int_sign * qp.second * meas * 0.5;
 
             ret.push_back( std::make_pair(p, w) );
         }
@@ -650,39 +662,6 @@ void dump_mesh(const cuthho_mesh<T, ET>& msh)
 
     ofs.close();
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 template<typename T, typename ET>
