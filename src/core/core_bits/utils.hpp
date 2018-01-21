@@ -57,6 +57,58 @@
 #include "bases.hpp"
 #include "quadratures.hpp"
 
+
+class hho_degree_info
+{
+    size_t  cell_deg, face_deg, reconstruction_deg;
+
+public:
+    hho_degree_info()
+        : cell_deg(1), face_deg(1), reconstruction_deg(2)
+    {}
+
+    explicit hho_degree_info(size_t degree)
+        : cell_deg(degree), face_deg(degree), reconstruction_deg(degree+1)
+    {}
+
+    hho_degree_info(size_t cd, size_t fd)
+    {
+        bool c1 = fd > 0  && (cd == fd-1 || cd == fd || cd == fd+1);
+        bool c2 = fd == 0 && (cd == fd || cd == fd+1);
+        if ( c1 || c2 )
+        {
+            cell_deg            = cd;
+            face_deg            = fd;
+            reconstruction_deg  = fd+1;
+
+        }
+        else
+        {
+            std::cout << "Invalid cell degree. Reverting to equal-order" << std::endl;
+            cell_deg            = fd;
+            face_deg            = fd;
+            reconstruction_deg  = fd+1;
+        }
+
+        std::cout << cell_deg << " " << face_deg << " " << reconstruction_deg << std::endl;
+    }
+
+    size_t cell_degree() const
+    {
+        return cell_deg;
+    }
+
+    size_t face_degree() const
+    {
+        return face_deg;
+    }
+
+    size_t reconstruction_degree() const
+    {
+        return reconstruction_deg;
+    }
+};
+
 template<typename Mesh, typename T = typename Mesh::coordinate_type>
 Matrix<T, Dynamic, Dynamic>
 make_mass_matrix(const Mesh& msh, const typename Mesh::cell_type& cl, size_t degree)
@@ -146,25 +198,25 @@ make_rhs(const Mesh& msh, const typename Mesh::face_type& fc,
 template<typename Mesh, typename Function>
 Matrix<typename Mesh::coordinate_type, Dynamic, 1>
 project_function(const Mesh& msh, const typename Mesh::cell_type& cl,
-                 size_t degree, const Function& f)
+                 hho_degree_info hdi, const Function& f)
 {
     using T = typename Mesh::coordinate_type;
 
-    auto cbs = cell_basis<Mesh,T>::size(degree);
-    auto fbs = face_basis<Mesh,T>::size(degree);
+    auto cbs = cell_basis<Mesh,T>::size(hdi.cell_degree());
+    auto fbs = face_basis<Mesh,T>::size(hdi.face_degree());
 
     Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs+4*fbs);
 
-    Matrix<T, Dynamic, Dynamic> cell_mm = make_mass_matrix(msh, cl, degree);
-    Matrix<T, Dynamic, 1> cell_rhs = make_rhs(msh, cl, degree, f);
+    Matrix<T, Dynamic, Dynamic> cell_mm = make_mass_matrix(msh, cl, hdi.cell_degree());
+    Matrix<T, Dynamic, 1> cell_rhs = make_rhs(msh, cl, hdi.cell_degree(), f);
     ret.block(0, 0, cbs, 1) = cell_mm.llt().solve(cell_rhs);
 
     auto fcs = faces(msh, cl);
     for (size_t i = 0; i < 4; i++)
     {
         auto fc = fcs[i];
-        Matrix<T, Dynamic, Dynamic> face_mm = make_mass_matrix(msh, fc, degree);
-        Matrix<T, Dynamic, 1> face_rhs = make_rhs(msh, fc, degree, f);
+        Matrix<T, Dynamic, Dynamic> face_mm = make_mass_matrix(msh, fc, hdi.face_degree());
+        Matrix<T, Dynamic, 1> face_rhs = make_rhs(msh, fc, hdi.face_degree(), f);
         ret.block(cbs+i*fbs, 0, fbs, 1) = face_mm.llt().solve(face_rhs);
     }
 
@@ -223,13 +275,12 @@ std::ostream& time_now(std::ostream& os)
     time_t      rawtime;
     struct tm   *timeinfo;
     char        buffer[80];
-    
+
     time(&rawtime);
     timeinfo = localtime(&rawtime);
-    
+
     strftime (buffer,80,"[%D %T] ",timeinfo);
-    
+
     os << buffer;
     return os;
 }
-

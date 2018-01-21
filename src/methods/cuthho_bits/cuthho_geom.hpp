@@ -150,7 +150,7 @@ detect_cut_faces(cuthho_mesh<T, ET>& msh, const Function& level_set_function)
             continue;
         }
 
-        auto threshold = diameter(msh, fc) / 10000.0;
+        auto threshold = diameter(msh, fc) / 1e4;
         auto pm = find_zero_crossing(pts[0], pts[1], level_set_function, threshold);
 
         /* If node 0 is in the negative region, mark it as node inside, otherwise mark node 1 */

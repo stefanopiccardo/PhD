@@ -99,14 +99,14 @@ struct line_level_set
         auto x = pt.x();
         auto y = pt.y();
 
-        return y - cut_y;
+        return x - cut_y;
     }
 
     Eigen::Matrix<T,2,1> gradient(const point<T,2>& pt) const
     {
         Eigen::Matrix<T,2,1> ret;
-        ret(0) = 0;
-        ret(1) = 1;
+        ret(0) = 1;
+        ret(1) = 0;
         return ret;
     }
 
@@ -297,7 +297,7 @@ void test_triangulation(const cuthho_mesh<T, ET>& msh)
         if ( !is_cut(msh, cl) )
             continue;
 
-        auto tris = triangulate(msh, cl, element_location::IN_NEGATIVE_SIDE);
+        auto tris = triangulate(msh, cl, element_location::IN_POSITIVE_SIDE);
 
         for (auto& tri : tris)
             ofs << tri << std::endl;
@@ -318,7 +318,7 @@ template<typename T, typename ET>
 T
 cell_eta(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl)
 {
-    return 1;
+    return 20;
 }
 
 
@@ -344,8 +344,8 @@ make_hho_laplacian(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, 
     auto fbs = face_basis<cuthho_mesh<T, ET>,T>::size(facdeg);
 
     Matrix<T, Dynamic, Dynamic> stiff = Matrix<T, Dynamic, Dynamic>::Zero(rbs, rbs);
-    Matrix<T, Dynamic, Dynamic> gr_lhs = Matrix<T, Dynamic, Dynamic>::Zero(rbs-1, rbs-1);
-    Matrix<T, Dynamic, Dynamic> gr_rhs = Matrix<T, Dynamic, Dynamic>::Zero(rbs-1, cbs + 4*fbs);
+    Matrix<T, Dynamic, Dynamic> gr_lhs = Matrix<T, Dynamic, Dynamic>::Zero(rbs, rbs);
+    Matrix<T, Dynamic, Dynamic> gr_rhs = Matrix<T, Dynamic, Dynamic>::Zero(rbs, cbs + 4*fbs);
 
     Matrix<T, Dynamic, Dynamic> na = Matrix<T, Dynamic, Dynamic>::Zero(rbs, rbs);
     Matrix<T, Dynamic, Dynamic> nb = Matrix<T, Dynamic, Dynamic>::Zero(rbs, rbs);
@@ -361,10 +361,15 @@ make_hho_laplacian(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, 
 
     auto hT = measure(msh, cl);
 
+    //std::cout << "Measure: " << hT << std::endl;
+
+    //std::cout << bggreen << stiff << reset << std::endl << std::endl;
+
     /* Interface term */
     auto iqps = integrate_interface(msh, cl, 2*recdeg, where);
     for (auto& qp : iqps)
     {
+        //std::cout << qp.first << " " << qp.second << std::endl;
         auto phi    = cb.eval_basis(qp.first);
         auto dphi   = cb.eval_gradients(qp.first);
         Matrix<T,2,1> n      = level_set_function.normal(qp.first);
@@ -377,14 +382,14 @@ make_hho_laplacian(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, 
         nc += qp.second * phi * phi.transpose() * cell_eta(msh, cl) / hT;
     }
 
-    std::cout << na << std::endl << std::endl;
-    std::cout << nb << std::endl << std::endl;
-    std::cout << nc << std::endl << std::endl;
+    //std::cout << na << std::endl << std::endl;
+    //std::cout << nb << std::endl << std::endl;
+    //std::cout << nc << std::endl << std::endl;
 
-    stiff += na + nb + nc;
+    stiff += -na - nb + nc;
 
-    gr_lhs = stiff.block(1, 1, rbs-1, rbs-1);
-    gr_rhs.block(0, 0, rbs-1, cbs) = stiff.block(1, 0, rbs-1, cbs);
+    gr_lhs = stiff;
+    gr_rhs.block(0, 0, rbs, cbs) = stiff.block(0, 0, rbs, cbs);
 
     auto ns = normals(msh, cl);
     auto fcs = faces(msh, cl);
@@ -401,20 +406,20 @@ make_hho_laplacian(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, 
             auto c_phi = cb.eval_basis(qp.first);
             auto f_phi = fb.eval_basis(qp.first);
             auto r_dphi_tmp = cb.eval_gradients(qp.first);
-            auto r_dphi = r_dphi_tmp.block(1, 0, rbs-1, 2);
-            gr_rhs.block(0, cbs+i*fbs, rbs-1, fbs) += qp.second * (r_dphi * n) * f_phi.transpose();
-            gr_rhs.block(0, 0, rbs-1, cbs) -= qp.second * (r_dphi * n) * c_phi.transpose();
+            auto r_dphi = r_dphi_tmp.block(0, 0, rbs, 2);
+            gr_rhs.block(0, cbs+i*fbs, rbs, fbs) += qp.second * (r_dphi * n) * f_phi.transpose();
+            gr_rhs.block(0, 0, rbs, cbs) -= qp.second * (r_dphi * n) * c_phi.transpose();
         }
     }
 
     std::cout << cyan << gr_lhs << nocolor << std::endl;
-    std::cout << "Determinant is " << gr_lhs.determinant() << std::endl;
-    std::cout << "Condition number is " << condition_number(gr_lhs) << std::endl << std::endl;
+    //std::cout << "Determinant is " << gr_lhs.determinant() << std::endl;
+    //std::cout << "Condition number is " << condition_number(gr_lhs) << std::endl << std::endl;
     std::cout << magenta << gr_rhs << nocolor << std::endl << std::endl;
 
-    Matrix<T, Dynamic, Dynamic> oper = gr_lhs.llt().solve(gr_rhs);
+    Matrix<T, Dynamic, Dynamic> oper = gr_lhs.ldlt().solve(gr_rhs);
     Matrix<T, Dynamic, Dynamic> data = gr_rhs.transpose() * oper;
-
+    std::cout << green << oper << nocolor << std::endl << std::endl;
     return std::make_pair(oper, data);
 }
 
@@ -467,7 +472,7 @@ make_hho_cut_stabilization(const cuthho_mesh<T, ET>& msh,
         if (qps.size() == 0) /* Avoid to invert a zero matrix */
             continue;
 
-        oper.block(0, 0, fbs, cbs) = mass.llt().solve(trace);
+        oper.block(0, 0, fbs, cbs) = mass.ldlt().solve(trace);
 
         data += oper.transpose() * mass * oper * (1./hT);
     }
@@ -498,7 +503,7 @@ make_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_
             ret += qp.second * phi * f(qp.first);
         }
 
-        /*
+
         auto qpsi = integrate_interface(msh, cl, degree, where);
         for (auto& qp : qpsi)
         {
@@ -508,7 +513,7 @@ make_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_
 
             ret += qp.second * bcs(qp.first) * ( phi * cell_eta(msh, cl)/hT - dphi*n);
         }
-        */
+
 
         return ret;
     }
@@ -627,11 +632,11 @@ run_cuthho(const Mesh& msh, const Function& level_set_function, size_t degree)
 
     /************** DEFINE PROBLEM RHS, SOLUTION AND BCS **************/
     auto rhs_fun = [](const typename cuthho_quad_mesh<RealType>::point_type& pt) -> RealType {
-        return 5.0 * M_PI * M_PI * std::sin(M_PI*pt.x()) * std::sin(2.0 * M_PI*pt.y());
+        return 2.0 * M_PI * M_PI * std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
     };
 
     auto sol_fun = [](const typename cuthho_quad_mesh<RealType>::point_type& pt) -> RealType {
-        return std::sin(M_PI*pt.x()) * std::sin(2.0 * M_PI*pt.y());
+        return std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
     };
 
     auto bcs_fun = [&](const typename cuthho_quad_mesh<RealType>::point_type& pt) -> RealType {
@@ -642,7 +647,7 @@ run_cuthho(const Mesh& msh, const Function& level_set_function, size_t degree)
     /************** ASSEMBLE PROBLEM **************/
     hho_degree_info hdi(degree+1, degree);
 
-    element_location where = element_location::IN_POSITIVE_SIDE;
+    element_location where = element_location::IN_NEGATIVE_SIDE;
 
     auto assembler = make_assembler(msh, hdi);
     for (auto& cl : msh.cells)
@@ -685,7 +690,7 @@ run_cuthho(const Mesh& msh, const Function& level_set_function, size_t degree)
 #endif
 
     auto optest_fun = [](const typename cuthho_quad_mesh<RealType>::point_type& pt) -> RealType {
-        return pt.x() * pt.y();
+        return pt.x();
         //return 0;
     };
 
@@ -711,30 +716,38 @@ run_cuthho(const Mesh& msh, const Function& level_set_function, size_t degree)
         Matrix<RealType, Dynamic, 1> cell_dofs = locdata.head(cbs);
         Matrix<RealType, Dynamic, 1> rec_dofs = gr.first * locdata;
 
-        auto bar = barycenter(msh, cl/*, element_location::IN_NEGATIVE_SIDE*/);
+        auto bar = barycenter(msh, cl, element_location::IN_NEGATIVE_SIDE);
 
         Matrix<RealType, Dynamic, 1> c_phi = cb.eval_basis(bar);
         auto c_val = cell_dofs.dot( c_phi );
         solution_uT.push_back(c_val);
 
         Matrix<RealType, Dynamic, 1> r_phi = rb.eval_basis(bar);
-        auto r_val = rec_dofs.dot( r_phi.tail(rbs-1) ) + locdata(0);
+        RealType r_val;
+
+        if ( is_cut(msh, cl) )
+            r_val = rec_dofs.dot( r_phi );
+        else
+            r_val = rec_dofs.dot( r_phi.tail(rbs-1) ) + locdata(0);
+
         solution_Ru.push_back(r_val);
 
         Matrix<RealType, Dynamic, 1> proj = project_function(msh, cl, hdi, where, optest_fun);
         Matrix<RealType, Dynamic, 1> prec = gr.first * proj;
 
-        auto p_val = proj.head(cbs).dot( c_phi );
-        optest.push_back(p_val);
+        //auto p_val = proj.head(cbs).dot( c_phi );
+        //optest.push_back(p_val);
 
-        auto Rp_val = prec.dot( r_phi.tail(rbs-1) ) + proj(0);
-        optest_r.push_back(Rp_val);
+        //auto Rp_val = prec.dot( r_phi.tail(rbs-1) ) + locdata(0);
+        //optest_r.push_back(Rp_val);
 
         std::cout << ( is_cut(msh, cl) ? "\x1b[31mCUT:\x1b[0m" : "\x1b[32mNOT CUT:\x1b[0m" );
         std::cout << " Cell " << cell_i << std::endl;
-        std::cout << gr.first << std::endl << std::endl;
-        std::cout << proj.transpose() << std::endl << std::endl;
+
+        std::cout << proj.transpose() << std::endl;
         std::cout << prec.transpose() << std::endl;
+
+        //std::cout << gr.first << std::endl << std::endl;
 
         auto tps = make_test_points(msh, cl);
         for (auto& tp : tps)
@@ -745,7 +758,17 @@ run_cuthho(const Mesh& msh, const Function& level_set_function, size_t degree)
             for (size_t i = 0; i < rbs; i++)
                 ofs << t_phi(i) << " ";
 
-            ofs << prec.dot( t_phi.tail(rbs-1) ) + proj(0) << std::endl;
+            ofs << cell_dofs.dot( t_phi ) << " ";
+            if ( is_cut(msh, cl) )
+                ofs << rec_dofs.dot( t_phi ) << " ";
+            else
+                ofs << rec_dofs.dot( t_phi.tail(rbs-1) ) + locdata(0) << " ";
+
+            ofs << proj.head(cbs).dot( t_phi ) << " ";
+            if ( is_cut(msh, cl) )
+                ofs << prec.dot( t_phi ) << std::endl;
+            else
+                ofs << prec.dot( t_phi.tail(rbs-1) ) + proj(0) << std::endl;
         }
 
         std::cout << red << " --- .oO CELL " << cell_i << " END Oo. ---" << nocolor << std::endl;
@@ -757,8 +780,8 @@ run_cuthho(const Mesh& msh, const Function& level_set_function, size_t degree)
 
     silo.add_variable("mesh", "uT", solution_uT.data(), solution_uT.size(), zonal_variable_t);
     silo.add_variable("mesh", "Ru", solution_Ru.data(), solution_Ru.size(), zonal_variable_t);
-    silo.add_variable("mesh", "optest", optest.data(), optest.size(), zonal_variable_t);
-    silo.add_variable("mesh", "optest_r", optest_r.data(), optest_r.size(), zonal_variable_t);
+    //silo.add_variable("mesh", "optest", optest.data(), optest.size(), zonal_variable_t);
+    //silo.add_variable("mesh", "optest_r", optest_r.data(), optest_r.size(), zonal_variable_t);
 }
 
 int main(int argc, char **argv)
@@ -802,22 +825,22 @@ int main(int argc, char **argv)
 
     /************** LEVEL SET FUNCTION **************/
     RealType radius = 0.35;
-    //auto level_set_function = circle_level_set<RealType>(radius, 0.5, 0.5);
-    auto level_set_function = line_level_set<RealType>(0.5);
+    auto level_set_function = circle_level_set<RealType>(radius, 0.5, 0.5);
+    //auto level_set_function = line_level_set<RealType>(0.5);
     /************** DO cutHHO MESH PROCESSING **************/
     detect_node_position(msh, level_set_function);
     detect_cut_faces(msh, level_set_function);
 
-    //move_nodes(msh, level_set_function);
-    //detect_cut_faces(msh, level_set_function);
-    //move_nodes(msh, level_set_function);
-    //detect_cut_faces(msh, level_set_function);
+    move_nodes(msh, level_set_function);
+    detect_cut_faces(msh, level_set_function);
+    move_nodes(msh, level_set_function);
+    detect_cut_faces(msh, level_set_function);
 
     detect_cut_cells(msh, level_set_function);
-    refine_interface(msh, level_set_function, 0);
+    refine_interface(msh, level_set_function, 5);
     dump_mesh(msh);
     test_triangulation(msh);
-    
+
     run_cuthho(msh, level_set_function, degree);
 
 
@@ -836,6 +859,9 @@ int main(int argc, char **argv)
         return 1;
     };
     auto ints = test_integration(msh, intfunc, level_set_function);
+
+#if 0
+
     auto expval = radius*radius*M_PI;
     std::cout << "Integral relative error: " << 100*std::abs(ints.first-expval)/expval << "%" <<std::endl;
     expval = 2*M_PI*radius;
@@ -877,7 +903,7 @@ int main(int argc, char **argv)
 
 
 
-
+#endif
 
 
 

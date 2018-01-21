@@ -27,56 +27,7 @@
 
 #include "core/core"
 
-class hho_degree_info
-{
-    size_t  cell_deg, face_deg, reconstruction_deg;
 
-public:
-    hho_degree_info()
-        : cell_deg(1), face_deg(1), reconstruction_deg(2)
-    {}
-
-    explicit hho_degree_info(size_t degree)
-        : cell_deg(degree), face_deg(degree), reconstruction_deg(degree+1)
-    {}
-
-    hho_degree_info(size_t cd, size_t fd)
-    {
-        bool c1 = fd > 0  && (cd == fd-1 || cd == fd || cd == fd+1);
-        bool c2 = fd == 0 && (cd == fd || cd == fd+1);
-        if ( c1 || c2 )
-        {
-            cell_deg            = cd;
-            face_deg            = fd;
-            reconstruction_deg  = fd+1;
-
-        }
-        else
-        {
-            std::cout << "Invalid cell degree. Reverting to equal-order" << std::endl;
-            cell_deg            = fd;
-            face_deg            = fd;
-            reconstruction_deg  = fd+1;
-        }
-
-        std::cout << cell_deg << " " << face_deg << " " << reconstruction_deg << std::endl;
-    }
-
-    size_t cell_degree() const
-    {
-        return cell_deg;
-    }
-
-    size_t face_degree() const
-    {
-        return face_deg;
-    }
-
-    size_t reconstruction_degree() const
-    {
-        return reconstruction_deg;
-    }
-};
 
 template<typename Mesh>
 std::pair<   Matrix<typename Mesh::coordinate_type, Dynamic, Dynamic>,
@@ -132,10 +83,10 @@ make_hho_laplacian(const Mesh& msh, const typename Mesh::cell_type& cl, const hh
         }
     }
 
-    std::cout << cyan << gr_lhs << nocolor << std::endl;
-    std::cout << "Determinant is " << gr_lhs.determinant() << std::endl;
-    std::cout << "Condition number is " << condition_number(gr_lhs) << std::endl << std::endl;
-    std::cout << magenta << gr_rhs << nocolor << std::endl << std::endl;
+    //std::cout << cyan << gr_lhs << nocolor << std::endl;
+    //std::cout << "Determinant is " << gr_lhs.determinant() << std::endl;
+    //std::cout << "Condition number is " << condition_number(gr_lhs) << std::endl << std::endl;
+    //std::cout << magenta << gr_rhs << nocolor << std::endl << std::endl;
 
     Matrix<T, Dynamic, Dynamic> oper = gr_lhs.llt().solve(gr_rhs);
     Matrix<T, Dynamic, Dynamic> data = gr_rhs.transpose() * oper;
