@@ -749,9 +749,11 @@ run_cuthho(const Mesh& msh, const Function& level_set_function, size_t degree)
 
         //std::cout << gr.first << std::endl << std::endl;
 
-        auto tps = make_test_points(msh, cl);
-        for (auto& tp : tps)
+        //auto tps = make_test_points(msh, cl);
+        auto qps = integrate(msh, cl, 5, element_location::IN_NEGATIVE_SIDE);
+        for (auto& qp : qps)
         {
+            auto tp = qp.first;
             auto t_phi = rb.eval_basis(tp);
 
             ofs << tp.x() << " " << tp.y() << " ";
