@@ -126,7 +126,7 @@ public:
     template<typename T>
     bool add_variable(const std::string& mesh_name,
                       const std::string& var_name,
-                      const T* data,
+                      T* data,
                       size_t data_len,
                       variable_centering_t centering)
     {

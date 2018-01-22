@@ -623,6 +623,41 @@ integrate_interface(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T,
 }
 
 
+template<typename T, typename Function>
+std::vector< typename cuthho_quad_mesh<T>::point_type >
+make_test_points(const cuthho_quad_mesh<T>& msh, const typename cuthho_quad_mesh<T>::cell_type& cl,
+                 const Function& level_set_function, element_location where)
+{
+    const size_t N = 10;
+
+    auto trans = make_reference_transform(msh, cl);
+
+    std::vector< typename cuthho_quad_mesh<T>::point_type > ret;
+
+    auto cell_pts = points(msh, cl);
+
+    auto min = -1.0;
+    auto h = 2.0/N;
+
+    for (size_t j = 0; j < N+1; j++)
+    {
+        for(size_t i = 0; i < N+1; i++)
+        {
+            auto p_xi = min + i*h;
+            auto p_eta = min + j*h;
+            typename cuthho_quad_mesh<T>::point_type pt(p_xi, p_eta);
+
+            auto phys_pt = trans.ref_to_phys(pt);
+
+            if ( level_set_function(phys_pt) < 0 && where == element_location::IN_NEGATIVE_SIDE)
+              ret.push_back( phys_pt );
+            else if ( level_set_function(phys_pt) > 0 && where == element_location::IN_POSITIVE_SIDE)
+              ret.push_back( phys_pt );
+        }
+    }
+
+    return ret;
+}
 
 
 
