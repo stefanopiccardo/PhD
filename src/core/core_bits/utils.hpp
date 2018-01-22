@@ -53,6 +53,7 @@
 #pragma once
 
 #include <time.h>
+#include <sys/resource.h>
 
 #include "bases.hpp"
 #include "quadratures.hpp"
@@ -231,6 +232,59 @@ T condition_number(const Matrix<T, Dynamic, Dynamic>& A)
     return cond;
 }
 
+
+
+
+
+class timecounter
+{
+    struct rusage m_start, m_stop;
+
+public:
+    timecounter()
+    {}
+
+    void tic()
+    {
+        getrusage(RUSAGE_SELF, &m_start);
+    }
+
+    void toc()
+    {
+        getrusage(RUSAGE_SELF, &m_stop);
+    }
+
+    double get_usertime() const
+    {
+        double start, stop;
+        start = m_start.ru_utime.tv_sec + double(m_start.ru_utime.tv_usec)/1e6;
+        stop = m_stop.ru_utime.tv_sec + double(m_stop.ru_utime.tv_usec)/1e6;
+        return stop - start;
+    }
+
+    double get_systime() const
+    {
+        double start, stop;
+        start = m_start.ru_stime.tv_sec + double(m_start.ru_stime.tv_usec)/1e6;
+        stop = m_stop.ru_stime.tv_sec + double(m_stop.ru_stime.tv_usec)/1e6;
+        return stop - start;
+    }
+
+    double to_double() const
+    {
+        return /*get_systime() +*/ get_usertime();
+    }
+};
+
+std::ostream&
+operator<<(std::ostream& os, const timecounter& tc)
+{
+    os << tc.to_double();
+
+    return os;
+}
+
+
 /* Maybe not the best place for the I/O manipulators, but for now they can
  * stay there.
  */
@@ -253,7 +307,36 @@ std::ostream& bgmagenta(std::ostream& os) { os << "\x1b[45m"; return os; }
 std::ostream& bgcyan(std::ostream& os) { os << "\x1b[46m"; return os; }
 std::ostream& nobg(std::ostream& os) { os << "\x1b[49m"; return os; }
 
-/* BOLD (boldoff widely unsupported!) */
+struct text_tag;
+struct background_tag;
+
+template<typename tag>
+struct terminal_rgb {
+    unsigned char r;
+    unsigned char g;
+    unsigned char b;
+
+    terminal_rgb(unsigned char pr, unsigned char pg, unsigned char pb)
+        : r(pr), g(pg), b(pb)
+    {}
+};
+
+using text_rgb = terminal_rgb<text_tag>;
+using bg_rgb = terminal_rgb<background_tag>;
+
+template<typename tag>
+std::ostream& operator<<(std::ostream& os, const terminal_rgb<tag>& rgb)
+{
+    if (std::is_same<tag, text_rgb>::value)
+        os << "\x1b[38;2;";
+    else
+        os << "\x1b[48;2;";
+
+    os << int(rgb.r) << ";" << int(rgb.g) << ";" << int(rgb.b) << "m"; 
+    return os;
+}
+
+/* BOLD (nobold widely unsupported!) */
 std::ostream& bold(std::ostream& os) { os << "\x1b[1m"; return os; }
 std::ostream& nobold(std::ostream& os) { os << "\x1b[21m"; return os; }
 
@@ -268,6 +351,7 @@ std::ostream& noblink(std::ostream& os) { os << "\x1b[25m"; return os; }
 /* RESET */
 std::ostream& reset(std::ostream& os) { os << "\x1b[0m"; return os; }
 
+std::ostream& erase_line(std::ostream& os) { os << "\x1b[0K"; return os; }
 
 /* TIME */
 std::ostream& time_now(std::ostream& os)
@@ -284,3 +368,9 @@ std::ostream& time_now(std::ostream& os)
     os << buffer;
     return os;
 }
+
+
+
+
+
+

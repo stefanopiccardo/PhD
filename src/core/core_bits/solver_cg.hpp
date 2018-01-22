@@ -65,7 +65,7 @@ cg_exit_reason
 conjugated_gradient(const Eigen::SparseMatrix<T>& A,
                     const Eigen::Matrix<T, Eigen::Dynamic, 1>& b,
                     Eigen::Matrix<T, Eigen::Dynamic, 1>& x,
-                    const cg_params<T>& parms)
+                    const cg_params<T>& parms = cg_params<T>())
 {
     size_t                      N = A.cols();
     size_t                      iter = 0;
@@ -94,9 +94,8 @@ conjugated_gradient(const Eigen::SparseMatrix<T>& A,
     while ( 1 )
     {
         if ( parms.verbose ) {
-            std::cout << "                                                 \r";
-            std::cout << " -> Iteration " << iter << ", rr = ";
-            std::cout << nr/nr0 << "\b\r";
+            std::cout << erase_line << " -> Iteration " << iter << ", rr = ";
+            std::cout << nr/nr0 << "\r";
             std::cout.flush();
         }
 
@@ -139,7 +138,7 @@ conjugated_gradient(const Eigen::SparseMatrix<T>& A,
     }
 
     if ( parms.verbose )
-        std::cout << " -> Iteration " << iter << ", rr = " << nr/nr0 << std::endl;
+        std::cout << erase_line << " -> Iteration " << iter << ", rr = " << nr/nr0 << std::endl;
 
     return exit_reason;
 }

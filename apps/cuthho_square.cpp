@@ -30,6 +30,7 @@
 #include <cmath>
 #include <memory>
 #include <sstream>
+#include <list>
 
 #include <Eigen/Dense>
 #include <Eigen/SparseCore>
@@ -99,14 +100,14 @@ struct line_level_set
         auto x = pt.x();
         auto y = pt.y();
 
-        return x - cut_y;
+        return y - cut_y;
     }
 
     Eigen::Matrix<T,2,1> gradient(const point<T,2>& pt) const
     {
         Eigen::Matrix<T,2,1> ret;
-        ret(0) = 1;
-        ret(1) = 0;
+        ret(0) = 0;
+        ret(1) = 1;
         return ret;
     }
 
@@ -269,25 +270,6 @@ test_mass_matrices(const Mesh& msh, size_t degree)
     f_ofs.close();
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 template<typename T, typename ET>
 void test_triangulation(const cuthho_mesh<T, ET>& msh)
 {
@@ -318,7 +300,7 @@ template<typename T, typename ET>
 T
 cell_eta(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl)
 {
-    return 20;
+    return 1;
 }
 
 
@@ -347,10 +329,6 @@ make_hho_laplacian(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, 
     Matrix<T, Dynamic, Dynamic> gr_lhs = Matrix<T, Dynamic, Dynamic>::Zero(rbs, rbs);
     Matrix<T, Dynamic, Dynamic> gr_rhs = Matrix<T, Dynamic, Dynamic>::Zero(rbs, cbs + 4*fbs);
 
-    Matrix<T, Dynamic, Dynamic> na = Matrix<T, Dynamic, Dynamic>::Zero(rbs, rbs);
-    Matrix<T, Dynamic, Dynamic> nb = Matrix<T, Dynamic, Dynamic>::Zero(rbs, rbs);
-    Matrix<T, Dynamic, Dynamic> nc = Matrix<T, Dynamic, Dynamic>::Zero(rbs, rbs);
-
     /* Cell term (cut) */
     auto qps = integrate(msh, cl, 2*recdeg, where);
     for (auto& qp : qps)
@@ -361,32 +339,18 @@ make_hho_laplacian(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, 
 
     auto hT = measure(msh, cl);
 
-    //std::cout << "Measure: " << hT << std::endl;
-
-    //std::cout << bggreen << stiff << reset << std::endl << std::endl;
-
     /* Interface term */
     auto iqps = integrate_interface(msh, cl, 2*recdeg, where);
     for (auto& qp : iqps)
     {
-        //std::cout << qp.first << " " << qp.second << std::endl;
         auto phi    = cb.eval_basis(qp.first);
         auto dphi   = cb.eval_gradients(qp.first);
         Matrix<T,2,1> n      = level_set_function.normal(qp.first);
 
-        //if (where == element_location::IN_POSITIVE_SIDE)
-        //    n = -n;
-
-        na += qp.second * phi * (dphi * n).transpose();
-        nb += qp.second * (dphi * n) * phi.transpose();
-        nc += qp.second * phi * phi.transpose() * cell_eta(msh, cl) / hT;
+        stiff -= qp.second * phi * (dphi * n).transpose();
+        stiff -= qp.second * (dphi * n) * phi.transpose();
+        stiff += qp.second * phi * phi.transpose() * cell_eta(msh, cl) / hT;
     }
-
-    //std::cout << na << std::endl << std::endl;
-    //std::cout << nb << std::endl << std::endl;
-    //std::cout << nc << std::endl << std::endl;
-
-    stiff += -na - nb + nc;
 
     gr_lhs = stiff;
     gr_rhs.block(0, 0, rbs, cbs) = stiff.block(0, 0, rbs, cbs);
@@ -412,14 +376,8 @@ make_hho_laplacian(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, 
         }
     }
 
-    std::cout << cyan << gr_lhs << nocolor << std::endl;
-    //std::cout << "Determinant is " << gr_lhs.determinant() << std::endl;
-    //std::cout << "Condition number is " << condition_number(gr_lhs) << std::endl << std::endl;
-    std::cout << magenta << gr_rhs << nocolor << std::endl << std::endl;
-
     Matrix<T, Dynamic, Dynamic> oper = gr_lhs.ldlt().solve(gr_rhs);
     Matrix<T, Dynamic, Dynamic> data = gr_rhs.transpose() * oper;
-    std::cout << green << oper << nocolor << std::endl << std::endl;
     return std::make_pair(oper, data);
 }
 
@@ -591,6 +549,80 @@ test_integration(const cuthho_mesh<T, ET>& msh, const Function1& f, const Functi
     return std::make_pair(surf_int_val, line_int_val);
 }
 
+
+
+
+template<typename T>
+class postprocess_output_object {
+
+public:
+    postprocess_output_object()
+    {}
+
+    virtual bool write() = 0;
+};
+
+template<typename T>
+class silo_output_object : public postprocess_output_object<T>
+{
+
+};
+
+template<typename T>
+class gnuplot_output_object : public postprocess_output_object<T>
+{
+    std::string                                 output_filename;
+    std::vector< std::pair< point<T,2>, T > >   data;
+
+public:
+    gnuplot_output_object(const std::string& filename)
+        : output_filename(filename)
+    {}
+
+    void add_data(const point<T,2>& pt, const T& val)
+    {
+        data.push_back( std::make_pair(pt, val) );
+    }
+
+    bool write()
+    {
+        std::ofstream ofs(output_filename);
+
+        for (auto& d : data)
+            ofs << d.first.x() << " " << d.first.y() << " " << d.second << std::endl;
+
+        ofs.close();
+
+        return true;
+    }
+};
+
+
+template<typename T>
+class postprocess_output
+{
+    std::list< std::shared_ptr< postprocess_output_object<T>> >     postprocess_objects;
+
+public:
+    postprocess_output()
+    {}
+
+    void add_object( std::shared_ptr<postprocess_output_object<T>> obj )
+    {
+        postprocess_objects.push_back( obj );
+    }
+
+    bool write(void) const
+    {
+        for (auto& obj : postprocess_objects)
+            obj->write();
+
+        return true;
+    }
+};
+
+
+
 template<typename Mesh, typename Function>
 void
 run_cuthho(const Mesh& msh, const Function& level_set_function, size_t degree)
@@ -639,29 +671,34 @@ run_cuthho(const Mesh& msh, const Function& level_set_function, size_t degree)
         return std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
     };
 
+    auto sol_grad = [](const typename cuthho_quad_mesh<RealType>::point_type& pt) -> auto {
+        Matrix<RealType, 1, 2> ret;
+
+        ret(0) = M_PI * std::cos(M_PI*pt.x()) * std::sin(M_PI*pt.y());
+        ret(1) = M_PI * std::sin(M_PI*pt.x()) * std::cos(M_PI*pt.y());
+
+        return ret;
+    };
+
     auto bcs_fun = [&](const typename cuthho_quad_mesh<RealType>::point_type& pt) -> RealType {
         return sol_fun(pt);
     };
 
+
+    timecounter tc;
 
     /************** ASSEMBLE PROBLEM **************/
     hho_degree_info hdi(degree+1, degree);
 
     element_location where = element_location::IN_NEGATIVE_SIDE;
 
+    tc.tic();
     auto assembler = make_assembler(msh, hdi);
     for (auto& cl : msh.cells)
     {
         auto gr = make_hho_laplacian(msh, cl, level_set_function, hdi, where);
         Matrix<RealType, Dynamic, Dynamic> stab = make_hho_cut_stabilization(msh, cl, hdi, where);
         Matrix<RealType, Dynamic, Dynamic> lc = gr.second + stab;
-
-        //auto grn = make_hho_laplacian(msh, cl, level_set_function, hdi, element_location::IN_NEGATIVE_SIDE);
-        //auto grp = make_hho_laplacian(msh, cl, level_set_function, hdi, element_location::IN_POSITIVE_SIDE);
-        //Matrix<RealType, Dynamic, Dynamic> stabn = make_hho_cut_stabilization(msh, cl, hdi, element_location::IN_NEGATIVE_SIDE);
-        //Matrix<RealType, Dynamic, Dynamic> stabp = make_hho_cut_stabilization(msh, cl, hdi, element_location::IN_POSITIVE_SIDE);
-        //Matrix<RealType, Dynamic, Dynamic> lc = grn.second + grp.second + stabn + stabp;
-
         Matrix<RealType, Dynamic, 1> f = Matrix<RealType, Dynamic, 1>::Zero(lc.rows());
 
         f = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun, where, level_set_function, bcs_fun);
@@ -671,40 +708,52 @@ run_cuthho(const Mesh& msh, const Function& level_set_function, size_t degree)
 
     assembler.finalize();
 
+    tc.toc();
+    std::cout << bold << yellow << "Matrix assembly: " << tc << " seconds" << reset << std::endl;
+
     std::cout << "System unknowns: " << assembler.LHS.rows() << std::endl;
     std::cout << "Cells: " << msh.cells.size() << std::endl;
     std::cout << "Faces: " << msh.faces.size() << std::endl;
 
 
     /************** SOLVE **************/
-//#if 0
+    tc.tic();
+#if 0
     SparseLU<SparseMatrix<RealType>>  solver;
 
     solver.analyzePattern(assembler.LHS);
     solver.factorize(assembler.LHS);
     Matrix<RealType, Dynamic, 1> sol = solver.solve(assembler.RHS);
-//#endif
-#if 0
-    Matrix<RealType, Dynamic, 1> sol = Matrix<RealType, Dynamic, 1>::Zero(assembler.RHS.rows());
-    conjugated_gradient(assembler.LHS, assembler.RHS, sol);
 #endif
-
-    auto optest_fun = [](const typename cuthho_quad_mesh<RealType>::point_type& pt) -> RealType {
-        return pt.x();
-        //return 0;
-    };
-
+//#if 0
+    Matrix<RealType, Dynamic, 1> sol = Matrix<RealType, Dynamic, 1>::Zero(assembler.RHS.rows());
+    cg_params<RealType> cgp;
+    cgp.max_iter = assembler.LHS.rows();
+    cgp.histfile = "cuthho_cg_hist.dat";
+    cgp.verbose = true;
+    cgp.apply_preconditioner = true;
+    conjugated_gradient(assembler.LHS, assembler.RHS, sol, cgp);
+//#endif
+    tc.toc();
+    std::cout << bold << yellow << "Linear solver: " << tc << " seconds" << reset << std::endl;
 
     /************** POSTPROCESS **************/
 
-    std::vector<RealType>   solution_uT, solution_Ru, optest, optest_r;
 
-    std::ofstream ofs("basis_check.dat");
 
-    size_t cell_i = 0;
+    postprocess_output<RealType>  postoutput;
+
+    auto uT_gp  = std::make_shared< gnuplot_output_object<RealType> >("solution_uT.dat");
+    auto Ru_gp  = std::make_shared< gnuplot_output_object<RealType> >("solution_Ru.dat");
+
+
+    std::vector<RealType>   solution_uT, solution_Ru;
+
+    tc.tic();
+    RealType    H1_error = 0.0;
+    size_t      cell_i   = 0;
     for (auto& cl : msh.cells)
     {
-        std::cout << red << " --- .oO CELL " << cell_i << " BEGIN Oo. ---" << nocolor << std::endl;
         cell_basis<cuthho_quad_mesh<RealType>, RealType> cb(msh, cl, hdi.cell_degree());
         auto cbs = cb.size();
 
@@ -732,58 +781,71 @@ run_cuthho(const Mesh& msh, const Function& level_set_function, size_t degree)
 
         solution_Ru.push_back(r_val);
 
-        Matrix<RealType, Dynamic, 1> proj = project_function(msh, cl, hdi, where, optest_fun);
-        Matrix<RealType, Dynamic, 1> prec = gr.first * proj;
-
-        //auto p_val = proj.head(cbs).dot( c_phi );
-        //optest.push_back(p_val);
-
-        //auto Rp_val = prec.dot( r_phi.tail(rbs-1) ) + locdata(0);
-        //optest_r.push_back(Rp_val);
-
-        std::cout << ( is_cut(msh, cl) ? "\x1b[31mCUT:\x1b[0m" : "\x1b[32mNOT CUT:\x1b[0m" );
-        std::cout << " Cell " << cell_i << std::endl;
-
-        std::cout << proj.transpose() << std::endl;
-        std::cout << prec.transpose() << std::endl;
-
-        //std::cout << gr.first << std::endl << std::endl;
-
-        //auto tps = make_test_points(msh, cl);
+        /*
         auto qps = integrate(msh, cl, 5, element_location::IN_NEGATIVE_SIDE);
         for (auto& qp : qps)
         {
-            auto tp = qp.first;
-            auto t_phi = rb.eval_basis(tp);
+            auto t_phi = rb.eval_basis( qp.first );
 
-            ofs << tp.x() << " " << tp.y() << " ";
-            for (size_t i = 0; i < rbs; i++)
-                ofs << t_phi(i) << " ";
+            uT_gp->add_data( qp.first, cell_dofs.dot(t_phi) );
 
-            ofs << cell_dofs.dot( t_phi ) << " ";
+            RealType Ru_val;
+
             if ( is_cut(msh, cl) )
-                ofs << rec_dofs.dot( t_phi ) << " ";
+                Ru_val = rec_dofs.dot( t_phi );
             else
-                ofs << rec_dofs.dot( t_phi.tail(rbs-1) ) + locdata(0) << " ";
+                Ru_val = rec_dofs.dot( t_phi.tail(rbs-1) ) + locdata(0);
 
-            ofs << proj.head(cbs).dot( t_phi ) << " ";
-            if ( is_cut(msh, cl) )
-                ofs << prec.dot( t_phi ) << std::endl;
-            else
-                ofs << prec.dot( t_phi.tail(rbs-1) ) + proj(0) << std::endl;
+            Ru_gp->add_data( qp.first, Ru_val );
+        }*/
+
+
+        if ( location(msh, cl) == element_location::IN_NEGATIVE_SIDE )
+        {
+            auto qps = integrate(msh, cl, hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE);
+            for (auto& qp : qps)
+            {
+                /* Compute H1-error */
+                auto t_dphi = rb.eval_gradients( qp.first );
+                Matrix<RealType, 1, 2> grad = Matrix<RealType, 1, 2>::Zero();
+
+                for (size_t i = 1; i < rbs; i++ )
+                {
+                    if ( is_cut(msh, cl) )
+                        grad += rec_dofs(i) * t_dphi.block(i, 0, 1, 2);
+                    else
+                        grad += rec_dofs(i-1) * t_dphi.block(i, 0, 1, 2);
+                }
+
+                std::cout << "****" << std::endl;
+                std::cout << green << t_dphi.transpose() << nocolor << std::endl;
+                std::cout << cyan << rec_dofs.transpose() << nocolor << std::endl;
+
+                std::cout << grad << std::endl;
+                std::cout << sol_grad(qp.first) << std::endl;
+
+                Matrix<RealType, 1, 2> diff = grad - sol_grad(qp.first);
+            
+                H1_error += diff.dot(diff);
+            }
         }
-
-        std::cout << red << " --- .oO CELL " << cell_i << " END Oo. ---" << nocolor << std::endl;
 
         cell_i++;
     }
 
-    ofs.close();
+    std::cout << bold << green << "Energy-norm error: " << std::sqrt(H1_error) << std::endl;
+
+    postoutput.add_object(uT_gp);
+    postoutput.add_object(Ru_gp);
+    postoutput.write();
+
 
     silo.add_variable("mesh", "uT", solution_uT.data(), solution_uT.size(), zonal_variable_t);
     silo.add_variable("mesh", "Ru", solution_Ru.data(), solution_Ru.size(), zonal_variable_t);
-    //silo.add_variable("mesh", "optest", optest.data(), optest.size(), zonal_variable_t);
-    //silo.add_variable("mesh", "optest_r", optest_r.data(), optest_r.size(), zonal_variable_t);
+
+    tc.toc();
+    std::cout << bold << yellow << "Postprocessing: " << tc << " seconds" << reset << std::endl;
+
 }
 
 int main(int argc, char **argv)
@@ -822,14 +884,20 @@ int main(int argc, char **argv)
     argc -= optind;
     argv += optind;
 
-    /************** BUILD MESH **************/
-    cuthho_quad_mesh<RealType> msh(mip);
+    timecounter tc;
 
+    /************** BUILD MESH **************/
+    tc.tic();
+    cuthho_quad_mesh<RealType> msh(mip);
+    tc.toc();
+    std::cout << bold << yellow << "Mesh generation: " << tc << " seconds" << reset << std::endl;
     /************** LEVEL SET FUNCTION **************/
     RealType radius = 0.35;
     auto level_set_function = circle_level_set<RealType>(radius, 0.5, 0.5);
     //auto level_set_function = line_level_set<RealType>(0.5);
     /************** DO cutHHO MESH PROCESSING **************/
+    
+    tc.tic();
     detect_node_position(msh, level_set_function);
     detect_cut_faces(msh, level_set_function);
 
@@ -840,8 +908,12 @@ int main(int argc, char **argv)
 
     detect_cut_cells(msh, level_set_function);
     refine_interface(msh, level_set_function, 5);
-    dump_mesh(msh);
-    test_triangulation(msh);
+    
+    tc.toc();
+    std::cout << bold << yellow << "cutHHO-specific mesh preprocessing: " << tc << " seconds" << reset << std::endl;
+
+    //dump_mesh(msh);
+    //test_triangulation(msh);
 
     run_cuthho(msh, level_set_function, degree);
 
@@ -906,14 +978,6 @@ int main(int argc, char **argv)
 
 
 #endif
-
-
-
-
-
-
-
-
 
 
 
