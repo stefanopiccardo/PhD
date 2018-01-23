@@ -139,8 +139,7 @@ make_hho_naive_stabilization(const Mesh& msh, const typename Mesh::cell_type& cl
 
         oper.block(0, 0, fbs, cbs) = mass.llt().solve(trace);
 
-        /* Don't divide by h with this stabilization. It breaks convergence! */
-        data += oper.transpose() * mass * oper;// * (1./h);
+        data += oper.transpose() * mass * oper * (1./h);
     }
 
     return data;

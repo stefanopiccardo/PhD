@@ -83,7 +83,7 @@ find_zero_crossing(const point<T,2>& p0, const point<T,2>& p1, const Function& l
      * acceptable. Since with 24 iterations we reduce the error by 16384
      * and the worst case is that the two points are at the opposite sides
      * of the element, we put 30 as limit. */
-    size_t max_iter = 5000;
+    size_t max_iter = 30;
 
     do {
         auto la = level_set_function(pa);
@@ -150,7 +150,7 @@ detect_cut_faces(cuthho_mesh<T, ET>& msh, const Function& level_set_function)
             continue;
         }
 
-        auto threshold = diameter(msh, fc) / 1e12;
+        auto threshold = diameter(msh, fc) / 1e4;
         auto pm = find_zero_crossing(pts[0], pts[1], level_set_function, threshold);
 
         /* If node 0 is in the negative region, mark it as node inside, otherwise mark node 1 */
@@ -256,6 +256,8 @@ move_nodes(cuthho_mesh<T, ET>& msh, const Function& level_set_function)
 
             auto ofs = offset(msh, ntc);
 
+            msh.nodes.at( ofs ).user_data.displaced = true;
+
             T displacement;
 
             if ( location(msh, ntc) == element_location::IN_NEGATIVE_SIDE )
@@ -269,6 +271,14 @@ move_nodes(cuthho_mesh<T, ET>& msh, const Function& level_set_function)
 
             msh.points.at(ofs) = msh.points.at(ofs) + p;
         }
+    }
+
+    for (auto& cl : msh.cells)
+    {
+        auto nds = nodes(msh, cl);
+        for (auto& n : nds)
+            if (n.user_data.displaced)
+                cl.user_data.distorted = true;
     }
 }
 

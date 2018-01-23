@@ -49,6 +49,8 @@ public:
         if (m_siloDb)
             return true;
 
+        DBSetDeprecateWarnings(0);
+
         std::cout << "Error creating database" << std::endl;
         return false;
     }
@@ -58,6 +60,8 @@ public:
         m_siloDb = DBOpen(db_name.c_str(), DB_PDB, DB_APPEND);
         if (m_siloDb)
             return true;
+
+        DBSetDeprecateWarnings(0); 
 
         std::cout << "Error opening database" << std::endl;
         return false;
@@ -114,6 +118,7 @@ public:
         int nzones = msh.cells.size();
         int ndims = 2;
 
+        DBSetDeprecateWarnings(0);
         DBPutZonelist(m_siloDb, "zonelist", nzones, ndims, nodelist.data(), lnodelist,
             1, &shapesize, &shapecount, nshapetypes);
 

@@ -40,9 +40,10 @@ struct cell_cuthho_info
     element_location            location;
     point<T,2>                  p0, p1;
     std::vector<point<T,2>>     interface;
+    bool                        distorted;
 
     cell_cuthho_info() :
-        location(element_location::UNDEF)
+        location(element_location::UNDEF), distorted(false)
     {}
 };
 
@@ -67,11 +68,12 @@ template<typename T>
 struct node_cuthho_info
 {
     element_location    location;
-    bool                too_close;
-    T                   displacement;
+    //bool                too_close;
+    //T                   displacement;
+    bool                displaced;
 
     node_cuthho_info() :
-        location(element_location::UNDEF), too_close(false)
+        location(element_location::UNDEF), displaced(false)
     {}
 };
 
