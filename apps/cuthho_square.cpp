@@ -48,6 +48,8 @@ using namespace Eigen;
 #include "methods/hho"
 #include "methods/cuthho"
 
+//#include "sol2/sol.hpp"
+
 
 
 
@@ -300,7 +302,7 @@ template<typename T, typename ET>
 T
 cell_eta(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl)
 {
-    return 40;
+    return 10;
 }
 
 
@@ -347,8 +349,8 @@ make_hho_laplacian(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, 
         auto dphi   = cb.eval_gradients(qp.first);
         Matrix<T,2,1> n      = level_set_function.normal(qp.first);
 
-        if (where == element_location::IN_POSITIVE_SIDE)
-            n = -n;
+        //if (where == element_location::IN_POSITIVE_SIDE)
+        //    n = -n;
 
         stiff -= qp.second * phi * (dphi * n).transpose();
         stiff -= qp.second * (dphi * n) * phi.transpose();
@@ -383,10 +385,72 @@ make_hho_laplacian(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, 
         }
     }
 
-    Matrix<T, Dynamic, Dynamic> oper = gr_lhs.ldlt().solve(gr_rhs);
+    Matrix<T, Dynamic, Dynamic> oper = gr_lhs.llt().solve(gr_rhs);
     Matrix<T, Dynamic, Dynamic> data = gr_rhs.transpose() * oper;
     return std::make_pair(oper, data);
 }
+
+
+template<typename T, typename ET, typename Function>
+Matrix<T, Dynamic, 1>
+check_eigs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
+           const Function& level_set_function, hho_degree_info di,
+           element_location where)
+{
+    auto recdeg = di.reconstruction_degree();
+    auto celdeg = di.cell_degree();
+    auto facdeg = di.face_degree();
+
+    cell_basis<cuthho_mesh<T, ET>,T>     cb(msh, cl, recdeg);
+
+    auto rbs = cell_basis<cuthho_mesh<T, ET>,T>::size(recdeg);
+    auto cbs = cell_basis<cuthho_mesh<T, ET>,T>::size(celdeg);
+    auto fbs = face_basis<cuthho_mesh<T, ET>,T>::size(facdeg);
+
+    Matrix<T, Dynamic, Dynamic> stiff = Matrix<T, Dynamic, Dynamic>::Zero(rbs, rbs);
+
+    /* Cell term (cut) */
+    auto qps = integrate(msh, cl, 2*recdeg, where);
+    for (auto& qp : qps)
+    {
+        auto dphi = cb.eval_gradients(qp.first);
+        stiff += qp.second * dphi * dphi.transpose();
+    }
+
+    if ( is_cut(msh, cl) )
+    {
+
+        auto hT = measure(msh, cl);
+
+        /* Interface term */
+        auto iqps = integrate_interface(msh, cl, 2*recdeg, where);
+        for (auto& qp : iqps)
+        {
+            auto phi    = cb.eval_basis(qp.first);
+            auto dphi   = cb.eval_gradients(qp.first);
+            Matrix<T,2,1> n      = level_set_function.normal(qp.first);
+
+            //if (where == element_location::IN_POSITIVE_SIDE)
+            //    n = -n;
+
+            stiff -= qp.second * phi * (dphi * n).transpose();
+            stiff -= qp.second * (dphi * n) * phi.transpose();
+            stiff += qp.second * phi * phi.transpose() * cell_eta(msh, cl) / hT;
+        }
+    }
+
+    SelfAdjointEigenSolver<Matrix<T, Dynamic, Dynamic>> solver;
+
+    if ( is_cut(msh, cl) )
+        solver.compute(stiff);
+    else
+        solver.compute(stiff.block(1, 1, rbs-1, rbs-1));
+
+    return solver.eigenvalues();
+}
+
+
+
 
 
 template<typename T, typename ET>
@@ -437,7 +501,7 @@ make_hho_cut_stabilization(const cuthho_mesh<T, ET>& msh,
         if (qps.size() == 0) /* Avoid to invert a zero matrix */
             continue;
 
-        oper.block(0, 0, fbs, cbs) = mass.ldlt().solve(trace);
+        oper.block(0, 0, fbs, cbs) = mass.llt().solve(trace);
 
         data += oper.transpose() * mass * oper * (1./hT);
     }
@@ -710,24 +774,20 @@ run_cuthho(const Mesh& msh, const Function& level_set_function, size_t degree)
     auto assembler = make_assembler(msh, hdi);
     for (auto& cl : msh.cells)
     {
-        if (cl.user_data.distorted)
+        if ( !cl.user_data.distorted && location(msh, cl) != element_location::ON_INTERFACE )
+        {
+            Matrix<RealType, Dynamic, 1> f = Matrix<RealType, Dynamic, 1>::Zero(lc_template.rows());
+            f = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun, where, level_set_function, bcs_fun);
+            assembler.assemble(msh, cl, lc_template, f, bcs_fun);
+        }
+        else
         {
             auto gr = make_hho_laplacian(msh, cl, level_set_function, hdi, where);
             Matrix<RealType, Dynamic, Dynamic> stab = make_hho_cut_stabilization(msh, cl, hdi, where);
             Matrix<RealType, Dynamic, Dynamic> lc = gr.second + stab;
             Matrix<RealType, Dynamic, 1> f = Matrix<RealType, Dynamic, 1>::Zero(lc.rows());
-
             f = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun, where, level_set_function, bcs_fun);
-
             assembler.assemble(msh, cl, lc, f, bcs_fun);
-        }
-        else
-        {
-            Matrix<RealType, Dynamic, 1> f = Matrix<RealType, Dynamic, 1>::Zero(lc_template.rows());
-
-            f = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun, where, level_set_function, bcs_fun);
-
-            assembler.assemble(msh, cl, lc_template, f, bcs_fun);
         }
     }
 
@@ -773,10 +833,11 @@ run_cuthho(const Mesh& msh, const Function& level_set_function, size_t degree)
     auto diff_gp  = std::make_shared< gnuplot_output_object<RealType> >("difference.dat");
 
 
-    std::vector<RealType>   solution_uT, solution_Ru;
+    std::vector<RealType>   solution_uT, solution_Ru, eigval_data;
 
     tc.tic();
     RealType    H1_error = 0.0;
+    RealType    H1_sol_norm = 0.0;
     size_t      cell_i   = 0;
     for (auto& cl : msh.cells)
     {
@@ -858,6 +919,8 @@ run_cuthho(const Mesh& msh, const Function& level_set_function, size_t degree)
 
         if ( location(msh, cl) == element_location::IN_NEGATIVE_SIDE )
         {
+            Matrix<RealType, 1, 2> real_grad_int = Matrix<RealType, 1, 2>::Zero();
+            Matrix<RealType, 1, 2> comp_grad_int = Matrix<RealType, 1, 2>::Zero();
             auto qps = integrate(msh, cl, 2*hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE);
             for (auto& qp : qps)
             {
@@ -866,23 +929,30 @@ run_cuthho(const Mesh& msh, const Function& level_set_function, size_t degree)
                 Matrix<RealType, 1, 2> grad = Matrix<RealType, 1, 2>::Zero();
 
                 for (size_t i = 1; i < rbs; i++ )
-                {
-                    if ( is_cut(msh, cl) )
-                        grad += cell_dofs(i) * t_dphi.block(i, 0, 1, 2);
-                    else
-                        grad += cell_dofs(i) * t_dphi.block(i, 0, 1, 2);
-                }
+                    grad += cell_dofs(i) * t_dphi.block(i, 0, 1, 2);
 
-                Matrix<RealType, 1, 2> diff = grad - sol_grad(qp.first);
-
-                H1_error += diff.dot(diff);
+                real_grad_int += qp.second * sol_grad(qp.first);
+                comp_grad_int += qp.second * grad;
             }
+
+            H1_error += (real_grad_int - comp_grad_int).dot(real_grad_int - comp_grad_int);
+            H1_sol_norm += real_grad_int.dot(real_grad_int);
         }
+
+
+         Matrix<RealType, Dynamic, 1> eigs = check_eigs(msh, cl, level_set_function, hdi, where);
+         RealType min_eig = eigs(0);
+         for (size_t i = 1; i < eigs.size(); i++)
+            min_eig = std::min(min_eig, eigs(i));
+
+        eigval_data.push_back(min_eig);
+
 
         cell_i++;
     }
 
-    std::cout << bold << green << "Energy-norm error: " << std::sqrt(H1_error) << std::endl;
+    std::cout << bold << green << "Energy-norm absolute error:           " << std::sqrt(H1_error) << std::endl;
+    std::cout << bold << green << "Energy-norm relative error (percent): " << 100*std::sqrt(H1_error/H1_sol_norm) << std::endl;
 
     postoutput.add_object(uT_gp);
     postoutput.add_object(Ru_gp);
@@ -890,6 +960,7 @@ run_cuthho(const Mesh& msh, const Function& level_set_function, size_t degree)
     postoutput.write();
 
 
+    silo.add_variable("mesh", "min_eig", eigval_data.data(), eigval_data.size(), zonal_variable_t);
     silo.add_variable("mesh", "uT", solution_uT.data(), solution_uT.size(), zonal_variable_t);
     silo.add_variable("mesh", "Ru", solution_Ru.data(), solution_Ru.size(), zonal_variable_t);
 
@@ -897,6 +968,21 @@ run_cuthho(const Mesh& msh, const Function& level_set_function, size_t degree)
     std::cout << bold << yellow << "Postprocessing: " << tc << " seconds" << reset << std::endl;
 
 }
+
+/*
+template<typename T>
+bool set_from_lua(const sol::state& lua, const std::string& varname, T& var)
+{
+    auto value = lua[varname];
+    if ( value.is_valid() )
+    {
+        var = value;
+        return true;
+    }
+
+    return false;
+}
+*/
 
 int main(int argc, char **argv)
 {
@@ -907,8 +993,10 @@ int main(int argc, char **argv)
     mip.Nx = 5;
     mip.Ny = 5;
 
+    bool displace_nodes = true;
+
     int ch;
-    while ( (ch = getopt(argc, argv, "k:M:N:t")) != -1 )
+    while ( (ch = getopt(argc, argv, "k:M:N:m")) != -1 )
     {
         switch(ch)
         {
@@ -924,6 +1012,10 @@ int main(int argc, char **argv)
                 mip.Ny = atoi(optarg);
                 break;
 
+            case 'm':
+                displace_nodes = false;
+                break;
+
             case '?':
             default:
                 std::cout << "wrong arguments" << std::endl;
@@ -933,6 +1025,7 @@ int main(int argc, char **argv)
 
     argc -= optind;
     argv += optind;
+
 
     timecounter tc;
 
@@ -951,16 +1044,20 @@ int main(int argc, char **argv)
     detect_node_position(msh, level_set_function);
     detect_cut_faces(msh, level_set_function);
 
-    move_nodes(msh, level_set_function);
-    detect_cut_faces(msh, level_set_function);
-    move_nodes(msh, level_set_function);
-    detect_cut_faces(msh, level_set_function);
+    if (displace_nodes)
+    {
+        move_nodes(msh, level_set_function);
+        detect_cut_faces(msh, level_set_function);
+        move_nodes(msh, level_set_function);
+        detect_cut_faces(msh, level_set_function);
+    }
 
     detect_cut_cells(msh, level_set_function);
     refine_interface(msh, level_set_function, 4);
 
     tc.toc();
     std::cout << bold << yellow << "cutHHO-specific mesh preprocessing: " << tc << " seconds" << reset << std::endl;
+
 
     dump_mesh(msh);
     test_triangulation(msh);
@@ -985,11 +1082,12 @@ int main(int argc, char **argv)
     auto ints = test_integration(msh, intfunc, level_set_function);
 
 #if 0
-
     auto expval = radius*radius*M_PI;
     std::cout << "Integral relative error: " << 100*std::abs(ints.first-expval)/expval << "%" <<std::endl;
     expval = 2*M_PI*radius;
     std::cout << "Integral relative error: " << 100*std::abs(ints.second-expval)/expval << "%" <<std::endl;
+
+
 
     hho_degree_info hdi(degree+1, degree);
 

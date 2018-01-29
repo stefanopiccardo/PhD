@@ -261,9 +261,9 @@ move_nodes(cuthho_mesh<T, ET>& msh, const Function& level_set_function)
             T displacement;
 
             if ( location(msh, ntc) == element_location::IN_NEGATIVE_SIDE )
-                displacement = -std::abs(0.5-closeness)*lf*0.9;
+                displacement = -std::abs(0.5-closeness)*lf*0.7;
             else
-                displacement = std::abs(0.5-closeness)*lf*0.9;
+                displacement = std::abs(0.5-closeness)*lf*0.7;
 
             Matrix<T, 2, Dynamic> normal = level_set_function.normal(fc.user_data.intersection_point) * displacement;
 
@@ -279,6 +279,30 @@ move_nodes(cuthho_mesh<T, ET>& msh, const Function& level_set_function)
         for (auto& n : nds)
             if (n.user_data.displaced)
                 cl.user_data.distorted = true;
+    }
+
+    for (auto& cl : msh.cells) /* Check we didn't generate concave cells */
+    {
+        if (!cl.user_data.distorted)
+            continue;
+
+        auto pts = points(msh, cl);
+        
+        if (pts.size() < 4)
+            continue;
+
+        for (size_t i = 0; i < pts.size(); i++)
+        {
+            auto pa = pts[i];
+            auto pb = pts[(i+1)%pts.size()];
+            auto pc = pts[(i+2)%pts.size()];
+            auto v1 = (pb - pa);
+            auto v2 = (pc - pb);
+            auto cross = v1.x() * v2.y() - v2.x() * v1.y();
+
+            if ( cross < 0 )
+                std::cout << red << "[ !WARNING! ] A concave polygon was generated (cell " << offset(msh, cl) << ")." << std::endl;
+        }
     }
 }
 
