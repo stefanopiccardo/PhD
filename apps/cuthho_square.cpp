@@ -540,9 +540,6 @@ make_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_
             auto dphi = cb.eval_gradients(qp.first);
             auto n = level_set_function.normal(qp.first);
 
-            if (where == element_location::IN_POSITIVE_SIDE)
-                n = -n;
-
             ret += qp.second * bcs(qp.first) * ( phi * cell_eta(msh, cl)/hT - dphi*n);
         }
 
@@ -766,6 +763,8 @@ run_cuthho(const Mesh& msh, const Function& level_set_function, size_t degree)
 
     element_location where = element_location::IN_NEGATIVE_SIDE;
 
+    /* reconstruction and stabilization template for square cells.
+     * BEWARE of the fact that I'm using cell 0 to compute it! */
     auto gr_template = make_hho_laplacian(msh, msh.cells[0], level_set_function, hdi, where);
     Matrix<RealType, Dynamic, Dynamic> stab_template = make_hho_cut_stabilization(msh, msh.cells[0], hdi, where);
     Matrix<RealType, Dynamic, Dynamic> lc_template = gr_template.second + stab_template;
