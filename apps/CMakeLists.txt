@@ -9,7 +9,9 @@ if (LUA_FOUND)
 
     add_executable(cuthho_square cuthho_square.cpp)
     target_link_libraries(cuthho_square ${LINK_LIBS})
+    install(TARGETS cuthho_square RUNTIME DESTINATION bin)
 endif ()
 
 add_executable(convergence_test convergence_test.cpp)
 target_link_libraries(convergence_test ${LINK_LIBS})
+install(TARGETS convergence_test RUNTIME DESTINATION bin)
