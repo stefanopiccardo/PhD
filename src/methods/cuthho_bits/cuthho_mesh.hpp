@@ -71,6 +71,7 @@ struct node_cuthho_info
     //bool                too_close;
     //T                   displacement;
     bool                displaced;
+    point<T,2>          displacement;
 
     node_cuthho_info() :
         location(element_location::UNDEF), displaced(false)

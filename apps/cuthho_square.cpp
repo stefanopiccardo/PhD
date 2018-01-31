@@ -302,9 +302,8 @@ template<typename T, typename ET>
 T
 cell_eta(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl)
 {
-    return 10;
+    return 5;
 }
-
 
 template<typename T, typename ET, typename Function>
 std::pair<   Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>,
@@ -693,7 +692,6 @@ public:
 };
 
 
-
 template<typename Mesh, typename Function>
 void
 run_cuthho(const Mesh& msh, const Function& level_set_function, size_t degree)
@@ -983,6 +981,25 @@ bool set_from_lua(const sol::state& lua, const std::string& varname, T& var)
 }
 */
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 int main(int argc, char **argv)
 {
     using RealType = double;
@@ -1047,8 +1064,8 @@ int main(int argc, char **argv)
     {
         move_nodes(msh, level_set_function);
         detect_cut_faces(msh, level_set_function);
-        move_nodes(msh, level_set_function);
-        detect_cut_faces(msh, level_set_function);
+        //move_nodes(msh, level_set_function);
+        //detect_cut_faces(msh, level_set_function);
     }
 
     detect_cut_cells(msh, level_set_function);
@@ -1057,15 +1074,15 @@ int main(int argc, char **argv)
     tc.toc();
     std::cout << bold << yellow << "cutHHO-specific mesh preprocessing: " << tc << " seconds" << reset << std::endl;
 
+#if 0
 
     dump_mesh(msh);
     test_triangulation(msh);
-
+#endif
     run_cuthho(msh, level_set_function, degree);
 
 
-
-
+#if 0
 
 
 
@@ -1080,7 +1097,7 @@ int main(int argc, char **argv)
     };
     auto ints = test_integration(msh, intfunc, level_set_function);
 
-#if 0
+
     auto expval = radius*radius*M_PI;
     std::cout << "Integral relative error: " << 100*std::abs(ints.first-expval)/expval << "%" <<std::endl;
     expval = 2*M_PI*radius;

@@ -227,6 +227,9 @@ detect_cut_cells(cuthho_mesh<T, ET>& msh, const Function& level_set_function)
     }
 }
 
+//#define USE_OLD_DISPLACEMENT
+
+#ifdef USE_OLD_DISPLACEMENT
 template<typename T, typename ET, typename Function>
 void
 move_nodes(cuthho_mesh<T, ET>& msh, const Function& level_set_function)
@@ -301,10 +304,93 @@ move_nodes(cuthho_mesh<T, ET>& msh, const Function& level_set_function)
             auto cross = v1.x() * v2.y() - v2.x() * v1.y();
 
             if ( cross < 0 )
-                std::cout << red << "[ !WARNING! ] A concave polygon was generated (cell " << offset(msh, cl) << ")." << std::endl;
+                std::cout << red << "[ !WARNING! ] A concave polygon was generated (cell " << offset(msh, cl) << ")." << nocolor << std::endl;
         }
     }
 }
+
+#else
+
+template<typename T, typename ET, typename Function>
+void
+move_nodes(cuthho_mesh<T, ET>& msh, const Function& level_set_function)
+{
+    typedef typename cuthho_mesh<T, ET>::face_type  face_type;
+    typedef typename cuthho_mesh<T, ET>::point_type point_type;
+
+    T closeness_thresh = 0.4;
+
+    for (auto& fc : msh.faces)
+    {
+        if ( location(msh, fc) == element_location::ON_INTERFACE )
+        {
+            auto nds = nodes(msh, fc);
+            auto pts = points(msh, fc);
+            auto bar = (pts[1] + pts[0])/2.0;
+
+            auto lf = (pts[1] - pts[0]).to_vector().norm();
+            auto dp = (fc.user_data.intersection_point - pts[0]).to_vector().norm();
+
+            auto closeness = dp/lf;
+
+            typename cuthho_mesh<T, ET>::node_type ntc;
+
+            if (closeness < closeness_thresh) //pts[0] is too close
+                ntc = nds[0];
+            else if (closeness > 1.0-closeness_thresh) // pts[1] is too close
+                ntc = nds[1];
+            else // nothing to do
+                continue;
+
+            auto ofs = offset(msh, ntc);
+            auto delta = (bar - fc.user_data.intersection_point)/2;
+            msh.nodes.at( ofs ).user_data.displacement = msh.nodes.at( ofs ).user_data.displacement - delta;
+            msh.nodes.at( ofs ).user_data.displaced = true;
+        }
+    }
+
+    for (auto& nd : msh.nodes)
+        if (nd.user_data.displaced)
+            msh.points.at( nd.ptid ) = msh.points.at( nd.ptid ) + nd.user_data.displacement;
+
+
+    for (auto& cl : msh.cells)
+    {
+        auto nds = nodes(msh, cl);
+        for (auto& n : nds)
+            if (n.user_data.displaced)
+                cl.user_data.distorted = true;
+    }
+
+    for (auto& cl : msh.cells) /* Check we didn't generate concave cells */
+    {
+        if (!cl.user_data.distorted)
+            continue;
+
+        auto pts = points(msh, cl);
+        
+        if (pts.size() < 4)
+            continue;
+
+        for (size_t i = 0; i < pts.size(); i++)
+        {
+            auto pa = pts[i];
+            auto pb = pts[(i+1)%pts.size()];
+            auto pc = pts[(i+2)%pts.size()];
+            auto v1 = (pb - pa);
+            auto v2 = (pc - pb);
+            auto cross = v1.x() * v2.y() - v2.x() * v1.y();
+
+            if ( cross < 0 )
+            {
+                std::cout << red << "[ !WARNING! ] A concave polygon was generated (cell " << offset(msh, cl) << ")." << nocolor << std::endl;
+                throw std::logic_error("concave poly");
+            }
+        }
+    }
+}
+
+#endif
 
 template<typename T, typename ET>
 std::array< typename cuthho_mesh<T, ET>::point_type, 2 >

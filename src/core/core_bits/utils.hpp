@@ -307,8 +307,8 @@ std::ostream& bgmagenta(std::ostream& os) { os << "\x1b[45m"; return os; }
 std::ostream& bgcyan(std::ostream& os) { os << "\x1b[46m"; return os; }
 std::ostream& nobg(std::ostream& os) { os << "\x1b[49m"; return os; }
 
-struct text_tag;
-struct background_tag;
+struct text_tag {};
+struct background_tag {};
 
 template<typename tag>
 struct terminal_rgb {
@@ -324,14 +324,16 @@ struct terminal_rgb {
 using text_rgb = terminal_rgb<text_tag>;
 using bg_rgb = terminal_rgb<background_tag>;
 
-template<typename tag>
-std::ostream& operator<<(std::ostream& os, const terminal_rgb<tag>& rgb)
+std::ostream& operator<<(std::ostream& os, const text_rgb& rgb)
 {
-    if (std::is_same<tag, text_rgb>::value)
-        os << "\x1b[38;2;";
-    else
-        os << "\x1b[48;2;";
+    os << "\x1b[38;2;";
+    os << int(rgb.r) << ";" << int(rgb.g) << ";" << int(rgb.b) << "m"; 
+    return os;
+}
 
+std::ostream& operator<<(std::ostream& os, const bg_rgb& rgb)
+{
+    os << "\x1b[48;2;";
     os << int(rgb.r) << ";" << int(rgb.g) << ";" << int(rgb.b) << "m"; 
     return os;
 }

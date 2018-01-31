@@ -113,6 +113,22 @@ struct face : public mesh_element<UserData> {
 };
 
 template<typename UserData>
+std::ostream&
+operator<<(std::ostream& os, const face<UserData>& fc)
+{
+    os << "Face: " << fc.ptids[0] << " " << fc.ptids[1];
+    if (fc.is_boundary && fc.bndtype == boundary::NONE)
+        os << " [Boundary, unspecified kind]";
+    if (fc.is_boundary && fc.bndtype == boundary::DIRICHLET)
+        os << " [Dirichlet boundary]";
+    if (fc.is_boundary && fc.bndtype == boundary::NEUMANN)
+        os << " [Neumann boundary]";
+    if (fc.is_boundary && fc.bndtype == boundary::ROBIN)
+        os << " [Robin boundary]";
+    return os;
+}
+
+template<typename UserData>
 struct node : public mesh_element<UserData> {
     size_t      ptid;
 
@@ -129,17 +145,9 @@ struct node : public mesh_element<UserData> {
 
 template<typename UserData>
 std::ostream&
-operator<<(std::ostream& os, const face<UserData>& fc)
+operator<<(std::ostream& os, const node<UserData>& nd)
 {
-    os << "Face: " << fc.ptids[0] << " " << fc.ptids[1];
-    if (fc.is_boundary && fc.bndtype == boundary::NONE)
-        os << " [Boundary, unspecified kind]";
-    if (fc.is_boundary && fc.bndtype == boundary::DIRICHLET)
-        os << " [Dirichlet boundary]";
-    if (fc.is_boundary && fc.bndtype == boundary::NEUMANN)
-        os << " [Neumann boundary]";
-    if (fc.is_boundary && fc.bndtype == boundary::ROBIN)
-        os << " [Robin boundary]";
+    os << "Node: " << nd.ptid;
     return os;
 }
 

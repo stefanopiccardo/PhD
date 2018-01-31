@@ -96,6 +96,7 @@ int test_method_convergence(const convergence_test_params& ctp)
     bool preconditioner = ctp.preconditioner;
     bool direct = ctp.direct;
 
+    /*
     auto rhs_fun = [](const typename quad_mesh<RealType>::point_type& pt) -> RealType {
         return 2.0 * M_PI * M_PI * std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
     };
@@ -108,6 +109,30 @@ int test_method_convergence(const convergence_test_params& ctp)
         Matrix<RealType, 1, 2> ret;
         ret(0) = M_PI*std::cos(M_PI*pt.x())*std::sin(M_PI*pt.y());
         ret(1) = M_PI*std::sin(M_PI*pt.x())*std::cos(M_PI*pt.y());
+        return ret;
+    };
+    */    
+
+    auto rhs_fun = [](const typename quad_mesh<RealType>::point_type& pt) -> RealType {
+        auto th1 = std::tanh( 30 - 60*(pt.x() - pt.y()) );
+        auto ch1 = std::cosh( 30 - 60*(pt.x() - pt.y()) );
+        auto th2 = std::tanh( 60*pt.y() );
+        auto ch2 = std::cosh( 60*pt.y() );
+
+        return 14400 * th1 / (ch1*ch1) + 7200 * th2 / (ch2*ch2);
+    };
+
+    auto sol_fun = [](const typename quad_mesh<RealType>::point_type& pt) -> RealType {
+        return std::tanh( 60*pt.y() ) - std::tanh( 60*(pt.x() - pt.y()) - 30 );
+    };
+
+    auto sol_grad = [](const typename quad_mesh<RealType>::point_type& pt) -> Matrix<RealType, 1, 2> {
+        Matrix<RealType, 1, 2> ret;
+
+        auto th1 = std::tanh( 60*pt.y() );
+        auto th2 = std::tanh( 60*(pt.x() - pt.y()) -30 );
+        ret(0) = th1 - 60*(1-th2*th2);
+        ret(1) = 60*(1-th1*th1) + 60*(1-th2*th2);
         return ret;
     };
 
@@ -146,7 +171,7 @@ int test_method_convergence(const convergence_test_params& ctp)
 
             std::stringstream ss;
             ss << "convergence_test_N_" << N << "_k_" << k << ".silo";
-
+            /*
             RealType delta = 0.1/N;
             std::uniform_real_distribution<RealType> uniform_dist(-delta, delta);
             
@@ -159,7 +184,7 @@ int test_method_convergence(const convergence_test_params& ctp)
                 auto ry = pt.y() + dy;
                 msh.points[i] = typename quad_mesh<RealType>::point_type({rx, ry});
             }
-            
+            */
 
             silo_database silo;
             silo.create(ss.str());
@@ -171,6 +196,7 @@ int test_method_convergence(const convergence_test_params& ctp)
                     fc.bndtype = boundary::DIRICHLET;
             }
 
+            /* ASSEMBLE */
             auto assembler = make_assembler(msh, hdi);
             for (auto& cl : msh.cells)
             {
@@ -189,6 +215,7 @@ int test_method_convergence(const convergence_test_params& ctp)
 
             assembler.finalize();
 
+            /* SOLVE */
             Matrix<RealType, Dynamic, 1> sol;
 
             if (direct)
@@ -218,6 +245,10 @@ int test_method_convergence(const convergence_test_params& ctp)
                     std::cout << "Warning! Solver didn't converge..." << std::endl;
             }
 
+            /* POSTPROCESS */
+            ss.str("");
+            ss << "solution_N_" << N << "_k_" << k << ".dat";
+            std::ofstream sol_ofs(ss.str());
             size_t cell_i = 0;
             for (auto& cl : msh.cells)
             {
@@ -239,6 +270,14 @@ int test_method_convergence(const convergence_test_params& ctp)
                     Matrix<RealType, Dynamic, 1> real_dofs = mass.llt().solve(rhs);
                     Matrix<RealType, Dynamic, 1> diff = real_dofs - cdofs;
                     errors_mm.at(i) += diff.dot(mass*diff);
+                }
+
+                auto tps = make_test_points(msh, cl);
+                for (auto& tp : tps)
+                {
+                    auto phi = cb.eval_basis(tp);
+                    auto val = cdofs.dot(phi);
+                    sol_ofs << tp.x() << " " << tp.y() << " " << val << std::endl;
                 }
 
                 cell_basis<quad_mesh<RealType>, RealType> rb(msh, cl, hdi.reconstruction_degree());
@@ -263,6 +302,7 @@ int test_method_convergence(const convergence_test_params& ctp)
 
                 cell_i++;
             }
+            sol_ofs.close();
 
             auto mesh_h = diameter(msh, msh.cells.front());
             hho_conv_ofs << mesh_h << " " << errors_int.at(i) << " " << errors_mm.at(i) << std::endl;
