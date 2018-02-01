@@ -31,6 +31,13 @@ if (SILO_FOUND)
     set(HAVE_SILO TRUE)
 endif()
 
+find_package(Lua)
+if (LUA_FOUND)
+    include_directories("${LUA_INCLUDE_DIR}")
+    set(LINK_LIBS ${LINK_LIBS} ${LUA_LIBRARIES})
+endif()
+
+
 find_package(Eigen3 REQUIRED)
 include_directories(${EIGEN3_INCLUDE_DIR})
 

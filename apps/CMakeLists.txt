@@ -1,17 +1,4 @@
-#add_executable(test1 test1.cpp)
-#target_link_libraries(test1 ${LINK_LIBS})
+add_subdirectory(convergence_test)
+add_subdirectory(cuthho)
 
 
-find_package(Lua)
-if (LUA_FOUND)
-    include_directories("${LUA_INCLUDE_DIR}")
-    set(LINK_LIBS ${LINK_LIBS} ${LUA_LIBRARIES})
-
-    add_executable(cuthho_square cuthho_square.cpp)
-    target_link_libraries(cuthho_square ${LINK_LIBS})
-    install(TARGETS cuthho_square RUNTIME DESTINATION bin)
-endif ()
-
-add_executable(convergence_test convergence_test.cpp)
-target_link_libraries(convergence_test ${LINK_LIBS})
-install(TARGETS convergence_test RUNTIME DESTINATION bin)
