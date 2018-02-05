@@ -771,7 +771,7 @@ run_cuthho(const Mesh& msh, const Function& level_set_function, size_t degree)
     auto assembler = make_assembler(msh, hdi);
     for (auto& cl : msh.cells)
     {
-        if ( !cl.user_data.distorted && location(msh, cl) != element_location::ON_INTERFACE )
+        if ( false && !cl.user_data.distorted && location(msh, cl) != element_location::ON_INTERFACE )
         {
             Matrix<RealType, Dynamic, 1> f = Matrix<RealType, Dynamic, 1>::Zero(lc_template.rows());
             f = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun, where, level_set_function, bcs_fun);

@@ -49,6 +49,8 @@ T iexp_pow(T x, size_t n)
     return x*y;
 }
 
+//#define POWER_CACHE
+
 template<typename Mesh, typename VT>
 class cell_basis
 {
@@ -58,6 +60,10 @@ class cell_basis
     point_type          cell_bar;
     coordinate_type     cell_h;
     size_t              basis_degree, basis_size;
+
+#ifdef POWER_CACHE
+    std::vector<coordinate_type>  power_cache;
+#endif
 
 public:
     cell_basis(const Mesh& msh, const typename Mesh::cell_type& cl, size_t degree)
@@ -76,6 +82,19 @@ public:
         auto bx = (pt.x() - cell_bar.x()) / (0.5*cell_h);
         auto by = (pt.y() - cell_bar.y()) / (0.5*cell_h);
 
+#ifdef POWER_CACHE
+        if ( power_cache.size() != (basis_degree+1)*2 )
+          power_cache.resize( (basis_degree+1)*2);
+
+        power_cache[0] = 1.0;
+        power_cache[1] = 1.0;
+        for (size_t i = 1; i <= basis_degree; i++)
+        {
+            power_cache[2*i]    = iexp_pow(bx, i);
+            power_cache[2*i+1]  = iexp_pow(by, i);
+        }
+#endif
+
         size_t pos = 0;
         for (size_t k = 0; k <= basis_degree; k++)
         {
@@ -83,7 +102,11 @@ public:
             {
                 auto pow_x = k-i;
                 auto pow_y = i;
+#ifdef POWER_CACHE
+                auto bv = power_cache[2*pow_x] * power_cache[2*pow_y+1];
+#else
                 auto bv = iexp_pow(bx, pow_x) * iexp_pow(by, pow_y);
+#endif
                 ret(pos++) = bv;
             }
         }
@@ -102,6 +125,19 @@ public:
         auto by = (pt.y() - cell_bar.y()) / (0.5*cell_h);
         auto ih = 2.0/cell_h;
 
+#ifdef POWER_CACHE
+        if ( power_cache.size() != (basis_degree+1)*2 )
+          power_cache.resize( (basis_degree+1)*2);
+
+        power_cache[0] = 1.0;
+        power_cache[1] = 1.0;
+        for (size_t i = 1; i <= basis_degree; i++)
+        {
+            power_cache[2*i]    = iexp_pow(bx, i);
+            power_cache[2*i+1]  = iexp_pow(by, i);
+        }
+#endif
+
         size_t pos = 0;
         for (size_t k = 0; k <= basis_degree; k++)
         {
@@ -109,11 +145,17 @@ public:
             {
                 auto pow_x = k-i;
                 auto pow_y = i;
+#ifdef POWER_CACHE
+                auto px = power_cache[2*pow_x];
+                auto py = power_cache[2*pow_y+1];
+                auto dx = (pow_x == 0) ? 0 : pow_x*ih*power_cache[2*(pow_x-1)];
+                auto dy = (pow_y == 0) ? 0 : pow_y*ih*power_cache[2*(pow_y-1)+1];
+#else
                 auto px = iexp_pow(bx, pow_x);
                 auto py = iexp_pow(by, pow_y);
                 auto dx = (pow_x == 0) ? 0 : pow_x*ih*iexp_pow(bx, pow_x-1);
                 auto dy = (pow_y == 0) ? 0 : pow_y*ih*iexp_pow(by, pow_y-1);
-
+#endif
                 ret(pos,0) = dx*py;
                 ret(pos,1) = px*dy;
                 pos++;
