@@ -96,7 +96,7 @@ int test_method_convergence(const convergence_test_params& ctp)
     bool preconditioner = ctp.preconditioner;
     bool direct = ctp.direct;
 
-    /*
+    
     auto rhs_fun = [](const typename quad_mesh<RealType>::point_type& pt) -> RealType {
         return 2.0 * M_PI * M_PI * std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
     };
@@ -111,8 +111,8 @@ int test_method_convergence(const convergence_test_params& ctp)
         ret(1) = M_PI*std::sin(M_PI*pt.x())*std::cos(M_PI*pt.y());
         return ret;
     };
-    */    
 
+    /*
     auto rhs_fun = [](const typename quad_mesh<RealType>::point_type& pt) -> RealType {
         auto th1 = std::tanh( 30 - 60*(pt.x() - pt.y()) );
         auto ch1 = std::cosh( 30 - 60*(pt.x() - pt.y()) );
@@ -135,6 +135,7 @@ int test_method_convergence(const convergence_test_params& ctp)
         ret(1) = 60*(1-th1*th1) + 60*(1-th2*th2);
         return ret;
     };
+    */
 
     for (size_t k = deg_min; k < deg_max+1; k++)
     {
@@ -174,7 +175,7 @@ int test_method_convergence(const convergence_test_params& ctp)
             /*
             RealType delta = 0.1/N;
             std::uniform_real_distribution<RealType> uniform_dist(-delta, delta);
-            
+
             for (size_t i = 0; i < msh.points.size(); i++)
             {
                 RealType dx = uniform_dist(e1);
