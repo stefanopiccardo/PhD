@@ -454,3 +454,332 @@ auto make_assembler(const Mesh& msh, hho_degree_info hdi)
 {
     return assembler<Mesh>(msh, hdi);
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+template<typename Mesh>
+class obstacle_assembler
+{
+    using T = typename Mesh::coordinate_type;
+    std::vector<size_t>                 face_ct, A_ct, B_ct; //compress tables
+    std::vector<size_t>                 face_et, A_et, B_et; //expand tables
+    std::vector<bool>                   is_in_set_A;
+
+    hho_degree_info                     di;
+
+    std::vector< Triplet<T> >           triplets;
+
+    size_t      num_all_faces, num_dirichlet_faces, num_other_faces;
+    size_t      num_all_cells, num_A_cells, num_I_cells;
+
+    class assembly_index
+    {
+        size_t  idx;
+        bool    assem;
+
+    public:
+        assembly_index(size_t i, bool as)
+            : idx(i), assem(as)
+        {}
+
+        operator size_t() const
+        {
+            if (!assem)
+                throw std::logic_error("Invalid assembly_index");
+
+            return idx;
+        }
+
+        bool assemble() const
+        {
+            return assem;
+        }
+
+        friend std::ostream& operator<<(std::ostream& os, const assembly_index& as)
+        {
+            os << "(" << as.idx << "," << as.assem << ")";
+            return os;
+        }
+    };
+
+public:
+
+    SparseMatrix<T>         LHS;
+    Matrix<T, Dynamic, 1>   RHS;
+
+    obstacle_assembler(const Mesh& msh, const std::vector<bool>& in_A, hho_degree_info hdi)
+        : di(hdi), is_in_set_A(in_A)
+    {
+        auto is_dirichlet = [&](const typename Mesh::face_type& fc) -> bool {
+            return fc.is_boundary && fc.bndtype == boundary::DIRICHLET;
+        };
+
+        num_all_faces = msh.faces.size();
+        num_dirichlet_faces = std::count_if(msh.faces.begin(), msh.faces.end(), is_dirichlet);
+        num_other_faces = num_all_faces - num_dirichlet_faces;
+
+        assert( is_in_set_A.size() == msh.cells.size() );
+
+        num_all_cells = msh.cells.size();
+        num_A_cells = std::count(is_in_set_A.begin(), is_in_set_A.end(), true);
+        num_I_cells = std::count(is_in_set_A.begin(), is_in_set_A.end(), false);
+
+        /* Make A tables: keep the unknowns of cells in set I */
+        A_ct.resize( num_all_cells );
+        A_et.resize( num_I_cells );
+        for (size_t i = 0, co = 0; i < num_all_cells; i++)
+        {
+            auto cl = msh.cells[i];
+            if ( !is_in_set_A.at(i) )
+            {
+                A_ct.at(i) = co;
+                A_et.at(co) = i;
+                co++;
+            }
+        }
+
+        /* Make face tables */
+        face_ct.resize( num_all_faces );
+        face_et.resize( num_other_faces );
+        for (size_t i = 0, co = 0; i < num_all_faces; i++)
+        {
+            auto fc = msh.faces[i];
+            if ( !is_dirichlet(fc) )
+            {
+                face_ct.at(i) = co;
+                face_et.at(co) = i;
+                co++;
+            }
+        }
+
+        /* Make B tables: keep the unknowns of cells in set A */
+        B_ct.resize( num_all_cells );
+        B_et.resize( num_A_cells );
+        for (size_t i = 0, co = 0; i < num_all_cells; i++)
+        {
+            auto cl = msh.cells[i];
+            if ( is_in_set_A.at(i) )
+            {
+                B_ct.at(i) = co;
+                B_et.at(co) = i;
+                co++;
+            }
+        }
+
+        auto celdeg = di.cell_degree();
+        auto facdeg = di.face_degree();
+
+        auto cbs = cell_basis<Mesh,T>::size(celdeg);
+        auto fbs = face_basis<Mesh,T>::size(facdeg);
+
+        auto system_size = cbs * (num_I_cells + num_A_cells) + fbs * num_other_faces;
+
+        assert( system_size == cbs * msh.cells.size() + fbs * num_other_faces );
+
+        LHS = SparseMatrix<T>( system_size, system_size );
+        RHS = Matrix<T, Dynamic, 1>::Zero( system_size );
+    }
+
+    void dump_tables() const
+    {
+        std::cout << "Compress table for A: " << std::endl;
+        for (size_t i = 0; i < A_ct.size(); i++)
+            std::cout << i << " -> " << A_ct.at(i) << std::endl;
+
+        std::cout << "Compress table for faces: " << std::endl;
+        for (size_t i = 0; i < face_ct.size(); i++)
+            std::cout << i << " -> " << face_ct.at(i) << std::endl;
+
+        std::cout << "Compress table for B: " << std::endl;
+        for (size_t i = 0; i < B_ct.size(); i++)
+            std::cout << i << " -> " << B_ct.at(i) << std::endl;
+    }
+
+    template<typename Function>
+    void
+    assemble_A(const Mesh& msh, const typename Mesh::cell_type& cl,
+               const Matrix<T, Dynamic, Dynamic>& lhs, const Matrix<T, Dynamic, 1>& rhs,
+               const Matrix<T, Dynamic, 1>& gamma, const Function& dirichlet_bf)
+    {
+        auto celdeg = di.cell_degree();
+        auto facdeg = di.face_degree();
+
+        auto cbs = cell_basis<Mesh,T>::size(celdeg);
+        auto fbs = face_basis<Mesh,T>::size(facdeg);
+
+        std::vector<assembly_index> asm_map_row, asm_map_col;
+        //asm_map.reserve(cbs + 4*fbs);
+
+        /* Cell dofs local to global */
+        auto cell_offset        = offset(msh, cl);
+        auto cell_LHS_offset    = A_ct.at(cell_offset) * cbs;
+        bool cell_needs_asm_A   = !is_in_set_A.at(cell_offset);
+        bool cell_needs_asm_B   = is_in_set_A.at(cell_offset);
+        
+        for (size_t i = 0; i < cbs; i++)
+        {
+            asm_map_row.push_back( assembly_index(cell_offset+i, true) );
+            asm_map_col.push_back( assembly_index(cell_LHS_offset+i, cell_needs_asm_A) );
+        }
+
+        /* Face dofs local to global */
+        Matrix<T, Dynamic, 1> dirichlet_data = Matrix<T, Dynamic, 1>::Zero(cbs + 4*fbs);
+        auto fcs = faces(msh, cl);
+        for (size_t face_i = 0; face_i < 4; face_i++)
+        {
+            auto fc = fcs[face_i];
+            auto face_offset = offset(msh, fc);
+            auto face_LHS_offset_rows = cbs * num_all_cells + face_ct.at(face_offset)*fbs;
+            auto face_LHS_offset_cols = cbs * num_I_cells + face_ct.at(face_offset)*fbs;
+
+            bool dirichlet = fc.is_boundary && fc.bndtype == boundary::DIRICHLET;
+
+            for (size_t i = 0; i < fbs; i++)
+            {
+                asm_map_row.push_back( assembly_index(face_LHS_offset_rows+i, !dirichlet) );
+                asm_map_col.push_back( assembly_index(face_LHS_offset_cols+i, !dirichlet) );
+            }
+
+            if (dirichlet)
+            {
+                Matrix<T, Dynamic, Dynamic> mass = make_mass_matrix(msh, fc, facdeg);
+                Matrix<T, Dynamic, 1> rhs = make_rhs(msh, fc, facdeg, dirichlet_bf);
+                dirichlet_data.block(cbs+face_i*fbs, 0, fbs, 1) = mass.llt().solve(rhs);
+            }
+        }
+
+        //assert( asm_map.size() == lhs.rows() && asm_map.size() == lhs.cols() );
+
+        for (size_t i = 0; i < lhs.rows(); i++)
+        {
+            if ( !asm_map_row[i].assemble() )
+                continue;
+
+            for (size_t j = 0; j < lhs.cols(); j++)
+            {
+                if ( asm_map_col[j].assemble() )
+                    triplets.push_back( Triplet<T>(asm_map_row[i], asm_map_col[j], lhs(i,j)) );
+                else
+                {
+                    if (j < cbs)
+                        RHS(asm_map_row[i]) -= lhs(i,j)*gamma(cell_offset);
+                    else
+                        RHS(asm_map_row[i]) -= lhs(i,j)*dirichlet_data(j);
+                }
+            }
+        }
+        
+        
+        /* Needed both in case A and I */
+        RHS.block(cell_offset, 0, cbs, 1) += rhs.block(0, 0, cbs, 1);
+
+        if (cell_needs_asm_B)
+        {
+            auto offset_row = cell_offset * cbs;
+            auto offset_col = num_I_cells * cbs + num_other_faces * fbs + B_ct.at(cell_offset);
+            triplets.push_back( Triplet<T>(offset_row, offset_col, 1.0) );
+        }
+
+    } // assemble_A()
+
+    
+    template<typename Function>
+    void
+    expand_solution(const Mesh& msh,
+    const Matrix<T, Dynamic, 1>& solution, const Function& dirichlet_bf,
+    const Matrix<T, Dynamic, 1>& gamma,
+    Matrix<T, Dynamic, 1>& alpha, Matrix<T, Dynamic, 1>& beta)
+    {
+        auto celdeg = di.cell_degree();
+        auto facdeg = di.face_degree();
+
+        auto cbs = cell_basis<Mesh,T>::size(celdeg);
+        auto fbs = face_basis<Mesh,T>::size(facdeg);
+
+        alpha = gamma;
+        for (size_t i = 0; i < num_I_cells; i++)
+        {
+            auto exp_ofs = A_et.at(i);
+            alpha.block(exp_ofs*cbs, 0, cbs, 1) = solution.block(i*cbs, 0, cbs, 1);
+        }
+
+        beta = Matrix<T, Dynamic, 1>::Zero(msh.cells.size());
+        for (size_t i = 0; i < num_A_cells; i++)
+        {
+            auto exp_ofs = B_et.at(i);
+            beta.block(exp_ofs*cbs, 0, cbs, 1) = solution.block(num_I_cells*cbs + num_other_faces*fbs + i*cbs, 0, cbs, 1);
+        }
+
+        /*
+        Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs + 4*fbs);
+        ret.block(0, 0, cbs, 1) = solution.block(cell_SOL_offset, 0, cbs, 1);
+
+        auto fcs = faces(msh, cl);
+        for (size_t face_i = 0; face_i < 4; face_i++)
+        {
+            auto fc = fcs[face_i];
+
+            bool dirichlet = fc.is_boundary && fc.bndtype == boundary::DIRICHLET;
+
+            if (dirichlet)
+            {
+                Matrix<T, Dynamic, Dynamic> mass = make_mass_matrix(msh, fc, facdeg);
+                Matrix<T, Dynamic, 1> rhs = make_rhs(msh, fc, facdeg, dirichlet_bf);
+                ret.block(cbs+face_i*fbs, 0, fbs, 1) = mass.llt().solve(rhs);
+            }
+            else
+            {
+                auto face_offset = offset(msh, fc);
+                auto face_SOL_offset = cbs * msh.cells.size() + compress_table.at(face_offset)*fbs;
+                ret.block(cbs+face_i*fbs, 0, fbs, 1) = solution.block(face_SOL_offset, 0, fbs, 1);
+            }
+        }
+
+        */
+    }
+    
+
+    void finalize(void)
+    {
+        LHS.setFromTriplets( triplets.begin(), triplets.end() );
+        triplets.clear();
+    }
+};
+
+
+template<typename Mesh>
+auto make_obstacle_assembler(const Mesh& msh, const std::vector<bool>& in_A, hho_degree_info hdi)
+{
+    return obstacle_assembler<Mesh>(msh, in_A, hdi);
+}

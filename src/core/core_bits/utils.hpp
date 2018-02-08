@@ -371,6 +371,17 @@ std::ostream& time_now(std::ostream& os)
     return os;
 }
 
+template<typename T>
+void dump_sparse_matrix(typename Eigen::SparseMatrix<T>& M, const std::string& filename)
+{
+    std::ofstream ofs(filename);
+
+    for (int k=0; k < M.outerSize(); ++k)
+        for (typename Eigen::SparseMatrix<T>::InnerIterator it(M,k); it; ++it)
+            ofs << it.row() << " " << it.col() << " " << it.value() << std::endl;
+
+    ofs.close();
+}
 
 
 
