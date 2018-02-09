@@ -21,6 +21,7 @@
  */
 
 #include <iostream>
+#include <algorithm>
 
 #include <Eigen/Dense>
 #include <Eigen/SparseCore>
@@ -45,6 +46,7 @@ void run_hho_obstacle(const Mesh& msh, size_t degree)
 
 	using T = typename Mesh::coordinate_type;
 
+	/*
 	auto rhs_fun = [](const typename Mesh::point_type& pt) -> T {
         return 2.0 * M_PI * M_PI * std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
     };
@@ -52,14 +54,32 @@ void run_hho_obstacle(const Mesh& msh, size_t degree)
     auto sol_fun = [](const typename Mesh::point_type& pt) -> T {
         return std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
     };
+    */
+	
+	auto r0 = 0.7;
 
+	auto rhs_fun = [=](const typename Mesh::point_type& pt) -> T {
+        auto r = sqrt( pt.x()*pt.x() + pt.y()*pt.y() );
 
+        if ( r > r0 )
+        	return -16 *r*r + 8*r0*r0;
+        else
+        	return -8.0*( r0*r0*(r0*r0 + 1) ) + 8*r0*r0*r*r;
+    };
+
+    auto sol_fun = [=](const typename Mesh::point_type& pt) -> T {
+    	auto r = sqrt( pt.x()*pt.x() + pt.y()*pt.y() );
+        auto s = r*r - r0*r0;
+
+        return std::max(s*s, 0.0);
+    };
+	
     auto bcs_fun = [&](const typename Mesh::point_type& pt) -> T {
         return sol_fun(pt);
     };
 
     auto obstacle_fun = [&](const typename Mesh::point_type& pt) -> T {
-        return 0.5;
+        return 0.0;
     };
 
 
@@ -67,6 +87,19 @@ void run_hho_obstacle(const Mesh& msh, size_t degree)
 	Matrix<T, Dynamic, 1> beta  = Matrix<T, Dynamic, 1>::Ones( msh.cells.size() );
 	Matrix<T, Dynamic, 1> gamma = Matrix<T, Dynamic, 1>::Zero( msh.cells.size() );
 	T c = 1.0;
+
+
+	std::vector<T> expected_solution;
+	expected_solution.reserve( msh.cells.size() );
+
+	size_t i = 0;
+	for (auto& cl : msh.cells)
+	{
+		auto bar = barycenter(msh, cl);
+		expected_solution.push_back( sol_fun(bar) );
+		gamma(i++) = obstacle_fun(bar);
+	}
+
 
 	size_t iter = 0;
     bool has_to_iterate = true;
@@ -80,9 +113,6 @@ void run_hho_obstacle(const Mesh& msh, size_t degree)
     	silo.create( ss.str() );
     	silo.add_mesh(msh, "mesh");
 
-    	for (size_t i = 0; i < msh.cells.size(); i++)
-    		gamma(i) = 0.5;
-
     	Matrix<T, Dynamic, 1> diff = beta + c * ( alpha - gamma );
     	std::vector<bool> in_A;
     	in_A.resize(diff.size());
@@ -90,8 +120,8 @@ void run_hho_obstacle(const Mesh& msh, size_t degree)
 
     	for (size_t i = 0; i < diff.size(); i++)
     	{
-    		in_A.at(i) = (diff(i) >= 0);
-    		active(i) = (diff(i) >= 0);
+    		in_A.at(i) = (diff(i) < 0);
+    		active(i) = (diff(i) < 0);
     	}
 
     	timecounter tc;
@@ -99,7 +129,7 @@ void run_hho_obstacle(const Mesh& msh, size_t degree)
 
     	auto assembler = make_obstacle_assembler(msh, in_A, hdi);
 
-    	//assembler.dump_tables();
+ 
 
     	for (auto& cl : msh.cells)
 		{
@@ -108,7 +138,7 @@ void run_hho_obstacle(const Mesh& msh, size_t degree)
         	Matrix<T, Dynamic, Dynamic> lc = gr.second + stab;
         	Matrix<T, Dynamic, 1> f = Matrix<T, Dynamic, 1>::Zero(lc.rows());
         	f = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun);
-        	assembler.assemble_A(msh, cl, lc, f, gamma, sol_fun);
+        	assembler.assemble_A(msh, cl, lc, f, gamma, bcs_fun);
 		}
 
 		assembler.finalize();
@@ -144,6 +174,7 @@ void run_hho_obstacle(const Mesh& msh, size_t degree)
 
 		silo.add_variable("mesh", "alpha", alpha.data(), alpha.size(), zonal_variable_t);
 		silo.add_variable("mesh", "beta", beta.data(), beta.size(), zonal_variable_t);
+		silo.add_variable("mesh", "expected_solution", expected_solution.data(), expected_solution.size(), zonal_variable_t);
 
 		silo.close();
 
@@ -182,7 +213,7 @@ int main(int argc, char **argv)
         {
             case 'k':
                 degree = atoi(optarg);
-                if (degree != 0 || degree != 1)
+                if (degree != 0 && degree != 1)
                 {
                 	std::cout << "Degree can be 0 or 1. Falling back to 1" << std::endl;
                 	degree = 1;
