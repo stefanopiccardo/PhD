@@ -1,10 +1,10 @@
 /*
- *       /\        Matteo Cicuttin (C) 2017
+ *       /\        Matteo Cicuttin (C) 2017,2018
  *      /__\       matteo.cicuttin@enpc.fr
  *     /_\/_\      École Nationale des Ponts et Chaussées - CERMICS
  *    /\    /\
- *   /__\  /__\    This is a prototype implementation of the CutHHO method,
- *  /_\/_\/_\/_\   an unfitted Hybrid High-order method.
+ *   /__\  /__\    This is ProtoN, a library for fast Prototyping of
+ *  /_\/_\/_\/_\   Numerical methods.
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
