@@ -1,15 +1,25 @@
-# Unfitted HHO
+# ProtoN
+
+A library for fast **Proto**typing of **N**umerical methods.
 
 ## What is this
 
-This is a prototype for the Unfitted HHO method (see [this paper](https://hal.archives-ouvertes.fr/hal-01625421)).
-At the moment it implements the 2D version of the Fictitious Domain problem and fixes bad cuts using the Point Displacement Algorithm.
+This is a small library that allows quick and dirty implementations of numerical methods for PDEs.
+
+It started as a throw-away code to implement the [cutHHO](https://github.com/datafl4sh/cutHHO) method
+(see [this paper](https://hal.archives-ouvertes.fr/hal-01625421)), however it grew more than expected.
+
+At the moment it implements
+ * the 2D version of cutHHO (Fictitious Domain problem)
+ * the 2D version of an HHO method for obstacle problems
+
+The library is only 2D and allows only quadrilateral meshes (it had to be quick and dirty, remember?).
 
 ## Building the code
 
 The code is tested on Mac OS X and on Linux (sorry, I don't have the time to deal with
 the non-compliance to standards of Windows). To compile you need, apart of a decent
-C++14 compiler that should be already available in your system, the following software:
+C++14 (I'll move to c++17 soon) compiler that should be already available in your system, the following software:
 
  * CMake
  	* `brew install cmake` on OS X
@@ -33,6 +43,9 @@ and install with just
 	brew install cuthho
 
 ## Running the thing
+
+**TO BE UPDATED**
+
 You will end up with two executables, `cuthho_square` and `convergence_test`.
 The first is the cutHHO driver, the second does a convergence test of the standard cutHHO method.
 
