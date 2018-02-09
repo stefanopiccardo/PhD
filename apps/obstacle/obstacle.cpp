@@ -36,7 +36,13 @@ using namespace Eigen;
 
 #include "methods/hho"
 
-
+template<typename T>
+struct obstacle_hho_config
+{
+    size_t  degree;
+    size_t  max_iter;
+    T       threshold;
+};
 
 template<typename Mesh>
 void run_hho_obstacle(const Mesh& msh, size_t degree)
@@ -68,10 +74,10 @@ void run_hho_obstacle(const Mesh& msh, size_t degree)
     };
 
     auto sol_fun = [=](const typename Mesh::point_type& pt) -> T {
-    	auto r = sqrt( pt.x()*pt.x() + pt.y()*pt.y() );
+    	auto r = sqrt(pt.x()*pt.x() + pt.y()*pt.y());
         auto s = r*r - r0*r0;
-
-        return std::max(s*s, 0.0);
+        auto t = std::max(s, 0.0);
+        return t*t;
     };
 	
     auto bcs_fun = [&](const typename Mesh::point_type& pt) -> T {
@@ -82,15 +88,20 @@ void run_hho_obstacle(const Mesh& msh, size_t degree)
         return 0.0;
     };
 
+    auto num_cells = msh.cells.size();
+    auto num_faces = msh.faces.size();
+    auto fbs = face_basis<Mesh,T>::size(degree);
+    auto num_alpha_dofs = num_cells + fbs*num_faces;
 
-    Matrix<T, Dynamic, 1> alpha = Matrix<T, Dynamic, 1>::Zero( msh.cells.size() );
-	Matrix<T, Dynamic, 1> beta  = Matrix<T, Dynamic, 1>::Ones( msh.cells.size() );
-	Matrix<T, Dynamic, 1> gamma = Matrix<T, Dynamic, 1>::Zero( msh.cells.size() );
+    Matrix<T, Dynamic, 1> alpha = Matrix<T, Dynamic, 1>::Zero( num_alpha_dofs );
+	Matrix<T, Dynamic, 1> beta  = Matrix<T, Dynamic, 1>::Ones( num_cells );
+	Matrix<T, Dynamic, 1> gamma = Matrix<T, Dynamic, 1>::Zero( num_cells );
 	T c = 1.0;
 
+    size_t quadrature_degree_increase = 1;
 
 	std::vector<T> expected_solution;
-	expected_solution.reserve( msh.cells.size() );
+	expected_solution.reserve( num_cells );
 
 	size_t i = 0;
 	for (auto& cl : msh.cells)
@@ -105,6 +116,8 @@ void run_hho_obstacle(const Mesh& msh, size_t degree)
     bool has_to_iterate = true;
     while ( has_to_iterate && iter < 50 )
     {
+
+        /* Prepare SILO database */
     	std::cout << bold << "Iteration " << iter << reset << std::endl;
     	std::stringstream ss;
     	ss << "obstacle_cycle_" << iter << ".silo";
@@ -113,7 +126,9 @@ void run_hho_obstacle(const Mesh& msh, size_t degree)
     	silo.create( ss.str() );
     	silo.add_mesh(msh, "mesh");
 
-    	Matrix<T, Dynamic, 1> diff = beta + c * ( alpha - gamma );
+        /* Compute the beta quantity (see "Bubbles enriched quadratic finite element method for
+        *  the 3D-elliptic obstacle problem - S. Gaddam, T. Gudi", eqn. 5.1 onwards) */
+    	Matrix<T, Dynamic, 1> diff = beta + c * ( alpha.head(num_cells) - gamma );
     	std::vector<bool> in_A;
     	in_A.resize(diff.size());
     	Matrix<T, Dynamic, 1> active = Matrix<T, Dynamic, 1>::Zero(diff.size());
@@ -124,21 +139,19 @@ void run_hho_obstacle(const Mesh& msh, size_t degree)
     		active(i) = (diff(i) < 0);
     	}
 
+        /* Assemble the problem */
     	timecounter tc;
     	tc.tic();
 
     	auto assembler = make_obstacle_assembler(msh, in_A, hdi);
-
- 
-
     	for (auto& cl : msh.cells)
 		{
 			auto gr = make_hho_laplacian(msh, cl, hdi);
         	Matrix<T, Dynamic, Dynamic> stab = make_hho_fancy_stabilization(msh, cl, gr.first, hdi);
         	Matrix<T, Dynamic, Dynamic> lc = gr.second + stab;
         	Matrix<T, Dynamic, 1> f = Matrix<T, Dynamic, 1>::Zero(lc.rows());
-        	f = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun);
-        	assembler.assemble_A(msh, cl, lc, f, gamma, bcs_fun);
+        	f = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun, quadrature_degree_increase);
+        	assembler.assemble(msh, cl, lc, f, gamma, bcs_fun);
 		}
 
 		assembler.finalize();
@@ -147,16 +160,10 @@ void run_hho_obstacle(const Mesh& msh, size_t degree)
 		std::cout << bold << yellow << "Assembly: " << tc << " seconds" << reset << std::endl;
 
 
-		ss.str("");
-		ss << "matrix_" << iter << ".txt";
-
-		dump_sparse_matrix(assembler.LHS, ss.str());
-
-
 		silo.add_variable("mesh", "difference", diff.data(), diff.size(), zonal_variable_t);
 		silo.add_variable("mesh", "active", active.data(), active.size(), zonal_variable_t);
 
-
+        /* Solve it */
 		tc.tic();
 
 		SparseLU<SparseMatrix<T>>  solver;
@@ -168,11 +175,11 @@ void run_hho_obstacle(const Mesh& msh, size_t degree)
     	tc.toc();
 		std::cout << bold << yellow << "Solver: " << tc << " seconds" << reset << std::endl;
 
-		Matrix<T, Dynamic, Dynamic> alpha_prev = alpha;
+        /* Postprocess, per iteration part */
+		Matrix<T, Dynamic, 1> alpha_prev = alpha;
 		assembler.expand_solution(msh, sol, sol_fun, gamma, alpha, beta);
 
-
-		silo.add_variable("mesh", "alpha", alpha.data(), alpha.size(), zonal_variable_t);
+		silo.add_variable("mesh", "alpha", alpha.data(), num_cells, zonal_variable_t);
 		silo.add_variable("mesh", "beta", beta.data(), beta.size(), zonal_variable_t);
 		silo.add_variable("mesh", "expected_solution", expected_solution.data(), expected_solution.size(), zonal_variable_t);
 
@@ -184,7 +191,21 @@ void run_hho_obstacle(const Mesh& msh, size_t degree)
 		iter++;
     }
 
+    /* Postprocess, final part */
+    T error = 0.0;
+    for (auto& cl : msh.cells)
+    {
+        Matrix<T, Dynamic, 1> local = take_local_data(msh, cl, hdi, alpha);
+        Matrix<T, Dynamic, 1> proj  = project_function(msh, cl, hdi, sol_fun, quadrature_degree_increase);
+        auto gr = make_hho_laplacian(msh, cl, hdi);
+        Matrix<T, Dynamic, Dynamic> stab = make_hho_fancy_stabilization(msh, cl, gr.first, hdi);
+        Matrix<T, Dynamic, Dynamic> lc = gr.second + stab;
+        Matrix<T, Dynamic, 1> diff = local - proj;
+
+        error += diff.dot(lc*diff);
+    }
     
+    std::cout << green << "Error: " << std::sqrt(error) << reset << std::endl;
    
 
 
@@ -203,6 +224,8 @@ int main(int argc, char **argv)
     mesh_init_params<T> mip;
     mip.Nx = 5;
     mip.Ny = 5;
+    mip.min_x = -1;
+    mip.min_y = -1;
 
     bool displace_nodes = true;
 

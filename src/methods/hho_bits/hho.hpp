@@ -456,36 +456,9 @@ auto make_assembler(const Mesh& msh, hho_degree_info hdi)
 }
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+/* Assembler for the obstacle problem (see "Bubbles enriched quadratic finite
+ * element method for the 3D-elliptic obstacle problem - S. Gaddam, T. Gudi",
+ * eqn. 5.1 onwards) */
 
 
 template<typename Mesh>
@@ -628,9 +601,9 @@ public:
 
     template<typename Function>
     void
-    assemble_A(const Mesh& msh, const typename Mesh::cell_type& cl,
-               const Matrix<T, Dynamic, Dynamic>& lhs, const Matrix<T, Dynamic, 1>& rhs,
-               const Matrix<T, Dynamic, 1>& gamma, const Function& dirichlet_bf)
+    assemble(const Mesh& msh, const typename Mesh::cell_type& cl,
+             const Matrix<T, Dynamic, Dynamic>& lhs, const Matrix<T, Dynamic, 1>& rhs,
+             const Matrix<T, Dynamic, 1>& gamma, const Function& dirichlet_bf)
     {
         auto celdeg = di.cell_degree();
         auto facdeg = di.face_degree();
@@ -727,7 +700,7 @@ public:
         auto cbs = cell_basis<Mesh,T>::size(celdeg);
         auto fbs = face_basis<Mesh,T>::size(facdeg);
 
-        alpha = gamma;
+        alpha.block(0, 0, num_all_cells*cbs, 1) = gamma;
         for (size_t i = 0; i < num_I_cells; i++)
         {
             auto exp_ofs = A_et.at(i);
@@ -741,14 +714,9 @@ public:
             beta.block(exp_ofs*cbs, 0, cbs, 1) = solution.block(num_I_cells*cbs + num_other_faces*fbs + i*cbs, 0, cbs, 1);
         }
 
-        /*
-        Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs + 4*fbs);
-        ret.block(0, 0, cbs, 1) = solution.block(cell_SOL_offset, 0, cbs, 1);
-
-        auto fcs = faces(msh, cl);
-        for (size_t face_i = 0; face_i < 4; face_i++)
+        for (auto& fc : msh.faces)
         {
-            auto fc = fcs[face_i];
+            auto face_ofs = offset(msh, fc);
 
             bool dirichlet = fc.is_boundary && fc.bndtype == boundary::DIRICHLET;
 
@@ -756,26 +724,52 @@ public:
             {
                 Matrix<T, Dynamic, Dynamic> mass = make_mass_matrix(msh, fc, facdeg);
                 Matrix<T, Dynamic, 1> rhs = make_rhs(msh, fc, facdeg, dirichlet_bf);
-                ret.block(cbs+face_i*fbs, 0, fbs, 1) = mass.llt().solve(rhs);
+                alpha.block(num_all_cells*cbs + face_ofs*fbs, 0, fbs, 1) = mass.llt().solve(rhs);
             }
             else
             {
                 auto face_offset = offset(msh, fc);
-                auto face_SOL_offset = cbs * msh.cells.size() + compress_table.at(face_offset)*fbs;
-                ret.block(cbs+face_i*fbs, 0, fbs, 1) = solution.block(face_SOL_offset, 0, fbs, 1);
+                auto face_SOL_offset = cbs * num_I_cells + face_ct.at(face_offset)*fbs;
+                alpha.block(num_all_cells*cbs + face_ofs*fbs, 0, fbs, 1) = solution.block(face_SOL_offset, 0, fbs, 1);
             }
         }
-
-        */
     }
     
-
     void finalize(void)
     {
         LHS.setFromTriplets( triplets.begin(), triplets.end() );
         triplets.clear();
     }
 };
+
+    template<typename T, typename Mesh>
+    Matrix<T, Dynamic, 1>
+    take_local_data(const Mesh& msh, const typename Mesh::cell_type& cl, hho_degree_info di,
+                    const Matrix<T, Dynamic, 1>& expanded_solution)
+    {
+        auto celdeg = di.cell_degree();
+        auto facdeg = di.face_degree();
+
+        auto cbs = cell_basis<Mesh,T>::size(celdeg);
+        auto fbs = face_basis<Mesh,T>::size(facdeg);
+
+        auto cell_offset        = offset(msh, cl);
+        auto cell_SOL_offset    = cell_offset * cbs;
+
+        Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs + 4*fbs);
+        ret.block(0, 0, cbs, 1) = expanded_solution.block(cell_SOL_offset, 0, cbs, 1);
+
+        auto fcs = faces(msh, cl);
+        for (size_t face_i = 0; face_i < 4; face_i++)
+        {
+            auto fc = fcs[face_i];
+            auto face_offset = offset(msh, fc);
+            auto face_SOL_offset = cbs * msh.cells.size() + face_offset*fbs;
+            ret.block(cbs+face_i*fbs, 0, fbs, 1) = expanded_solution.block(face_SOL_offset, 0, fbs, 1);
+        }
+
+        return ret;
+    }
 
 
 template<typename Mesh>

@@ -112,14 +112,14 @@ public:
 
 template<typename Mesh, typename T = typename Mesh::coordinate_type>
 Matrix<T, Dynamic, Dynamic>
-make_mass_matrix(const Mesh& msh, const typename Mesh::cell_type& cl, size_t degree)
+make_mass_matrix(const Mesh& msh, const typename Mesh::cell_type& cl, size_t degree, size_t di = 0)
 {
     cell_basis<Mesh,T> cb(msh, cl, degree);
     auto cbs = cb.size();
 
     Matrix<T, Dynamic, Dynamic> ret = Matrix<T, Dynamic, Dynamic>::Zero(cbs, cbs);
 
-    auto qps = integrate(msh, cl, 2*degree);
+    auto qps = integrate(msh, cl, 2*(degree+di));
 
     for (auto& qp : qps)
     {
@@ -132,14 +132,14 @@ make_mass_matrix(const Mesh& msh, const typename Mesh::cell_type& cl, size_t deg
 
 template<typename Mesh, typename T = typename Mesh::coordinate_type>
 Matrix<T, Dynamic, Dynamic>
-make_mass_matrix(const Mesh& msh, const typename Mesh::face_type& fc, size_t degree)
+make_mass_matrix(const Mesh& msh, const typename Mesh::face_type& fc, size_t degree, size_t di = 0)
 {
     face_basis<Mesh,T> fb(msh, fc, degree);
     auto fbs = fb.size();
 
     Matrix<T, Dynamic, Dynamic> ret = Matrix<T, Dynamic, Dynamic>::Zero(fbs, fbs);
 
-    auto qps = integrate(msh, fc, 2*degree);
+    auto qps = integrate(msh, fc, 2*(degree+di));
 
     for (auto& qp : qps)
     {
@@ -153,7 +153,7 @@ make_mass_matrix(const Mesh& msh, const typename Mesh::face_type& fc, size_t deg
 template<typename Mesh, typename Function>
 Matrix<typename Mesh::coordinate_type, Dynamic, 1>
 make_rhs(const Mesh& msh, const typename Mesh::cell_type& cl,
-         size_t degree, const Function& f)
+         size_t degree, const Function& f, size_t di = 0)
 {
     using T = typename Mesh::coordinate_type;
 
@@ -162,7 +162,7 @@ make_rhs(const Mesh& msh, const typename Mesh::cell_type& cl,
 
     Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs);
 
-    auto qps = integrate(msh, cl, 2*degree);
+    auto qps = integrate(msh, cl, 2*(degree+di));
 
     for (auto& qp : qps)
     {
@@ -176,7 +176,7 @@ make_rhs(const Mesh& msh, const typename Mesh::cell_type& cl,
 template<typename Mesh, typename Function>
 Matrix<typename Mesh::coordinate_type, Dynamic, 1>
 make_rhs(const Mesh& msh, const typename Mesh::face_type& fc,
-         size_t degree, const Function& f)
+         size_t degree, const Function& f, size_t di = 0)
 {
     using T = typename Mesh::coordinate_type;
 
@@ -185,7 +185,7 @@ make_rhs(const Mesh& msh, const typename Mesh::face_type& fc,
 
     Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(fbs);
 
-    auto qps = integrate(msh, fc, 2*degree);
+    auto qps = integrate(msh, fc, 2*(degree+di));
 
     for (auto& qp : qps)
     {
@@ -199,7 +199,7 @@ make_rhs(const Mesh& msh, const typename Mesh::face_type& fc,
 template<typename Mesh, typename Function>
 Matrix<typename Mesh::coordinate_type, Dynamic, 1>
 project_function(const Mesh& msh, const typename Mesh::cell_type& cl,
-                 hho_degree_info hdi, const Function& f)
+                 hho_degree_info hdi, const Function& f, size_t di = 0)
 {
     using T = typename Mesh::coordinate_type;
 
@@ -208,16 +208,16 @@ project_function(const Mesh& msh, const typename Mesh::cell_type& cl,
 
     Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs+4*fbs);
 
-    Matrix<T, Dynamic, Dynamic> cell_mm = make_mass_matrix(msh, cl, hdi.cell_degree());
-    Matrix<T, Dynamic, 1> cell_rhs = make_rhs(msh, cl, hdi.cell_degree(), f);
+    Matrix<T, Dynamic, Dynamic> cell_mm = make_mass_matrix(msh, cl, hdi.cell_degree(), di);
+    Matrix<T, Dynamic, 1> cell_rhs = make_rhs(msh, cl, hdi.cell_degree(), f, di);
     ret.block(0, 0, cbs, 1) = cell_mm.llt().solve(cell_rhs);
 
     auto fcs = faces(msh, cl);
     for (size_t i = 0; i < 4; i++)
     {
         auto fc = fcs[i];
-        Matrix<T, Dynamic, Dynamic> face_mm = make_mass_matrix(msh, fc, hdi.face_degree());
-        Matrix<T, Dynamic, 1> face_rhs = make_rhs(msh, fc, hdi.face_degree(), f);
+        Matrix<T, Dynamic, Dynamic> face_mm = make_mass_matrix(msh, fc, hdi.face_degree(), di);
+        Matrix<T, Dynamic, 1> face_rhs = make_rhs(msh, fc, hdi.face_degree(), f, di);
         ret.block(cbs+i*fbs, 0, fbs, 1) = face_mm.llt().solve(face_rhs);
     }
 
