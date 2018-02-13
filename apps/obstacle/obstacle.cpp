@@ -88,6 +88,8 @@ void run_hho_obstacle(const Mesh& msh, size_t degree)
         return 0.0;
     };
 
+    timecounter tc;
+
     auto num_cells = msh.cells.size();
     auto num_faces = msh.faces.size();
     auto fbs = face_basis<Mesh,T>::size(degree);
@@ -116,10 +118,10 @@ void run_hho_obstacle(const Mesh& msh, size_t degree)
     bool has_to_iterate = true;
     while ( has_to_iterate && iter < 50 )
     {
+        std::cout << bold << yellow << "Iteration " << iter+1 << reset << std::endl;
 
         /* Prepare SILO database */
-    	std::cout << bold << "Iteration " << iter << reset << std::endl;
-    	std::stringstream ss;
+        std::stringstream ss;
     	ss << "obstacle_cycle_" << iter << ".silo";
 
     	silo_database silo;
@@ -140,7 +142,6 @@ void run_hho_obstacle(const Mesh& msh, size_t degree)
     	}
 
         /* Assemble the problem */
-    	timecounter tc;
     	tc.tic();
 
     	auto assembler = make_obstacle_assembler(msh, in_A, hdi);
@@ -157,7 +158,7 @@ void run_hho_obstacle(const Mesh& msh, size_t degree)
 		assembler.finalize();
 
 		tc.toc();
-		std::cout << bold << yellow << "Assembly: " << tc << " seconds" << reset << std::endl;
+		std::cout << green << "    Assembly: " << bold << tc << " seconds" << reset << std::endl;
 
 
 		silo.add_variable("mesh", "difference", diff.data(), diff.size(), zonal_variable_t);
@@ -173,9 +174,10 @@ void run_hho_obstacle(const Mesh& msh, size_t degree)
     	Matrix<T, Dynamic, 1> sol;
     	sol = solver.solve(assembler.RHS);
     	tc.toc();
-		std::cout << bold << yellow << "Solver: " << tc << " seconds" << reset << std::endl;
+		std::cout << green << "    Solver: " << bold << tc << " seconds" << reset << std::endl;
 
         /* Postprocess, per iteration part */
+        tc.tic();
 		Matrix<T, Dynamic, 1> alpha_prev = alpha;
 		assembler.expand_solution(msh, sol, sol_fun, gamma, alpha, beta);
 
@@ -184,6 +186,9 @@ void run_hho_obstacle(const Mesh& msh, size_t degree)
 		silo.add_variable("mesh", "expected_solution", expected_solution.data(), expected_solution.size(), zonal_variable_t);
 
 		silo.close();
+        
+        tc.toc();
+        std::cout << green << "    Per-iteration postprocess and file I/O: " << bold << tc << " seconds" << reset << std::endl;
 
 		if ( (alpha_prev - alpha).norm() < 1e-7 )
 			break;
@@ -192,6 +197,8 @@ void run_hho_obstacle(const Mesh& msh, size_t degree)
     }
 
     /* Postprocess, final part */
+
+    tc.tic();
     T error = 0.0;
     for (auto& cl : msh.cells)
     {
@@ -205,7 +212,10 @@ void run_hho_obstacle(const Mesh& msh, size_t degree)
         error += diff.dot(lc*diff);
     }
     
-    std::cout << green << "Error: " << std::sqrt(error) << reset << std::endl;
+    tc.toc();
+    std::cout << green << "Final postprocess: " << bold << tc << " seconds" << reset << std::endl;
+    
+    std::cout << bold << magenta << "Error: " << std::sqrt(error) << reset << std::endl;
    
 
 
@@ -265,7 +275,7 @@ int main(int argc, char **argv)
     tc.tic();
     quad_mesh<T> msh(mip);
     tc.toc();
-    std::cout << bold << yellow << "Mesh generation: " << tc << " seconds" << reset << std::endl;
+    std::cout << green << "Mesh generation: " << bold << tc << " seconds" << reset << std::endl;
 
 
     run_hho_obstacle(msh, degree);
