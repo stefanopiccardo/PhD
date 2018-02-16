@@ -49,6 +49,22 @@ T iexp_pow(T x, size_t n)
     return x*y;
 }
 
+
+size_t basis_size(size_t k, size_t d)
+{
+    size_t num = 1;
+    size_t den = 1;
+
+    for (size_t i = 1; i <= d; i++)
+    {
+        num *= k + i;
+        den *= i;
+    }
+
+    return num/den;
+}
+
+
 //#define POWER_CACHE
 
 template<typename Mesh, typename VT>
