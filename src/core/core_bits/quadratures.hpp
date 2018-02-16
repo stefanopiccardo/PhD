@@ -28,32 +28,29 @@
 
 #include "point.hpp"
 
+
 template<typename T>
 std::vector<std::pair<point<T,1>, T>>
-edge_quadrature(size_t doe)
+golub_welsch(size_t degree)
 {
     std::vector<std::pair<point<T,1>, T>> ret;
 
     using namespace Eigen;
 
+    if ( degree % 2 == 0)
+        degree++;
 
-    if (doe%2 == 0)
-        doe++;
+    size_t reqd_nodes = (degree+1)/2;
 
-    size_t num_nodes = (doe+1)/2;
-
-    //size_t num_nodes = doe+1;
-
-    if (num_nodes == 1)
+    if (reqd_nodes == 1)
     {
-        //auto qp = std::make_pair(point<T,1>({0.5}), 1.0);
         auto qp = std::make_pair(point<T,1>({0.}), 2.0);
         ret.push_back(qp);
         return ret;
     }
 
-    Matrix<T, Dynamic, Dynamic> M = Matrix<T, Dynamic, Dynamic>::Zero(num_nodes, num_nodes);
-    for (size_t i = 1; i < num_nodes; i++)
+    Matrix<T, Dynamic, Dynamic> M = Matrix<T, Dynamic, Dynamic>::Zero(reqd_nodes, reqd_nodes);
+    for (size_t i = 1; i < reqd_nodes; i++)
     {
         T p = 4.0 - 1.0/(i*i);
         M(i, i-1) = sqrt(1.0/p);
@@ -70,14 +67,103 @@ edge_quadrature(size_t doe)
 
     for (size_t i = 0; i < nodes.size(); i++)
     {
-        //auto qp = std::make_pair(point<T,1>({(nodes(i) + 1.)/2.}), weights(i));
         auto qp = std::make_pair(point<T,1>({nodes(i)}), 2*weights(i));
-        //std::cout << "Q: " << qp.first << " " << qp.second << std::endl;
         ret.push_back(qp);
     }
 
     return ret;
 }
+
+
+template<typename T>
+std::vector<std::pair<point<T,1>, T>>
+gauss_legendre(size_t degree)
+{
+    auto comp_degree = degree;
+
+    if ( degree % 2 == 0 )
+        comp_degree = degree + 1;
+
+    size_t reqd_nodes = (comp_degree+1)/2;
+
+    std::vector< std::pair<point<T,1>, T> > ret;
+    ret.reserve(reqd_nodes);
+
+    point<T,1>  qp;
+    T           qw;
+    T           a1, a2;
+
+    switch(reqd_nodes)
+    {
+        case 1:
+            qp = point<T,1>({0.0});
+            qw = 2.0;
+            ret.push_back( std::make_pair(qp, qw) );
+            return ret;
+
+        case 2:
+            qp = point<T,1>({ 1.0/std::sqrt(3.0) });
+            qw = 1.0;
+            ret.push_back( std::make_pair(-qp, qw ) );
+            ret.push_back( std::make_pair( qp, qw ) );
+            return ret;
+
+        case 3:
+            qp = point<T,1>({ std::sqrt(3.0/5.0) });
+            qw = 5.0/9.0;
+            ret.push_back( std::make_pair(-qp, qw ) );
+            ret.push_back( std::make_pair( qp, qw ) );
+            qp = point<T,1>({0.0});
+            qw = 8.0/9.0;
+            ret.push_back( std::make_pair( qp, qw ) );
+            return ret;
+
+        case 4:
+            a1 = 3.0/7.0;
+            a2 = 2.0*std::sqrt(6.0/5.0)/7.0;
+            qp = point<T,1>({ std::sqrt(a1 - a2) });
+            qw = (18.0 + std::sqrt(30.0))/36.0;
+            ret.push_back( std::make_pair(-qp, qw ) );
+            ret.push_back( std::make_pair( qp, qw ) );
+            qp = point<T,1>({ std::sqrt(a1 + a2) });
+            qw = (18.0 - std::sqrt(30.0))/36.0;
+            ret.push_back( std::make_pair(-qp, qw ) );
+            ret.push_back( std::make_pair( qp, qw ) );
+            return ret;
+
+        case 5:
+            qp = point<T,1>({ 0.0 });
+            qw = 128.0/255.0;
+            ret.push_back( std::make_pair( qp, qw ) );
+
+            a1 = 5.0;
+            a2 = 2.0*std::sqrt(10.0/7.0);
+            qp = point<T,1>({ std::sqrt(a1 - a2)/3.0 });
+            qw = (322 + 13.0*std::sqrt(70.0))/900.0;
+            ret.push_back( std::make_pair(-qp, qw ) );
+            ret.push_back( std::make_pair( qp, qw ) );
+
+            qp = point<T,1>({ std::sqrt(a1 + a2)/3.0 });
+            qw = (322 - 13.0*std::sqrt(70.0))/900.0;
+            ret.push_back( std::make_pair(-qp, qw ) );
+            ret.push_back( std::make_pair( qp, qw ) );
+            return ret;
+
+        default:
+            return golub_welsch<T>(degree);
+
+    }
+
+    return ret;
+}
+
+template<typename T>
+std::vector<std::pair<point<T,1>, T>>
+edge_quadrature(size_t doe)
+{
+    return gauss_legendre<T>(doe);
+}
+
 
 template<typename T>
 std::vector<std::pair<point<T,2>, T>>
@@ -141,7 +227,7 @@ triangle_quadrature(const point<T,2>& p0, const point<T,2>& p1, const point<T,2>
             return ret;
             
         default:
-            throw std::invalid_argument("Quadrature order too high");
+            throw std::invalid_argument("Triangle quadrature: requested order too high");
 
     }
 
