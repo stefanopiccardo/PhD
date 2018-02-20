@@ -66,7 +66,6 @@ int main(void)
         stab = make_hho_fancy_stabilization(msh, cl, gr.first, hdi);
 
         Matrix<RealType, Dynamic, 1> proj = project_function(msh, cl, hdi, rhs_fun);
-        std::cout << proj.transpose() << std::endl;
 
         error += proj.dot(stab*proj);
     }
