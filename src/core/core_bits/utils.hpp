@@ -91,7 +91,7 @@ public:
             reconstruction_deg  = fd+1;
         }
 
-        std::cout << cell_deg << " " << face_deg << " " << reconstruction_deg << std::endl;
+        //std::cout << cell_deg << " " << face_deg << " " << reconstruction_deg << std::endl;
     }
 
     size_t cell_degree() const

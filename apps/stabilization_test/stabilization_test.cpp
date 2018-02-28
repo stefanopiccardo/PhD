@@ -21,6 +21,7 @@
  */
 
 #include <iostream>
+#include <iomanip>
 
 #include <Eigen/Dense>
 #include <Eigen/SparseCore>
@@ -33,14 +34,12 @@ using namespace Eigen;
 #include "core/solvers"
 #include "methods/hho"
 
-int main(void)
+
+double test_stabilization(size_t N, size_t k)
 {
-	using RealType = double;
+    using RealType = double;
 
-	size_t N = 10;
-	size_t k = 1;
-
-	hho_degree_info hdi(k, k);
+    hho_degree_info hdi(k, k);
 
 
     mesh_init_params<RealType> mip;
@@ -51,7 +50,7 @@ int main(void)
 
 
     auto rhs_fun = [](const typename quad_mesh<RealType>::point_type& pt) -> RealType {
-        return 2.0 * M_PI * M_PI * std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
+        return 2.0 * M_PI * M_PI * std::sin(2*M_PI*pt.x()) * std::sin(2*M_PI*pt.y());
         //return pt.x();
     };
 
@@ -60,7 +59,7 @@ int main(void)
 
     for (auto& cl : msh.cells)
     {
-    	auto gr = make_hho_laplacian(msh, cl, hdi);
+        auto gr = make_hho_laplacian(msh, cl, hdi);
 
         Matrix<RealType, Dynamic, Dynamic> stab;   
         stab = make_hho_fancy_stabilization(msh, cl, gr.first, hdi);
@@ -68,8 +67,35 @@ int main(void)
         Matrix<RealType, Dynamic, 1> proj = project_function(msh, cl, hdi, rhs_fun);
 
         error += proj.dot(stab*proj);
+
+        break;
     }
 
-    std::cout << std::sqrt(error) << std::endl;
+    return std::sqrt(error);
+}
+
+int main(void)
+{
+
+    for (size_t k = 0; k < 6; k++)
+    {
+        std::vector<double> errors;
+
+        for (size_t N = 2; N < 64; N *= 2)
+        {
+            auto err = test_stabilization(N,k);
+            errors.push_back(err);
+        }
+
+        for (size_t i = 1; i < errors.size(); i++)
+            std::cout << std::setprecision(2) << std::log(errors.at(i-1)/errors.at(i))/std::log(2.0) << "  ";
+        std::cout << std::endl;
+
+    }
 
 }
+
+
+
+
+

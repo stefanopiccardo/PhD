@@ -46,9 +46,11 @@ make_hho_laplacian(const Mesh& msh, const typename Mesh::cell_type& cl, const hh
     auto cbs = cell_basis<Mesh,T>::size(celdeg);
     auto fbs = face_basis<Mesh,T>::size(facdeg);
 
+    auto fcs = faces(msh, cl);
+
     Matrix<T, Dynamic, Dynamic> stiff = Matrix<T, Dynamic, Dynamic>::Zero(rbs, rbs);
     Matrix<T, Dynamic, Dynamic> gr_lhs = Matrix<T, Dynamic, Dynamic>::Zero(rbs-1, rbs-1);
-    Matrix<T, Dynamic, Dynamic> gr_rhs = Matrix<T, Dynamic, Dynamic>::Zero(rbs-1, cbs + 4*fbs);
+    Matrix<T, Dynamic, Dynamic> gr_rhs = Matrix<T, Dynamic, Dynamic>::Zero(rbs-1, cbs + fcs.size()*fbs);
 
     auto qps = integrate(msh, cl, 2*recdeg);
 
@@ -61,7 +63,6 @@ make_hho_laplacian(const Mesh& msh, const typename Mesh::cell_type& cl, const hh
     gr_lhs = stiff.block(1, 1, rbs-1, rbs-1);
     gr_rhs.block(0, 0, rbs-1, cbs) = stiff.block(1, 0, rbs-1, cbs);
 
-    auto fcs = faces(msh, cl);
     auto ns = normals(msh, cl);
 
     for (size_t i = 0; i < fcs.size(); i++)
@@ -109,19 +110,20 @@ make_hho_naive_stabilization(const Mesh& msh, const typename Mesh::cell_type& cl
 
     auto fcs = faces(msh, cl);
 
-    Matrix<T, Dynamic, Dynamic> data = Matrix<T, Dynamic, Dynamic>::Zero(cbs+4*fbs, cbs+4*fbs);
+    size_t msize = cbs+fcs.size()*fbs;
+    Matrix<T, Dynamic, Dynamic> data = Matrix<T, Dynamic, Dynamic>::Zero(msize, msize);
     Matrix<T, Dynamic, Dynamic> If = Matrix<T, Dynamic, Dynamic>::Identity(fbs, fbs);
 
     cell_basis<Mesh,T> cb(msh, cl, celdeg);
 
     auto h = measure(msh, cl);
 
-    for (size_t i = 0; i < 4; i++)
+    for (size_t i = 0; i < fcs.size(); i++)
     {
         auto fc = fcs[i];
         face_basis<Mesh,T> fb(msh, fc, facdeg);
 
-        Matrix<T, Dynamic, Dynamic> oper = Matrix<T, Dynamic, Dynamic>::Zero(fbs, cbs+4*fbs);
+        Matrix<T, Dynamic, Dynamic> oper = Matrix<T, Dynamic, Dynamic>::Zero(fbs, msize);
         Matrix<T, Dynamic, Dynamic> mass = Matrix<T, Dynamic, Dynamic>::Zero(fbs, fbs);
         Matrix<T, Dynamic, Dynamic> trace = Matrix<T, Dynamic, Dynamic>::Zero(fbs, cbs);
 
@@ -189,8 +191,9 @@ make_hho_fancy_stabilization(const Mesh& msh, const typename Mesh::cell_type& cl
 
     auto fcs = faces(msh, cl);
     auto num_faces = fcs.size();
+    size_t msize = cbs+num_faces*fbs;
 
-    Matrix<T, Dynamic, Dynamic> data = Matrix<T, Dynamic, Dynamic>::Zero(cbs+4*fbs, cbs+4*fbs);
+    Matrix<T, Dynamic, Dynamic> data = Matrix<T, Dynamic, Dynamic>::Zero(msize, msize);
 
     // Step 3: project on faces (eqn. 21)
     for (size_t face_i = 0; face_i < num_faces; face_i++)
@@ -350,8 +353,11 @@ public:
         auto cbs = cell_basis<Mesh,T>::size(celdeg);
         auto fbs = face_basis<Mesh,T>::size(facdeg);
 
+        auto fcs = faces(msh, cl);
+        auto num_faces = fcs.size();
+
         std::vector<assembly_index> asm_map;
-        asm_map.reserve(cbs + 4*fbs);
+        asm_map.reserve(cbs + num_faces*fbs);
 
         auto cell_offset        = offset(msh, cl);
         auto cell_LHS_offset    = cell_offset * cbs;
@@ -359,10 +365,9 @@ public:
         for (size_t i = 0; i < cbs; i++)
             asm_map.push_back( assembly_index(cell_LHS_offset+i, true) );
 
-        Matrix<T, Dynamic, 1> dirichlet_data = Matrix<T, Dynamic, 1>::Zero(cbs + 4*fbs);
+        Matrix<T, Dynamic, 1> dirichlet_data = Matrix<T, Dynamic, 1>::Zero(cbs + num_faces*fbs);
 
-        auto fcs = faces(msh, cl);
-        for (size_t face_i = 0; face_i < 4; face_i++)
+        for (size_t face_i = 0; face_i < num_faces; face_i++)
         {
             auto fc = fcs[face_i];
             auto face_offset = offset(msh, fc);
@@ -414,11 +419,13 @@ public:
         auto cell_offset        = offset(msh, cl);
         auto cell_SOL_offset    = cell_offset * cbs;
 
-        Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs + 4*fbs);
+        auto fcs = faces(msh, cl);
+        auto num_faces = fcs.size();
+
+        Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs + num_faces*fbs);
         ret.block(0, 0, cbs, 1) = solution.block(cell_SOL_offset, 0, cbs, 1);
 
-        auto fcs = faces(msh, cl);
-        for (size_t face_i = 0; face_i < 4; face_i++)
+        for (size_t face_i = 0; face_i < num_faces; face_i++)
         {
             auto fc = fcs[face_i];
 
@@ -612,7 +619,6 @@ public:
         auto fbs = face_basis<Mesh,T>::size(facdeg);
 
         std::vector<assembly_index> asm_map_row, asm_map_col;
-        //asm_map.reserve(cbs + 4*fbs);
 
         /* Cell dofs local to global */
         auto cell_offset        = offset(msh, cl);
@@ -626,10 +632,12 @@ public:
             asm_map_col.push_back( assembly_index(cell_LHS_offset+i, cell_needs_asm_A) );
         }
 
-        /* Face dofs local to global */
-        Matrix<T, Dynamic, 1> dirichlet_data = Matrix<T, Dynamic, 1>::Zero(cbs + 4*fbs);
         auto fcs = faces(msh, cl);
-        for (size_t face_i = 0; face_i < 4; face_i++)
+        auto num_faces = fcs.size();
+
+        /* Face dofs local to global */
+        Matrix<T, Dynamic, 1> dirichlet_data = Matrix<T, Dynamic, 1>::Zero(cbs + num_faces*fbs);
+        for (size_t face_i = 0; face_i < num_faces; face_i++)
         {
             auto fc = fcs[face_i];
             auto face_offset = offset(msh, fc);
@@ -756,11 +764,13 @@ public:
         auto cell_offset        = offset(msh, cl);
         auto cell_SOL_offset    = cell_offset * cbs;
 
-        Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs + 4*fbs);
+        auto fcs = faces(msh, cl);
+        auto num_faces = fcs.size();
+
+        Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs + num_faces*fbs);
         ret.block(0, 0, cbs, 1) = expanded_solution.block(cell_SOL_offset, 0, cbs, 1);
 
-        auto fcs = faces(msh, cl);
-        for (size_t face_i = 0; face_i < 4; face_i++)
+        for (size_t face_i = 0; face_i < num_faces; face_i++)
         {
             auto fc = fcs[face_i];
             auto face_offset = offset(msh, fc);
