@@ -133,7 +133,7 @@ gauss_legendre(size_t degree)
 
         case 5:
             qp = point<T,1>({ 0.0 });
-            qw = 128.0/255.0;
+            qw = 128.0/225.0;
             ret.push_back( std::make_pair( qp, qw ) );
 
             a1 = 5.0;
