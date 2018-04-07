@@ -79,13 +79,13 @@ struct node_cuthho_info
 };
 
 
-template<typename T, typename ET>
+template<typename T, size_t ET>
 using cuthho_mesh = mesh<T, ET, cell_cuthho_info<T>, face_cuthho_info<T>, node_cuthho_info<T>>;
 
 template<typename T>
-using cuthho_quad_mesh = mesh<T, elem_quad, cell_cuthho_info<T>, face_cuthho_info<T>, node_cuthho_info<T>>;
+using cuthho_quad_mesh = mesh<T, 4, cell_cuthho_info<T>, face_cuthho_info<T>, node_cuthho_info<T>>;
 
-
-
+template<typename T>
+using cuthho_poly_mesh = mesh<T, 0, cell_cuthho_info<T>, face_cuthho_info<T>, node_cuthho_info<T>>;
 
 

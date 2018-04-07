@@ -206,14 +206,16 @@ project_function(const Mesh& msh, const typename Mesh::cell_type& cl,
     auto cbs = cell_basis<Mesh,T>::size(hdi.cell_degree());
     auto fbs = face_basis<Mesh,T>::size(hdi.face_degree());
 
-    Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs+4*fbs);
+    auto fcs = faces(msh, cl);
+    auto num_faces = fcs.size();
+    
+    Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs+num_faces*fbs);
 
     Matrix<T, Dynamic, Dynamic> cell_mm = make_mass_matrix(msh, cl, hdi.cell_degree(), di);
     Matrix<T, Dynamic, 1> cell_rhs = make_rhs(msh, cl, hdi.cell_degree(), f, di);
     ret.block(0, 0, cbs, 1) = cell_mm.llt().solve(cell_rhs);
 
-    auto fcs = faces(msh, cl);
-    for (size_t i = 0; i < 4; i++)
+    for (size_t i = 0; i < num_faces; i++)
     {
         auto fc = fcs[i];
         Matrix<T, Dynamic, Dynamic> face_mm = make_mass_matrix(msh, fc, hdi.face_degree(), di);

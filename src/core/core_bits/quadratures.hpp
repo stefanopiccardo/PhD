@@ -27,7 +27,7 @@
 #include <cassert>
 
 #include "point.hpp"
-
+#include "quadratures_dunavant.hpp"
 
 template<typename T>
 std::vector<std::pair<point<T,1>, T>>
@@ -164,7 +164,7 @@ edge_quadrature(size_t doe)
     return gauss_legendre<T>(doe);
 }
 
-
+/*
 template<typename T>
 std::vector<std::pair<point<T,2>, T>>
 triangle_quadrature(const point<T,2>& p0, const point<T,2>& p1, const point<T,2>& p2, size_t deg)
@@ -233,7 +233,42 @@ triangle_quadrature(const point<T,2>& p0, const point<T,2>& p1, const point<T,2>
 
     return ret;
 }
+*/
 
+template<typename T>
+std::vector<std::pair<point<T,2>, T>>
+triangle_quadrature(const point<T,2>& p0, const point<T,2>& p1, const point<T,2>& p2, size_t deg)
+{
+    if (deg == 0)
+        deg = 1;
+
+    if (deg > 8)
+        throw std::invalid_argument("Quadrature order too high");
+
+    auto v0 = p1 - p0;
+    auto v1 = p2 - p0;
+
+    auto area = std::abs( (v0.x() * v1.y() - v0.y() * v1.x())/2.0 );
+
+    using namespace dunavant_quadratures;
+
+    std::vector<std::pair<point<T,2>, T>> ret;
+
+    ret.reserve( rules[deg].num_points );
+
+    for (size_t i = 0; i < rules[deg].num_points; i++)
+    {
+        point<T,2> qp = p0 * rules[deg].data[i][0] +
+                        p1 * rules[deg].data[i][1] +
+                        p2 * rules[deg].data[i][2];
+
+        T qw          = area * rules[deg].data[i][3];
+
+        ret.push_back( std::make_pair(qp, qw) );
+    }
+
+    return ret;
+}
 
 
 template<typename Mesh>
@@ -273,13 +308,13 @@ auto make_reference_transform(const Mesh& msh, const typename Mesh::cell_type& c
 }
 
 
-template<typename Mesh>
-std::vector<std::pair<point<typename Mesh::coordinate_type,2>, typename Mesh::coordinate_type>>
-integrate(const Mesh& msh, const typename Mesh::cell_type& cl, size_t degree)
+template<typename T, typename CU, typename FU, typename NU>
+std::vector< std::pair<point<T,2>, T> >
+integrate(const mesh<T,4,CU,FU,NU>& msh,
+          const typename mesh<T,4,CU,FU,NU>::cell_type& cl,
+          size_t degree)
 {
-    using T = typename Mesh::coordinate_type;
-
-    typedef typename Mesh::point_type    point_type;
+    typedef typename mesh<T,4,CU,FU,NU>::point_type    point_type;
 
     auto qps = edge_quadrature<T>(degree);
     auto pts = points(msh, cl);
@@ -334,6 +369,33 @@ integrate(const Mesh& msh, const typename Mesh::cell_type& cl, size_t degree)
 
             ret.push_back( std::make_pair( point_type(px, py), w ) );
         }
+    }
+
+    return ret;
+}
+
+template<typename T, typename CU, typename FU, typename NU>
+std::vector< std::pair<point<T,2>, T> >
+integrate(const poly_mesh<T,CU,FU,NU>& msh,
+          const typename poly_mesh<T,CU,FU,NU>::cell_type& cl,
+          size_t degree)
+{
+    auto bar = barycenter(msh, cl);
+    auto pts = points(msh, cl);
+
+    auto num_points = pts.size();
+
+    std::vector< std::pair<point<T,2>, T> > ret;
+
+    for (size_t i = 0; i < num_points; i++)
+    {
+        auto p0 = pts[i];
+        auto p1 = pts[(i+1)%num_points];
+        auto p2 = bar;
+
+        auto qps = triangle_quadrature(p0, p1, p2, degree);
+
+        ret.insert( ret.end(), qps.begin(), qps.end() );
     }
 
     return ret;

@@ -60,11 +60,37 @@ offset(const Mesh& msh, const typename Mesh::node_type& n)
     return std::distance(msh.nodes.begin(), itor);
 }
 
-template<typename Mesh>
-std::array< typename Mesh::node_type, 4 >
-nodes(const Mesh& msh, const typename Mesh::cell_type& cl)
+
+/**********************************************************************************/
+/**********************************************************************************/
+/**********************************************************************************/
+template<typename T, size_t N, typename CellUD, typename FaceUD, typename NodeUD>
+std::array< typename mesh<T, N, CellUD, FaceUD, NodeUD>::node_type, N >
+nodes(const mesh<T, N, CellUD, FaceUD, NodeUD>& msh,
+      const typename mesh<T, N, CellUD, FaceUD, NodeUD>::cell_type& cl)
 {
-    std::array< typename Mesh::node_type, 4 > ret;
+    using Mesh = mesh<T, N, CellUD, FaceUD, NodeUD>;
+
+    std::array< typename Mesh::node_type, N > ret;
+
+    auto ptid2node = [&](size_t ptid) -> auto {
+        return msh.nodes.at(ptid);
+    };
+
+    std::transform( cl.ptids.begin(), cl.ptids.end(), ret.begin(), ptid2node );
+
+    return ret;
+}
+
+template<typename T, typename CellUD, typename FaceUD, typename NodeUD>
+std::vector< typename mesh<T, 0, CellUD, FaceUD, NodeUD>::node_type >
+nodes(const mesh<T, 0, CellUD, FaceUD, NodeUD>& msh,
+      const typename mesh<T, 0, CellUD, FaceUD, NodeUD>::cell_type& cl)
+{
+    using Mesh = mesh<T, 0, CellUD, FaceUD, NodeUD>;
+
+    std::vector< typename Mesh::node_type> ret;
+    ret.resize( cl.ptids.size() );
 
     auto ptid2node = [&](size_t ptid) -> auto {
         return msh.nodes.at(ptid);
@@ -90,11 +116,35 @@ nodes(const Mesh& msh, const typename Mesh::face_type& fc)
     return ret;
 }
 
-template<typename Mesh>
-std::array< typename Mesh::point_type, 4 >
-points(const Mesh& msh, const typename Mesh::cell_type& cl)
+/**********************************************************************************/
+/**********************************************************************************/
+/**********************************************************************************/
+template<typename T, size_t N, typename CellUD, typename FaceUD, typename NodeUD>
+std::array< typename mesh<T, N, CellUD, FaceUD, NodeUD>::point_type, N >
+points(const mesh<T, N, CellUD, FaceUD, NodeUD>& msh,
+       const typename mesh<T, N, CellUD, FaceUD, NodeUD>::cell_type& cl)
 {
-    std::array< typename Mesh::point_type, 4 > ret;
+    using Mesh = mesh<T, N, CellUD, FaceUD, NodeUD>;
+    std::array< typename Mesh::point_type, N > ret;
+
+    auto ptid2pt = [&](size_t ptid) -> auto {
+        return msh.points.at(ptid);
+    };
+
+    std::transform( cl.ptids.begin(), cl.ptids.end(), ret.begin(), ptid2pt );
+
+    return ret;
+}
+
+template<typename T, typename CellUD, typename FaceUD, typename NodeUD>
+std::vector< typename mesh<T, 0, CellUD, FaceUD, NodeUD>::point_type >
+points(const mesh<T, 0, CellUD, FaceUD, NodeUD>& msh,
+      const typename mesh<T, 0, CellUD, FaceUD, NodeUD>::cell_type& cl)
+{
+    using Mesh = mesh<T, 0, CellUD, FaceUD, NodeUD>;
+
+    std::vector< typename Mesh::point_type> ret;
+    ret.resize( cl.ptids.size() );
 
     auto ptid2pt = [&](size_t ptid) -> auto {
         return msh.points.at(ptid);
@@ -127,42 +177,69 @@ points(const Mesh& msh, const typename Mesh::node_type& node)
     return msh.points.at( node.ptid );
 }
 
-template<typename Mesh>
-std::array< typename Mesh::face_type, 4 >
-faces(const Mesh& msh, const typename Mesh::cell_type& cl)
+/**********************************************************************************/
+/**********************************************************************************/
+/**********************************************************************************/
+template<typename T, size_t N, typename CellUD, typename FaceUD, typename NodeUD>
+std::array< typename mesh<T, N, CellUD, FaceUD, NodeUD>::face_type, N >
+faces(const mesh<T, N, CellUD, FaceUD, NodeUD>& msh,
+      const typename mesh<T, N, CellUD, FaceUD, NodeUD>::cell_type& cl)
 {
+    using Mesh = mesh<T, N, CellUD, FaceUD, NodeUD>;
     typedef typename Mesh::face_type face_type;
-    std::array< typename Mesh::face_type, 4 > ret;
+    std::array< typename Mesh::face_type, N > ret;
 
-    face_type f;
+    auto numpts = cl.ptids.size();
 
-    f.ptids[0] = cl.ptids[0];
-    f.ptids[1] = cl.ptids[1];
-    auto itor = std::lower_bound(msh.faces.begin(), msh.faces.end(), f);
-    if (itor == msh.faces.end())
-        throw std::logic_error("Face not found, this is likely a bug.");
-    ret[0] = *itor;
+    for (size_t i = 0; i < numpts; i++)
+    {
 
-    f.ptids[0] = cl.ptids[1];
-    f.ptids[1] = cl.ptids[2];
-    itor = std::lower_bound(msh.faces.begin(), msh.faces.end(), f);
-    if (itor == msh.faces.end())
-        throw std::logic_error("Face not found, this is likely a bug.");
-    ret[1] = *itor;
+        face_type f;
 
-    f.ptids[0] = cl.ptids[3];
-    f.ptids[1] = cl.ptids[2];
-    itor = std::lower_bound(msh.faces.begin(), msh.faces.end(), f);
-    if (itor == msh.faces.end())
-        throw std::logic_error("Face not found, this is likely a bug.");
-    ret[2] = *itor;
+        f.ptids[0] = cl.ptids[i];
+        f.ptids[1] = cl.ptids[(i+1)%numpts];
 
-    f.ptids[0] = cl.ptids[0];
-    f.ptids[1] = cl.ptids[3];
-    itor = std::lower_bound(msh.faces.begin(), msh.faces.end(), f);
-    if (itor == msh.faces.end())
-        throw std::logic_error("Face not found, this is likely a bug.");
-    ret[3] = *itor;
+        if ( f.ptids[0] > f.ptids[1] )
+            std::swap(f.ptids[0], f.ptids[1]);
+
+        auto itor = std::lower_bound(msh.faces.begin(), msh.faces.end(), f);
+        if (itor == msh.faces.end())
+            throw std::logic_error("Face not found, this is likely a bug.");
+        ret[i] = *itor;
+    }
+
+    return ret;
+}
+
+template<typename T, typename CellUD, typename FaceUD, typename NodeUD>
+std::vector< typename mesh<T, 0, CellUD, FaceUD, NodeUD>::face_type >
+faces(const mesh<T, 0, CellUD, FaceUD, NodeUD>& msh,
+      const typename mesh<T, 0, CellUD, FaceUD, NodeUD>::cell_type& cl)
+{
+    using Mesh = mesh<T, 0, CellUD, FaceUD, NodeUD>;
+    typedef typename Mesh::face_type face_type;
+    std::vector< typename Mesh::face_type > ret;
+
+    auto numpts = cl.ptids.size();
+
+    ret.resize(numpts);
+
+    for (size_t i = 0; i < numpts; i++)
+    {
+
+        face_type f;
+
+        f.ptids[0] = cl.ptids[i];
+        f.ptids[1] = cl.ptids[(i+1)%numpts];
+
+        if ( f.ptids[0] > f.ptids[1] )
+            std::swap(f.ptids[0], f.ptids[1]);
+
+        auto itor = std::lower_bound(msh.faces.begin(), msh.faces.end(), f);
+        if (itor == msh.faces.end())
+            throw std::logic_error("Face not found, this is likely a bug.");
+        ret[i] = *itor;
+    }
 
     return ret;
 }
@@ -241,19 +318,19 @@ template<typename Mesh>
 typename Mesh::coordinate_type
 measure(const Mesh& msh, const typename Mesh::cell_type& cl)
 {
-    /*
-    auto p0 = msh.points.at( cl.ptids[0] );
-    auto p2 = msh.points.at( cl.ptids[2] );
+    using T = typename Mesh::coordinate_type;
 
-    return (p2.x() - p0.x()) * (p2.y() - p0.y());
-    */
     auto pts = points(msh, cl);
-    auto v0 = pts[1] - pts[0];
-    auto v1 = pts[2] - pts[1];
-    auto v2 = pts[3] - pts[2];
-    auto v3 = pts[3] - pts[0];
 
-    return 0.5*(v0.x()*v3.y() - v0.y()*v3.x()) + 0.5*(v1.x()*v2.y() - v1.y()*v2.x());
+    T acc{};
+    for (size_t i = 1; i < pts.size() - 1; i++)
+    {
+        auto u = (pts.at(i) - pts.at(0)).to_vector();
+        auto v = (pts.at(i+1) - pts.at(0)).to_vector();
+        acc += std::abs(u(0)*v(1) - u(1)*v(0)) * 0.5;
+    }
+
+    return acc;
 }
 
 template<typename Mesh>
@@ -266,37 +343,63 @@ measure(const Mesh& msh, const typename Mesh::face_type& fc)
     return (p1-p0).to_vector().norm();
 }
 
-template<typename Mesh>
-std::array< Matrix<typename Mesh::coordinate_type,2,1>, 4 >
-normals(const Mesh& msh, const typename Mesh::cell_type& cl)
+/**********************************************************************************/
+/**********************************************************************************/
+/**********************************************************************************/
+template<typename T, size_t N, typename CellUD, typename FaceUD, typename NodeUD>
+std::array< Matrix<typename mesh<T, N, CellUD, FaceUD, NodeUD>::coordinate_type, 2, 1>, N >
+normals(const mesh<T, N, CellUD, FaceUD, NodeUD>& msh,
+        const typename mesh<T, N, CellUD, FaceUD, NodeUD>::cell_type& cl)
 {
-    using T = typename Mesh::coordinate_type;
-    std::array< Matrix<T,2,1>, 4 >  ret;
+    using Mesh = mesh<T, N, CellUD, FaceUD, NodeUD>;
+    std::array< Matrix<T,2,1>, N >  ret;
 
     auto pts = points(msh, cl);
-    auto v0 = pts[1] - pts[0];
-    auto v1 = pts[2] - pts[1];
-    auto v2 = pts[3] - pts[2];
-    auto v3 = pts[0] - pts[3];
+    auto numpts = pts.size();
+    assert(numpts == N);
 
-    ret[0](0) = v0.y();
-    ret[0](1) = -v0.x();
-    ret[0] = ret[0]/ret[0].norm();
+    for (size_t i = 0; i < numpts; i++)
+    {
+        auto v = pts[(i+1)%numpts] - pts[i];
 
-    ret[1](0) = v1.y();
-    ret[1](1) = -v1.x();
-    ret[1] = ret[1]/ret[1].norm();
 
-    ret[2](0) = v2.y();
-    ret[2](1) = -v2.x();
-    ret[2] = ret[2]/ret[2].norm();
-
-    ret[3](0) = v3.y();
-    ret[3](1) = -v3.x();
-    ret[3] = ret[3]/ret[3].norm();
+        ret[i](0) = v.y();
+        ret[i](1) = -v.x();
+        ret[i] = ret[i]/ret[i].norm();
+    }
 
     return ret;
 }
+
+
+template<typename T, typename CellUD, typename FaceUD, typename NodeUD>
+std::vector< Matrix<typename mesh<T, 0, CellUD, FaceUD, NodeUD>::coordinate_type, 2, 1> >
+normals(const mesh<T, 0, CellUD, FaceUD, NodeUD>& msh,
+        const typename mesh<T, 0, CellUD, FaceUD, NodeUD>::cell_type& cl)
+{
+    using Mesh = mesh<T, 0, CellUD, FaceUD, NodeUD>;
+    std::vector< Matrix<T,2,1> > ret;
+
+    auto pts = points(msh, cl);
+    auto numpts = pts.size();
+
+    ret.resize(numpts);
+
+    for (size_t i = 0; i < numpts; i++)
+    {
+        auto v = pts[(i+1)%numpts] - pts[i];
+
+
+        ret[i](0) = v.y();
+        ret[i](1) = -v.x();
+        ret[i] = ret[i]/ret[i].norm();
+    }
+
+    return ret;
+}
+
+
+#if 0
 
 template<typename Mesh>
 std::vector< typename Mesh::point_type >
@@ -349,3 +452,6 @@ make_test_points(const Mesh& msh, const typename Mesh::face_type& fc)
 
     return ret;
 }
+
+#endif
+

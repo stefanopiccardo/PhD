@@ -272,7 +272,7 @@ test_mass_matrices(const Mesh& msh, size_t degree)
     f_ofs.close();
 }
 
-template<typename T, typename ET>
+template<typename T, size_t ET>
 void test_triangulation(const cuthho_mesh<T, ET>& msh)
 {
     std::ofstream ofs("triangulation_dump.m");
@@ -298,14 +298,14 @@ struct material_parameters
     material_parameters() : kappa_1(1.0), kappa_2(1.0) {}
 };
 
-template<typename T, typename ET>
+template<typename T, size_t ET>
 T
 cell_eta(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl)
 {
     return 5;
 }
 
-template<typename T, typename ET, typename Function>
+template<typename T, size_t ET, typename Function>
 std::pair<   Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>,
              Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>  >
 make_hho_laplacian(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
@@ -326,9 +326,12 @@ make_hho_laplacian(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, 
     auto cbs = cell_basis<cuthho_mesh<T, ET>,T>::size(celdeg);
     auto fbs = face_basis<cuthho_mesh<T, ET>,T>::size(facdeg);
 
+    auto fcs = faces(msh, cl);
+    auto num_faces = fcs.size();
+
     Matrix<T, Dynamic, Dynamic> stiff = Matrix<T, Dynamic, Dynamic>::Zero(rbs, rbs);
     Matrix<T, Dynamic, Dynamic> gr_lhs = Matrix<T, Dynamic, Dynamic>::Zero(rbs, rbs);
-    Matrix<T, Dynamic, Dynamic> gr_rhs = Matrix<T, Dynamic, Dynamic>::Zero(rbs, cbs + 4*fbs);
+    Matrix<T, Dynamic, Dynamic> gr_rhs = Matrix<T, Dynamic, Dynamic>::Zero(rbs, cbs + num_faces*fbs);
 
     /* Cell term (cut) */
     auto qps = integrate(msh, cl, 2*recdeg, where);
@@ -360,7 +363,6 @@ make_hho_laplacian(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, 
     gr_rhs.block(0, 0, rbs, cbs) = stiff.block(0, 0, rbs, cbs);
 
     auto ns = normals(msh, cl);
-    auto fcs = faces(msh, cl);
     for (size_t i = 0; i < fcs.size(); i++)
     {
         auto fc = fcs[i];
@@ -390,7 +392,7 @@ make_hho_laplacian(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, 
 }
 
 
-template<typename T, typename ET, typename Function>
+template<typename T, size_t ET, typename Function>
 Matrix<T, Dynamic, 1>
 check_eigs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
            const Function& level_set_function, hho_degree_info di,
@@ -452,7 +454,7 @@ check_eigs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cel
 
 
 
-template<typename T, typename ET>
+template<typename T, size_t ET>
 Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>
 make_hho_cut_stabilization(const cuthho_mesh<T, ET>& msh,
                            const typename cuthho_mesh<T, ET>::cell_type& cl,
@@ -468,20 +470,21 @@ make_hho_cut_stabilization(const cuthho_mesh<T, ET>& msh,
     auto fbs = face_basis<cuthho_mesh<T, ET>,T>::size(facdeg);
 
     auto fcs = faces(msh, cl);
+    auto num_faces = fcs.size();
 
-    Matrix<T, Dynamic, Dynamic> data = Matrix<T, Dynamic, Dynamic>::Zero(cbs+4*fbs, cbs+4*fbs);
+    Matrix<T, Dynamic, Dynamic> data = Matrix<T, Dynamic, Dynamic>::Zero(cbs+num_faces*fbs, cbs+num_faces*fbs);
     Matrix<T, Dynamic, Dynamic> If = Matrix<T, Dynamic, Dynamic>::Identity(fbs, fbs);
 
     cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, celdeg);
 
     auto hT = measure(msh, cl);
 
-    for (size_t i = 0; i < 4; i++)
+    for (size_t i = 0; i < num_faces; i++)
     {
         auto fc = fcs[i];
         face_basis<cuthho_mesh<T, ET>,T> fb(msh, fc, facdeg);
 
-        Matrix<T, Dynamic, Dynamic> oper = Matrix<T, Dynamic, Dynamic>::Zero(fbs, cbs+4*fbs);
+        Matrix<T, Dynamic, Dynamic> oper = Matrix<T, Dynamic, Dynamic>::Zero(fbs, cbs+num_faces*fbs);
         Matrix<T, Dynamic, Dynamic> mass = Matrix<T, Dynamic, Dynamic>::Zero(fbs, fbs);
         Matrix<T, Dynamic, Dynamic> trace = Matrix<T, Dynamic, Dynamic>::Zero(fbs, cbs);
 
@@ -508,7 +511,7 @@ make_hho_cut_stabilization(const cuthho_mesh<T, ET>& msh,
     return data;
 }
 
-template<typename T, typename ET, typename F1, typename F2, typename F3>
+template<typename T, size_t ET, typename F1, typename F2, typename F3>
 Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, 1>
 make_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
          size_t degree, const F1& f, const element_location where, const F2& level_set_function, const F3& bcs)
@@ -566,7 +569,7 @@ std::string quiver(const point<T,2>& p, const Eigen::Matrix<T,2,1>& v)
     return ss.str();
 }
 
-template<typename T, typename ET, typename Function1, typename Function2>
+template<typename T, size_t ET, typename Function1, typename Function2>
 std::pair<T, T>
 test_integration(const cuthho_mesh<T, ET>& msh, const Function1& f, const Function2& level_set_function)
 {
@@ -732,15 +735,15 @@ run_cuthho(const Mesh& msh, const Function& level_set_function, size_t degree)
 
 
     /************** DEFINE PROBLEM RHS, SOLUTION AND BCS **************/
-    auto rhs_fun = [](const typename cuthho_quad_mesh<RealType>::point_type& pt) -> RealType {
+    auto rhs_fun = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
         return 2.0 * M_PI * M_PI * std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
     };
 
-    auto sol_fun = [](const typename cuthho_quad_mesh<RealType>::point_type& pt) -> RealType {
+    auto sol_fun = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
         return std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
     };
 
-    auto sol_grad = [](const typename cuthho_quad_mesh<RealType>::point_type& pt) -> auto {
+    auto sol_grad = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> auto {
         Matrix<RealType, 1, 2> ret;
 
         ret(0) = M_PI * std::cos(M_PI*pt.x()) * std::sin(M_PI*pt.y());
@@ -749,7 +752,7 @@ run_cuthho(const Mesh& msh, const Function& level_set_function, size_t degree)
         return ret;
     };
 
-    auto bcs_fun = [&](const typename cuthho_quad_mesh<RealType>::point_type& pt) -> RealType {
+    auto bcs_fun = [&](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
         return sol_fun(pt);
     };
 
@@ -838,10 +841,10 @@ run_cuthho(const Mesh& msh, const Function& level_set_function, size_t degree)
     size_t      cell_i   = 0;
     for (auto& cl : msh.cells)
     {
-        cell_basis<cuthho_quad_mesh<RealType>, RealType> cb(msh, cl, hdi.cell_degree());
+        cell_basis<cuthho_poly_mesh<RealType>, RealType> cb(msh, cl, hdi.cell_degree());
         auto cbs = cb.size();
 
-        cell_basis<cuthho_quad_mesh<RealType>, RealType> rb(msh, cl, hdi.reconstruction_degree());
+        cell_basis<cuthho_poly_mesh<RealType>, RealType> rb(msh, cl, hdi.reconstruction_degree());
         auto rbs = rb.size();
 
         auto gr = make_hho_laplacian(msh, cl, level_set_function, hdi, where);
@@ -895,9 +898,11 @@ run_cuthho(const Mesh& msh, const Function& level_set_function, size_t degree)
         }
         */
 
-        auto tps = make_test_points(msh, cl, level_set_function, element_location::IN_NEGATIVE_SIDE);
-        for (auto& tp : tps)
+        //auto tps = make_test_points(msh, cl, level_set_function, element_location::IN_NEGATIVE_SIDE);
+        auto qps = integrate(msh, cl, 8, element_location::IN_NEGATIVE_SIDE);
+        for (auto& qp : qps)
         {
+            auto tp = qp.first;
             auto t_phi = rb.eval_basis( tp );
 
             uT_gp->add_data( tp, cell_dofs.dot(t_phi) );
@@ -1047,7 +1052,7 @@ int main(int argc, char **argv)
 
     /************** BUILD MESH **************/
     tc.tic();
-    cuthho_quad_mesh<RealType> msh(mip);
+    cuthho_poly_mesh<RealType> msh(mip);
     tc.toc();
     std::cout << bold << yellow << "Mesh generation: " << tc << " seconds" << reset << std::endl;
     /************** LEVEL SET FUNCTION **************/

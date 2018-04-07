@@ -24,7 +24,7 @@
 #include <iterator>
 #include "cuthho_mesh.hpp"
 
-template<typename T, typename ET>
+template<typename T, size_t ET>
 bool
 is_cut(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl)
 {
@@ -32,7 +32,7 @@ is_cut(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_ty
     return cl.user_data.location == element_location::ON_INTERFACE;
 }
 
-template<typename T, typename ET>
+template<typename T, size_t ET>
 bool
 is_cut(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::face_type& fc)
 {
@@ -40,7 +40,7 @@ is_cut(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::face_ty
     return fc.user_data.location == element_location::ON_INTERFACE;
 }
 
-template<typename T, typename ET>
+template<typename T, size_t ET>
 element_location
 location(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl)
 {
@@ -48,7 +48,7 @@ location(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_
     return cl.user_data.location;
 }
 
-template<typename T, typename ET>
+template<typename T, size_t ET>
 element_location
 location(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::face_type& fc)
 {
@@ -56,7 +56,7 @@ location(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::face_
     return fc.user_data.location;
 }
 
-template<typename T, typename ET>
+template<typename T, size_t ET>
 element_location
 location(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::node_type& n)
 {
@@ -115,7 +115,7 @@ find_zero_crossing(const point<T,2>& p0, const point<T,2>& p1, const Function& l
     //auto ip = (pts[1] - pts[0]) * t + pts[0];
 }
 
-template<typename T, typename ET, typename Function>
+template<typename T, size_t ET, typename Function>
 void
 detect_node_position(cuthho_mesh<T, ET>& msh, const Function& level_set_function)
 {
@@ -129,7 +129,7 @@ detect_node_position(cuthho_mesh<T, ET>& msh, const Function& level_set_function
     }
 }
 
-template<typename T, typename ET, typename Function>
+template<typename T, size_t ET, typename Function>
 void
 detect_cut_faces(cuthho_mesh<T, ET>& msh, const Function& level_set_function)
 {
@@ -160,7 +160,7 @@ detect_cut_faces(cuthho_mesh<T, ET>& msh, const Function& level_set_function)
     }
 }
 
-template<typename T, typename ET, typename Function>
+template<typename T, size_t ET, typename Function>
 void
 detect_cut_cells(cuthho_mesh<T, ET>& msh, const Function& level_set_function)
 {
@@ -230,7 +230,7 @@ detect_cut_cells(cuthho_mesh<T, ET>& msh, const Function& level_set_function)
 //#define USE_OLD_DISPLACEMENT
 
 #ifdef USE_OLD_DISPLACEMENT
-template<typename T, typename ET, typename Function>
+template<typename T, size_t ET, typename Function>
 void
 move_nodes(cuthho_mesh<T, ET>& msh, const Function& level_set_function)
 {
@@ -311,7 +311,7 @@ move_nodes(cuthho_mesh<T, ET>& msh, const Function& level_set_function)
 
 #else
 
-template<typename T, typename ET, typename Function>
+template<typename T, size_t ET, typename Function>
 void
 move_nodes(cuthho_mesh<T, ET>& msh, const Function& level_set_function)
 {
@@ -392,7 +392,7 @@ move_nodes(cuthho_mesh<T, ET>& msh, const Function& level_set_function)
 
 #endif
 
-template<typename T, typename ET>
+template<typename T, size_t ET>
 std::array< typename cuthho_mesh<T, ET>::point_type, 2 >
 points(const cuthho_mesh<T, ET>& msh,
        const typename cuthho_mesh<T, ET>::face_type& fc,
@@ -439,7 +439,7 @@ barycenter(const std::vector< point<T, 2> >& pts)
     return barycenter(pts.begin(), pts.end());
 }
 
-template<typename T, typename ET>
+template<typename T, size_t ET>
 auto
 barycenter(const cuthho_mesh<T, ET>& msh,
            const typename cuthho_mesh<T, ET>::cell_type& cl,
@@ -454,7 +454,7 @@ barycenter(const cuthho_mesh<T, ET>& msh,
     return bar;
 }
 
-template<typename T, typename ET, typename Function>
+template<typename T, size_t ET, typename Function>
 void
 refine_interface(cuthho_mesh<T, ET>& msh, typename cuthho_mesh<T, ET>::cell_type& cl,
                  const Function& level_set_function, size_t min, size_t max)
@@ -498,7 +498,7 @@ refine_interface(cuthho_mesh<T, ET>& msh, typename cuthho_mesh<T, ET>::cell_type
     refine_interface(msh, cl, level_set_function, mid, max);
 }
 
-template<typename T, typename ET, typename Function>
+template<typename T, size_t ET, typename Function>
 void
 refine_interface(cuthho_mesh<T, ET>& msh, const Function& level_set_function, size_t levels)
 {
@@ -520,7 +520,7 @@ refine_interface(cuthho_mesh<T, ET>& msh, const Function& level_set_function, si
     }
 }
 
-template<typename T, typename ET>
+template<typename T, size_t ET>
 std::vector< typename cuthho_mesh<T, ET>::point_type >
 collect_triangulation_points(const cuthho_mesh<T, ET>& msh,
                              const typename cuthho_mesh<T, ET>::cell_type& cl,
@@ -599,7 +599,7 @@ operator<<(std::ostream& os, const temp_tri<T>& t)
     return os;
 }
 
-template<typename T, typename ET>
+template<typename T, size_t ET>
 std::vector<temp_tri<T>>
 triangulate(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
             element_location where)
@@ -624,7 +624,7 @@ triangulate(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::ce
     return tris;
 }
 
-template<typename T, typename ET>
+template<typename T, size_t ET>
 T
 measure(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
         const element_location& where)
@@ -643,7 +643,7 @@ measure(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_t
     return totmeas;
 }
 
-template<typename T, typename ET>
+template<typename T, size_t ET>
 std::vector< std::pair<point<T,2>, T> >
 integrate(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
           size_t degree, const element_location& where)
@@ -662,7 +662,7 @@ integrate(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell
     return ret;
 }
 
-template<typename T, typename ET>
+template<typename T, size_t ET>
 std::vector< std::pair<point<T,2>, T> >
 integrate(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::face_type& fc,
           size_t degree, const element_location& where)
@@ -696,7 +696,7 @@ integrate(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::face
     return ret;
 }
 
-template<typename T, typename ET>
+template<typename T, size_t ET>
 std::vector< std::pair<point<T,2>, T> >
 integrate_interface(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
                     size_t degree, element_location where)
@@ -782,7 +782,7 @@ make_test_points(const cuthho_quad_mesh<T>& msh, const typename cuthho_quad_mesh
 
 
 
-template<typename T, typename ET>
+template<typename T, size_t ET>
 void dump_mesh(const cuthho_mesh<T, ET>& msh)
 {
     std::ofstream ofs("mesh_dump.m");

@@ -85,7 +85,8 @@ public:
     bool add_mesh(const Mesh& msh, const std::string& name)
     {
         using T = typename Mesh::coordinate_type;
-        static_assert(std::is_same<T, double>::value, "Only double for now");
+
+        static_assert(std::is_same<T,double>::value, "Only double for now");
 
         std::vector<T> x_coords, y_coords;
         x_coords.reserve(msh.points.size());
@@ -104,23 +105,32 @@ public:
 
         for (auto& cl : msh.cells)
         {
-            for (auto& ptid : cl.ptids)
-                nodelist.push_back(ptid+1);
+            auto ptids = cl.ptids;
+            auto size = ptids.size();
+            assert(size > 2);
+            for (auto& ptid : ptids)
+                nodelist.push_back(ptid+1); // Silo wants 1-based indices
         }
 
         int lnodelist       = nodelist.size();
-        int nshapetypes     = 1;
-        int shapesize       = 4;
-        int shapecount      = msh.cells.size();
+        int nshapetypes     = msh.cells.size();
 
+        std::vector<int> shapesize, shapecount;
+        for (auto& cl : msh.cells)
+        {
+            auto fcs = faces(msh, cl);
+            shapesize.push_back( fcs.size() );
+            shapecount.push_back(1);
+        };
 
         int nnodes = msh.points.size();
         int nzones = msh.cells.size();
         int ndims = 2;
 
         DBSetDeprecateWarnings(0);
+
         DBPutZonelist(m_siloDb, "zonelist", nzones, ndims, nodelist.data(), lnodelist,
-            1, &shapesize, &shapecount, nshapetypes);
+            1, shapesize.data(), shapecount.data(), nshapetypes);
 
         DBPutUcdmesh(m_siloDb, name.c_str(), ndims, NULL, coords, nnodes, nzones,
             "zonelist", NULL, DB_DOUBLE, NULL);

@@ -43,6 +43,8 @@ template<>
 struct mesh_element<void>
 {};
 
+struct dynamic_storage;
+
 template<typename UserData, size_t N>
 struct cell : public mesh_element<UserData> {
     std::array<size_t, N>   ptids;
@@ -60,6 +62,27 @@ struct cell : public mesh_element<UserData> {
         return (this->ptids == other.ptids);
     }
 };
+
+template<typename UserData>
+struct cell<UserData, 0> : public mesh_element<UserData> {
+    std::vector<size_t>   ptids;
+
+    cell()
+    {}
+
+    bool operator<(const cell& other) const
+    {
+        return (this->ptids < other.ptids);
+    }
+
+    bool operator==(const cell& other) const
+    {
+        return (this->ptids == other.ptids);
+    }
+};
+
+template<typename UserData = void>
+using poly_cell = cell<UserData, 0>;
 
 template<typename UserData = void>
 using quad_cell = cell<UserData, 4>;
@@ -177,17 +200,17 @@ struct mesh_init_params {
 
 struct elem_simplex;
 struct elem_quad;
-struct elem_mixed;
+struct elem_poly;
 
-template<typename T, typename KT, typename CellUD = void, typename FaceUD = void, typename NodeUD = void>
+template<typename T, size_t ElemType, typename CellUD = void, typename FaceUD = void, typename NodeUD = void>
 struct mesh_impl;
 
 
 template<typename T, typename CellUD, typename FaceUD, typename NodeUD>
-struct mesh_impl<T, elem_quad, CellUD, FaceUD, NodeUD> {
+struct mesh_impl<T, 4, CellUD, FaceUD, NodeUD> {
 
     typedef point<T,2>          point_type;
-    typedef quad_cell<CellUD>   cell_type;
+    typedef cell<CellUD, 4>     cell_type;
     typedef face<FaceUD>        face_type;
     typedef node<NodeUD>        node_type;
     typedef CellUD              cell_ud_type;
@@ -274,14 +297,178 @@ struct mesh_impl<T, elem_quad, CellUD, FaceUD, NodeUD> {
     }
 };
 
+template<typename T, typename CellUD, typename FaceUD, typename NodeUD>
+struct mesh_impl<T, 0, CellUD, FaceUD, NodeUD> {
 
-template<typename T, typename ET, typename CellUD = void, typename FaceUD = void, typename NodeUD = void>
-using mesh = mesh_impl<T, ET, CellUD, FaceUD, NodeUD>;
+    typedef point<T,2>          point_type;
+    typedef cell<CellUD, 0>     cell_type;
+    typedef face<FaceUD>        face_type;
+    typedef node<NodeUD>        node_type;
+    typedef CellUD              cell_ud_type;
+    typedef FaceUD              face_ud_type;
+    typedef NodeUD              node_ud_type;
+    typedef T                   coordinate_type;
+
+    std::vector<point_type>     points;
+    std::vector<node_type>      nodes;
+    std::vector<face_type>      faces;
+    std::vector<cell_type>      cells;
+
+    mesh_impl() : mesh_impl( mesh_init_params<T>() )
+    {}
+
+    mesh_impl(const mesh_init_params<T>& parms)
+    {
+        auto hx = parms.hx();
+        auto hy = parms.hy();
+
+        size_t numpoints = (parms.Nx + 1) * (parms.Ny + 1);
+        points.reserve(numpoints);
+
+        size_t point_num = 0;
+        for (size_t j = 0; j < parms.Ny+1; j++)
+        {
+            for(size_t i = 0; i < parms.Nx+1; i++)
+            {
+                auto px = parms.min_x + i*hx;
+                auto py = parms.min_y + j*hy;
+                point_type pt(px, py);
+                points.push_back(pt);
+                node_type n;
+                n.ptid = point_num++;
+                nodes.push_back(n);
+            }
+        }
+
+        for (size_t j = 0; j < parms.Ny; j++)
+        {
+            for (size_t i = 0; i < parms.Nx; i++)
+            {
+                auto pt0_idx = j*(parms.Nx+1) + i;
+                auto pt1_idx = pt0_idx + 1;
+                auto pt2_idx = pt0_idx + parms.Nx + 2;
+                auto pt3_idx = pt0_idx + parms.Nx + 1;
+
+                cell_type cl;
+                cl.ptids = {{pt0_idx, pt1_idx, pt2_idx, pt3_idx}};
+                cells.push_back(cl);
+
+                face_type f0;
+                f0.ptids = {pt0_idx, pt1_idx};
+                if (j == 0) f0.is_boundary = true;
+                faces.push_back(f0);
+
+                face_type f1;
+                f1.ptids = {pt1_idx, pt2_idx};
+                if (i == parms.Nx-1) f1.is_boundary = true;
+                faces.push_back(f1);
+
+                face_type f2;
+                f2.ptids = {pt3_idx, pt2_idx};
+                if (j == parms.Ny-1) f2.is_boundary = true;
+                faces.push_back(f2);
+
+                face_type f3;
+                f3.ptids = {pt0_idx, pt3_idx};
+                if (i == 0) f3.is_boundary = true;
+                faces.push_back(f3);
+
+            }
+        }
+
+        std::sort(cells.begin(), cells.end());
+        std::sort(faces.begin(), faces.end());
+        faces.erase( std::unique(faces.begin(), faces.end()), faces.end() );
+
+        for (auto& fc : faces)
+        {
+            if (fc.is_boundary)
+                fc.bndtype = boundary::DIRICHLET;
+        }
+    }
+
+    mesh_impl(const std::string& filename)
+    {
+        std::ifstream ifs(filename);
+
+        size_t num_elems, num_nodes, node, dummy;
+        T x, y;
+
+        ifs >> num_elems;
+        for (size_t i = 0; i < num_elems; i++)
+        {
+            ifs >> x >> y;
+            point_type pt({x, y});
+            points.push_back(pt);
+
+            node_type n;
+            n.ptid = i;
+            nodes.push_back(n);
+        }
+
+        ifs >> num_elems;
+        for (size_t i = 0; i < num_elems; i++)
+        {
+            ifs >> num_nodes;
+            ifs >> dummy;
+
+            cell_type c;
+            for (size_t j = 0; j < num_nodes; j++)
+            {
+                ifs >> node;
+                c.ptids.push_back(node);
+            }
+            cells.push_back(c);
+
+            auto npts = c.ptids.size();
+            for (size_t j = 0; j < npts; j++)
+            {
+                face_type f;
+                f.ptids[0] = c.ptids[j];
+                f.ptids[1] = c.ptids[(j+1)%npts];
+
+                if (f.ptids[1] < f.ptids[0])
+                    std::swap(f.ptids[0], f.ptids[1]);
+
+                faces.push_back(f);
+            }
+        }
+
+        std::sort(cells.begin(), cells.end());
+        std::sort(faces.begin(), faces.end());
+        faces.erase( std::unique(faces.begin(), faces.end()), faces.end() );
+
+        ifs >> num_elems;
+        for (size_t i = 0; i < num_elems; i++)
+        {
+            ifs >> dummy;
+
+            face_type f;
+            ifs >> f.ptids[0];
+            ifs >> f.ptids[1];
+
+            
+            auto af = std::lower_bound(faces.begin(), faces.end(), f);
+            if (af == faces.end())
+                throw std::invalid_argument("Invalid face");
+
+            (*af).is_boundary = true;
+            (*af).bndtype = boundary::DIRICHLET;
+        }
+
+        ifs.close();
+    }
+};
+
+
+template<typename T, size_t ElemType, typename CellUD = void, typename FaceUD = void, typename NodeUD = void>
+using mesh = mesh_impl<T, ElemType, CellUD, FaceUD, NodeUD>;
 
 template<typename T, typename CellUD = void, typename FaceUD = void, typename NodeUD = void>
-using quad_mesh = mesh_impl<T, elem_quad, CellUD, FaceUD, NodeUD>;
+using quad_mesh = mesh_impl<T, 4, CellUD, FaceUD, NodeUD>;
 
-
+template<typename T, typename CellUD = void, typename FaceUD = void, typename NodeUD = void>
+using poly_mesh = mesh_impl<T, 0, CellUD, FaceUD, NodeUD>;
 
 #if 0
 

@@ -273,9 +273,10 @@ int test_method_convergence(const convergence_test_params& ctp)
                     errors_mm.at(i) += diff.dot(mass*diff);
                 }
 
-                auto tps = make_test_points(msh, cl);
-                for (auto& tp : tps)
+                //auto tps = make_test_points(msh, cl);
+                for (auto& qp : qps)
                 {
+                    auto tp = qp.first;
                     auto phi = cb.eval_basis(tp);
                     auto val = cdofs.dot(phi);
                     sol_ofs << tp.x() << " " << tp.y() << " " << val << std::endl;

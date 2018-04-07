@@ -22,7 +22,7 @@
 
 #pragma once
 
-template<typename T, typename ET>
+template<typename T, size_t ET>
 Matrix<T, Dynamic, Dynamic>
 make_mass_matrix(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
                  size_t degree, element_location where)
@@ -42,7 +42,7 @@ make_mass_matrix(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET
     return ret;
 }
 
-template<typename T, typename ET>
+template<typename T, size_t ET>
 Matrix<T, Dynamic, Dynamic>
 make_mass_matrix(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::face_type& fc,
                  size_t degree, element_location where)
@@ -62,7 +62,7 @@ make_mass_matrix(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET
     return ret;
 }
 
-template<typename T, typename ET, typename Function>
+template<typename T, size_t ET, typename Function>
 Matrix<T, Dynamic, 1>
 make_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
          size_t degree, element_location where, const Function& f)
@@ -83,7 +83,7 @@ make_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_
     return ret;
 }
 
-template<typename T, typename ET, typename Function>
+template<typename T, size_t ET, typename Function>
 Matrix<T, Dynamic, 1>
 make_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::face_type& fc,
          size_t degree, element_location where, const Function& f)
@@ -104,7 +104,7 @@ make_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::face_
     return ret;
 }
 
-template<typename T, typename ET, typename Function>
+template<typename T, size_t ET, typename Function>
 Matrix<T, Dynamic, 1>
 project_function(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
                  hho_degree_info hdi, element_location where, const Function& f)
@@ -112,7 +112,10 @@ project_function(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET
     auto cbs = cell_basis<cuthho_mesh<T, ET>,T>::size(hdi.cell_degree());
     auto fbs = face_basis<cuthho_mesh<T, ET>,T>::size(hdi.face_degree());
 
-    Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs+4*fbs);
+    auto fcs = faces(msh, cl);
+    auto num_faces = fcs.size();
+
+    Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs+num_faces*fbs);
 
     if ( location(msh, cl) != element_location::ON_INTERFACE &&
          location(msh, cl) != where )
@@ -122,8 +125,7 @@ project_function(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET
     Matrix<T, Dynamic, 1> cell_rhs = make_rhs(msh, cl, hdi.cell_degree(), where, f);
     ret.block(0, 0, cbs, 1) = cell_mm.llt().solve(cell_rhs);
 
-    auto fcs = faces(msh, cl);
-    for (size_t i = 0; i < 4; i++)
+    for (size_t i = 0; i < num_faces; i++)
     {
         auto fc = fcs[i];
 
