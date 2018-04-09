@@ -625,7 +625,7 @@ public:
         auto cell_LHS_offset    = A_ct.at(cell_offset) * cbs;
         bool cell_needs_asm_A   = !is_in_set_A.at(cell_offset);
         bool cell_needs_asm_B   = is_in_set_A.at(cell_offset);
-        
+
         for (size_t i = 0; i < cbs; i++)
         {
             asm_map_row.push_back( assembly_index(cell_offset+i, true) );
@@ -680,8 +680,8 @@ public:
                 }
             }
         }
-        
-        
+
+
         /* Needed both in case A and I */
         RHS.block(cell_offset, 0, cbs, 1) += rhs.block(0, 0, cbs, 1);
 
@@ -694,7 +694,7 @@ public:
 
     } // assemble_A()
 
-    
+
     template<typename Function>
     void
     expand_solution(const Mesh& msh,
@@ -742,7 +742,7 @@ public:
             }
         }
     }
-    
+
     void finalize(void)
     {
         LHS.setFromTriplets( triplets.begin(), triplets.end() );

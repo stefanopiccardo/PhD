@@ -227,6 +227,44 @@ detect_cut_cells(cuthho_mesh<T, ET>& msh, const Function& level_set_function)
     }
 }
 
+/* this creates Delta(T) */
+template<typename T, size_t ET>
+void
+make_neighbors_info(cuthho_mesh<T, ET>& msh)
+{
+    for (size_t i = 0; i < msh.cells.size(); i++)
+    {
+        for (size_t j = i+1; j < msh.cells.size(); j++)
+        {
+            auto &cl1 = msh.cells.at(i);
+            auto &cl2 = msh.cells.at(j);
+
+            bool are_neighbors = false;
+
+            for (size_t ip = 0; ip < cl1.ptids.size(); ip++)
+                for (size_t jp = 0; jp < cl2.ptids.size(); jp++)
+                    if ( cl1.ptids[ip] == cl2.ptids[jp] )
+                        are_neighbors = true;
+
+            if ( !are_neighbors )
+                continue;
+
+            auto ofs_cl1 = offset(msh, cl1);
+            auto ofs_cl2 = offset(msh, cl2);
+
+            cl1.user_data.neighbors.insert(ofs_cl2);
+            cl2.user_data.neighbors.insert(ofs_cl1);
+        }
+    }
+
+    for (auto& cl : msh.cells)
+    {
+        for (auto& n : cl.user_data.neighbors)
+            std::cout << n << " ";
+        std::cout << std::endl;
+    }
+}
+
 //#define USE_OLD_DISPLACEMENT
 
 #ifdef USE_OLD_DISPLACEMENT
@@ -290,7 +328,7 @@ move_nodes(cuthho_mesh<T, ET>& msh, const Function& level_set_function)
             continue;
 
         auto pts = points(msh, cl);
-        
+
         if (pts.size() < 4)
             continue;
 
@@ -368,7 +406,7 @@ move_nodes(cuthho_mesh<T, ET>& msh, const Function& level_set_function)
             continue;
 
         auto pts = points(msh, cl);
-        
+
         if (pts.size() < 4)
             continue;
 
