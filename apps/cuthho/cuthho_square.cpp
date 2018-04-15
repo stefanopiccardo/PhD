@@ -379,10 +379,6 @@ make_hho_laplacian(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, 
             auto r_dphi = r_dphi_tmp.block(0, 0, rbs, 2);
             gr_rhs.block(0, cbs+i*fbs, rbs, fbs) += qp.second * (r_dphi * n) * f_phi.transpose();
             gr_rhs.block(0, 0, rbs, cbs) -= qp.second * (r_dphi * n) * c_phi.transpose();
-
-            //gr_lhs.block(rbs, 0, 1, cbs) += c_phi.transpose();
-            //gr_lhs.block(0, rbs, cbs, 1) += c_phi;
-            //gr_rhs.block(rbs, 0, 1, cbs) += c_phi.transpose();
         }
     }
 
@@ -391,6 +387,120 @@ make_hho_laplacian(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, 
     return std::make_pair(oper, data);
 }
 
+template<typename T, size_t ET, typename Function>
+std::pair<   Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>,
+             Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>  >
+make_hho_laplacian_interface(const cuthho_mesh<T, ET>& msh,
+    const typename cuthho_mesh<T, ET>::cell_type& cl,
+    const Function& level_set_function, hho_degree_info di)
+{
+
+    if ( !is_cut(msh, cl) )
+        throw std::invalid_argument("The cell is not cut");
+
+    auto recdeg = di.reconstruction_degree();
+    auto celdeg = di.cell_degree();
+    auto facdeg = di.face_degree();
+
+    cell_basis<cuthho_mesh<T, ET>,T>     cb(msh, cl, recdeg);
+
+    auto rbs = cell_basis<cuthho_mesh<T, ET>,T>::size(recdeg);
+    auto cbs = cell_basis<cuthho_mesh<T, ET>,T>::size(celdeg);
+    auto fbs = face_basis<cuthho_mesh<T, ET>,T>::size(facdeg);
+
+    auto fcs = faces(msh, cl);
+    auto num_faces = fcs.size();
+
+    Matrix<T, Dynamic, Dynamic> stiff = Matrix<T, Dynamic, Dynamic>::Zero(2*rbs, 2*rbs);
+    Matrix<T, Dynamic, Dynamic> gr_lhs = Matrix<T, Dynamic, Dynamic>::Zero(2*rbs, 2*rbs);
+    Matrix<T, Dynamic, Dynamic> gr_rhs = Matrix<T, Dynamic, Dynamic>::Zero(2*rbs, 2*(cbs + num_faces*fbs));
+
+    /* Cell term (cut) */
+
+    auto qps_n = integrate(msh, cl, 2*recdeg, element_location::IN_NEGATIVE_SIDE);
+    for (auto& qp : qps_n)
+    {
+        auto dphi = cb.eval_gradients(qp.first);
+        stiff.block(0,0,rbs,rbs) += qp.second * dphi * dphi.transpose();
+    }
+
+    auto qps_p = integrate(msh, cl, 2*recdeg, element_location::IN_POSITIVE_SIDE);
+    for (auto& qp : qps_p)
+    {
+        auto dphi = cb.eval_gradients(qp.first);
+        stiff.block(rbs,rbs,rbs,rbs) += qp.second * dphi * dphi.transpose();
+    }
+
+    auto hT = measure(msh, cl);
+
+    /* Interface term */
+    auto iqps = integrate_interface(msh, cl, 2*recdeg, element_location::IN_NEGATIVE_SIDE);
+    for (auto& qp : iqps)
+    {
+        auto phi        = cb.eval_basis(qp.first);
+        auto dphi       = cb.eval_gradients(qp.first);
+        Matrix<T,2,1> n = level_set_function.normal(qp.first);
+
+        Matrix<T, Dynamic, Dynamic> a = qp.second * phi * (dphi * n).transpose();
+        Matrix<T, Dynamic, Dynamic> b = qp.second * (dphi * n) * phi.transpose();
+        Matrix<T, Dynamic, Dynamic> c = qp.second * phi * phi.transpose() * cell_eta(msh, cl) / hT;
+
+        stiff.block(  0,   0, rbs, rbs) -= a;
+        stiff.block(rbs,   0, rbs, rbs) += a;
+
+        stiff.block(  0,   0, rbs, rbs) -= b;
+        stiff.block(  0, rbs, rbs, rbs) += b;
+        
+        stiff.block(  0,   0, rbs, rbs) += c;
+        stiff.block(  0, rbs, rbs, rbs) -= c;
+        stiff.block(rbs,   0, rbs, rbs) -= c;
+        stiff.block(rbs, rbs, rbs, rbs) += c;
+    }
+
+    stiff(0,0) += 1;
+    stiff(rbs, rbs) += 1;
+
+    gr_lhs = stiff;
+    gr_rhs.block(0,   0, 2*rbs, cbs) = stiff.block(0,   0, 2*rbs, cbs);
+    gr_rhs.block(0, cbs, 2*rbs, cbs) = stiff.block(0, rbs, 2*rbs, cbs);
+
+    auto ns = normals(msh, cl);
+    for (size_t i = 0; i < fcs.size(); i++)
+    {
+        auto fc = fcs[i];
+        auto n = ns[i];
+
+        face_basis<cuthho_mesh<T, ET>,T> fb(msh, fc, facdeg);
+        /* Terms on faces */
+        auto qps_n = integrate(msh, fc, 2*recdeg, element_location::IN_NEGATIVE_SIDE);
+        for (auto& qp : qps_n)
+        {
+            auto c_phi = cb.eval_basis(qp.first);
+            auto f_phi = fb.eval_basis(qp.first);
+            auto r_dphi = cb.eval_gradients(qp.first);
+
+            gr_rhs.block(0, 0, rbs, cbs) -= qp.second * (r_dphi * n) * c_phi.transpose();
+            size_t col_ofs = 2*cbs + i*fbs;
+            gr_rhs.block(0, col_ofs, rbs, fbs) += qp.second * (r_dphi * n) * f_phi.transpose();
+        }
+
+        auto qps_p = integrate(msh, fc, 2*recdeg, element_location::IN_POSITIVE_SIDE);
+        for (auto& qp : qps_p)
+        {
+            auto c_phi = cb.eval_basis(qp.first);
+            auto f_phi = fb.eval_basis(qp.first);
+            auto r_dphi = cb.eval_gradients(qp.first);
+
+            gr_rhs.block(rbs, cbs, rbs, cbs) -= qp.second * (r_dphi * n) * c_phi.transpose();
+            size_t col_ofs = 2*cbs + fbs*fcs.size() + i*fbs;
+            gr_rhs.block(rbs, col_ofs, rbs, fbs) += qp.second * (r_dphi * n) * f_phi.transpose();
+        }
+    }
+
+    Matrix<T, Dynamic, Dynamic> oper = gr_lhs.llt().solve(gr_rhs);
+    Matrix<T, Dynamic, Dynamic> data = gr_rhs.transpose() * oper;
+    return std::make_pair(oper, data);
+}
 
 template<typename T, size_t ET, typename Function>
 Matrix<T, Dynamic, 1>
@@ -702,7 +812,7 @@ run_cuthho_fictdom(const Mesh& msh, const Function& level_set_function, size_t d
 
     /************** OPEN SILO DATABASE **************/
     silo_database silo;
-    silo.create("cuthho_square.silo");
+    silo.create("cuthho_fictdom.silo");
     silo.add_mesh(msh, "mesh");
 
     /************** MAKE A SILO VARIABLE FOR CELL POSITIONING **************/
@@ -827,9 +937,9 @@ run_cuthho_fictdom(const Mesh& msh, const Function& level_set_function, size_t d
 
     postprocess_output<RealType>  postoutput;
 
-    auto uT_gp  = std::make_shared< gnuplot_output_object<RealType> >("solution_uT.dat");
-    auto Ru_gp  = std::make_shared< gnuplot_output_object<RealType> >("solution_Ru.dat");
-    auto diff_gp  = std::make_shared< gnuplot_output_object<RealType> >("difference.dat");
+    auto uT_gp  = std::make_shared< gnuplot_output_object<RealType> >("fictdom_uT.dat");
+    auto Ru_gp  = std::make_shared< gnuplot_output_object<RealType> >("fictdom_Ru.dat");
+    auto diff_gp  = std::make_shared< gnuplot_output_object<RealType> >("fictdom_diff.dat");
 
 
     std::vector<RealType>   solution_uT, solution_Ru, eigval_data;
@@ -898,7 +1008,7 @@ run_cuthho_fictdom(const Mesh& msh, const Function& level_set_function, size_t d
         */
 
         //auto tps = make_test_points(msh, cl, level_set_function, element_location::IN_NEGATIVE_SIDE);
-        auto qps = integrate(msh, cl, 8, element_location::IN_NEGATIVE_SIDE);
+        auto qps = integrate(msh, cl, 5/*, element_location::IN_NEGATIVE_SIDE*/);
         for (auto& qp : qps)
         {
             auto tp = qp.first;
@@ -1052,6 +1162,7 @@ public:
                 num_all_faces += 1;
         }
 
+        /* We assume that cut cells can not have dirichlet faces */
         auto num_dirichlet_faces = std::count_if(msh.faces.begin(), msh.faces.end(), is_dirichlet);
         auto num_other_faces = num_all_faces - num_dirichlet_faces;
 
@@ -1094,8 +1205,11 @@ public:
     void
     assemble(const Mesh& msh, const typename Mesh::cell_type& cl,
              const Matrix<T, Dynamic, Dynamic>& lhs, const Matrix<T, Dynamic, 1>& rhs,
-             const Function& dirichlet_bf, element_location loc)
+             const Function& dirichlet_bf)
     {
+        if (location(msh, cl) == element_location::ON_INTERFACE)
+            throw std::invalid_argument("UNcut cell expected.");
+
         auto celdeg = di.cell_degree();
         auto facdeg = di.face_degree();
 
@@ -1109,21 +1223,7 @@ public:
         asm_map.reserve(cbs + num_faces*fbs);
 
         auto cell_offset        = offset(msh, cl);
-
-        size_t cell_LHS_offset;
-        if ( location(msh, cl) == element_location::ON_INTERFACE )
-        {
-            if (loc == element_location::IN_NEGATIVE_SIDE)
-                cell_LHS_offset = cell_table.at(cell_offset) * cbs;
-            else if (loc == element_location::IN_POSITIVE_SIDE)
-                cell_LHS_offset = cell_table.at(cell_offset) * cbs + cbs;
-            else
-                throw std::invalid_argument("Invalid location");
-        }
-        else
-        {
-            cell_LHS_offset = cell_table.at(cell_offset) * cbs;
-        }
+        auto cell_LHS_offset = cell_table.at(cell_offset) * cbs;
 
         for (size_t i = 0; i < cbs; i++)
             asm_map.push_back( assembly_index(cell_LHS_offset+i, true) );
@@ -1134,20 +1234,7 @@ public:
         {
             auto fc = fcs[face_i];
             auto face_offset = offset(msh, fc);
-            size_t face_LHS_offset;
-            if ( location(msh, fc) == element_location::ON_INTERFACE )
-            {
-                if (loc == element_location::IN_NEGATIVE_SIDE)
-                    face_LHS_offset = num_all_cells * cbs + face_table.at(face_offset) * fbs;
-                else if (loc == element_location::IN_POSITIVE_SIDE)
-                    face_LHS_offset = num_all_cells * cbs + face_table.at(face_offset) * fbs + fbs;
-                else
-                    throw std::invalid_argument("Invalid location");
-            }
-            else
-            {
-                face_LHS_offset = num_all_cells * cbs + face_table.at(face_offset) * fbs;
-            }
+            auto face_LHS_offset = num_all_cells * cbs + face_table.at(face_offset) * fbs;
 
             bool dirichlet = fc.is_boundary && fc.bndtype == boundary::DIRICHLET;
 
@@ -1179,7 +1266,94 @@ public:
         }
 
         RHS.block(cell_LHS_offset, 0, cbs, 1) += rhs.block(0, 0, cbs, 1);
+
+        for (auto& am : asm_map)
+            std::cout << am << " ";
+        std::cout << std::endl;
     } // assemble()
+
+    void
+    assemble_cut(const Mesh& msh, const typename Mesh::cell_type& cl,
+             const Matrix<T, Dynamic, Dynamic>& lhs, const Matrix<T, Dynamic, 1>& rhs)
+    {
+        if (location(msh, cl) != element_location::ON_INTERFACE)
+            throw std::invalid_argument("Cut cell expected.");
+
+        auto celdeg = di.cell_degree();
+        auto facdeg = di.face_degree();
+
+        auto cbs = cell_basis<Mesh,T>::size(celdeg);
+        auto fbs = face_basis<Mesh,T>::size(facdeg);
+
+        auto fcs = faces(msh, cl);
+        auto num_faces = fcs.size();
+
+        std::vector<assembly_index> asm_map;
+        asm_map.reserve( 2*(cbs + num_faces*fbs) );
+
+        auto cell_offset = offset(msh, cl);
+        auto cell_LHS_offset = cell_table.at(cell_offset) * cbs;
+
+        for (size_t i = 0; i < 2*cbs; i++)
+            asm_map.push_back( assembly_index(cell_LHS_offset+i, true) );
+
+        for (size_t face_i = 0; face_i < num_faces; face_i++)
+        {
+            auto fc = fcs[face_i];
+            auto face_offset = offset(msh, fc);
+            auto face_LHS_offset = num_all_cells * cbs + face_table.at(face_offset) * fbs;
+
+            bool dirichlet = fc.is_boundary && fc.bndtype == boundary::DIRICHLET;
+            if ( dirichlet )
+                throw std::invalid_argument("Dirichlet boundary on cut cell not supported.");
+
+            bool c1 = location(msh, fc) == element_location::IN_NEGATIVE_SIDE;
+            bool c2 = location(msh, fc) == element_location::ON_INTERFACE;
+            for (size_t i = 0; i < fbs; i++)
+                asm_map.push_back( assembly_index(face_LHS_offset+i, true) );
+        }
+
+        for (size_t face_i = 0; face_i < num_faces; face_i++)
+        {
+            auto fc = fcs[face_i];
+            auto face_offset = offset(msh, fc);
+
+            auto d = (location(msh, fc) == element_location::ON_INTERFACE) ? fbs : 0;
+
+            auto face_LHS_offset = num_all_cells * cbs + face_table.at(face_offset) * fbs + d;
+
+            bool dirichlet = fc.is_boundary && fc.bndtype == boundary::DIRICHLET;
+            if ( dirichlet )
+                throw std::invalid_argument("Dirichlet boundary on cut cell not supported.");
+
+            bool c1 = location(msh, fc) == element_location::IN_POSITIVE_SIDE;
+            bool c2 = location(msh, fc) == element_location::ON_INTERFACE;
+            for (size_t i = 0; i < fbs; i++)
+                asm_map.push_back( assembly_index(face_LHS_offset+i, true) );
+        }
+
+        assert( asm_map.size() == lhs.rows() && asm_map.size() == lhs.cols() );
+
+        for (size_t i = 0; i < lhs.rows(); i++)
+        {
+            if (!asm_map[i].assemble())
+                continue;
+
+            for (size_t j = 0; j < lhs.cols(); j++)
+            {
+                if ( asm_map[j].assemble() )
+                    triplets.push_back( Triplet<T>(asm_map[i], asm_map[j], lhs(i,j)) );
+            }
+        }
+
+        RHS.block(cell_LHS_offset, 0, 2*cbs, 1) += rhs.block(0, 0, 2*cbs, 1);
+
+        for (auto& am : asm_map)
+            std::cout << am << " ";
+        std::cout << std::endl;
+
+    } // assemble_cut()
+
 
     template<typename Function>
     Matrix<T, Dynamic, 1>
@@ -1292,7 +1466,7 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
 
     /************** OPEN SILO DATABASE **************/
     silo_database silo;
-    silo.create("cuthho_square.silo");
+    silo.create("cuthho_interface.silo");
     silo.add_mesh(msh, "mesh");
 
     /************** MAKE A SILO VARIABLE FOR CELL POSITIONING **************/
@@ -1326,10 +1500,13 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
     /************** DEFINE PROBLEM RHS, SOLUTION AND BCS **************/
     auto rhs_fun = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
         return 2.0 * M_PI * M_PI * std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
+        //return 0;
     };
 
     auto sol_fun = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
         return std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
+        //auto v = (pt.y() - 0.5) * 2.0;
+        //return pt.y();
     };
 
     auto sol_grad = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> auto {
@@ -1355,52 +1532,51 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
     auto assembler = make_interface_assembler(msh, hdi);
     for (auto& cl : msh.cells)
     {
-        if (location(msh, cl) == element_location::IN_NEGATIVE_SIDE)
+        if (location(msh, cl) != element_location::ON_INTERFACE)
         {
             auto where = element_location::IN_NEGATIVE_SIDE;
-            auto gr = make_hho_laplacian(msh, cl, level_set_function, hdi, where);
-            Matrix<RealType, Dynamic, Dynamic> stab = make_hho_cut_stabilization(msh, cl, hdi, where);
+            auto gr = make_hho_laplacian(msh, cl, hdi);
+            Matrix<RealType, Dynamic, Dynamic> stab = make_hho_naive_stabilization(msh, cl, hdi);
             Matrix<RealType, Dynamic, Dynamic> lc = gr.second + stab;
             Matrix<RealType, Dynamic, 1> f = Matrix<RealType, Dynamic, 1>::Zero(lc.rows());
-            f = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun, where, level_set_function, bcs_fun);
-            assembler.assemble(msh, cl, lc, f, bcs_fun, where);
+            f = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun);
+            assembler.assemble(msh, cl, lc, f, bcs_fun);
         }
-        else if (location(msh, cl) == element_location::IN_POSITIVE_SIDE)
+        else 
         {
-            auto where = element_location::IN_POSITIVE_SIDE;
-            auto gr = make_hho_laplacian(msh, cl, level_set_function, hdi, where);
-            Matrix<RealType, Dynamic, Dynamic> stab = make_hho_cut_stabilization(msh, cl, hdi, where);
-            Matrix<RealType, Dynamic, Dynamic> lc = gr.second + stab;
-            Matrix<RealType, Dynamic, 1> f = Matrix<RealType, Dynamic, 1>::Zero(lc.rows());
-            f = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun, where, level_set_function, bcs_fun);
-            assembler.assemble(msh, cl, lc, f, bcs_fun, where);
+            auto cbs = cell_basis<cuthho_poly_mesh<RealType>,RealType>::size(hdi.cell_degree());
+            auto fbs = face_basis<cuthho_poly_mesh<RealType>,RealType>::size(hdi.face_degree());
+            auto fcs = faces(msh, cl);
+            auto nfdofs = fcs.size()*fbs;
+
+            auto gr = make_hho_laplacian_interface(msh, cl, level_set_function, hdi);
+            Matrix<RealType, Dynamic, Dynamic> lc = gr.second;
+                
+            Matrix<RealType, Dynamic, Dynamic> stab_n = make_hho_cut_stabilization(msh, cl, hdi, element_location::IN_NEGATIVE_SIDE);
+            Matrix<RealType, Dynamic, Dynamic> stab_p = make_hho_cut_stabilization(msh, cl, hdi, element_location::IN_POSITIVE_SIDE);
+
+            lc.block(    0,     0,    cbs,    cbs) += stab_n.block(  0,   0,    cbs,    cbs);
+            lc.block(    0, 2*cbs,    cbs, nfdofs) += stab_n.block(  0, cbs,    cbs, nfdofs);
+            lc.block(2*cbs,     0, nfdofs,    cbs) += stab_n.block(cbs,   0, nfdofs,    cbs);
+            lc.block(2*cbs, 2*cbs, nfdofs, nfdofs) += stab_n.block(cbs, cbs, nfdofs, nfdofs);
+
+            //lc.block(         cbs,          cbs,    cbs,    cbs) += stab_p.block(  0,   0,    cbs,    cbs);
+            //lc.block(         cbs, 2*cbs+nfdofs,    cbs, nfdofs) += stab_p.block(  0, cbs,    cbs, nfdofs);
+            //lc.block(2*cbs+nfdofs,          cbs, nfdofs,    cbs) += stab_p.block(cbs,   0, nfdofs,    cbs);
+            //lc.block(2*cbs+nfdofs, 2*cbs+nfdofs, nfdofs, nfdofs) += stab_p.block(cbs, cbs, nfdofs, nfdofs);
+
+
+
+            Matrix<RealType, Dynamic, 1> f = Matrix<RealType, Dynamic, 1>::Zero(2*cbs);
+            f.head(cbs) = make_rhs(msh, cl, hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE, rhs_fun);
+            f.tail(cbs) = make_rhs(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, rhs_fun);
+            assembler.assemble_cut(msh, cl, lc, f);
         }
-        else if (location(msh, cl) == element_location::ON_INTERFACE)
-        {
-            {
-                auto where = element_location::IN_POSITIVE_SIDE;
-                auto gr = make_hho_laplacian(msh, cl, level_set_function, hdi, where);
-                Matrix<RealType, Dynamic, Dynamic> stab = make_hho_cut_stabilization(msh, cl, hdi, where);
-                Matrix<RealType, Dynamic, Dynamic> lc = gr.second + stab;
-                Matrix<RealType, Dynamic, 1> f = Matrix<RealType, Dynamic, 1>::Zero(lc.rows());
-                f = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun, where, level_set_function, bcs_fun);
-                assembler.assemble(msh, cl, lc, f, bcs_fun, where);
-            }
-            {
-                auto where = element_location::IN_NEGATIVE_SIDE;
-                auto gr = make_hho_laplacian(msh, cl, level_set_function, hdi, where);
-                Matrix<RealType, Dynamic, Dynamic> stab = make_hho_cut_stabilization(msh, cl, hdi, where);
-                Matrix<RealType, Dynamic, Dynamic> lc = gr.second + stab;
-                Matrix<RealType, Dynamic, 1> f = Matrix<RealType, Dynamic, 1>::Zero(lc.rows());
-                f = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun, where, level_set_function, bcs_fun);
-                assembler.assemble(msh, cl, lc, f, bcs_fun, where);
-            }
-        }
-        else
-            throw std::logic_error("Invalid element location");
     }
 
     assembler.finalize();
+
+    dump_sparse_matrix(assembler.LHS, "matrix.dat");
 
     tc.toc();
     std::cout << bold << yellow << "Matrix assembly: " << tc << " seconds" << reset << std::endl;
@@ -1408,7 +1584,6 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
     std::cout << "System unknowns: " << assembler.LHS.rows() << std::endl;
     std::cout << "Cells: " << msh.cells.size() << std::endl;
     std::cout << "Faces: " << msh.faces.size() << std::endl;
-
 
     /************** SOLVE **************/
     tc.tic();
@@ -1436,9 +1611,9 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
 
     postprocess_output<RealType>  postoutput;
 
-    auto uT_gp  = std::make_shared< gnuplot_output_object<RealType> >("solution_uT.dat");
-    auto Ru_gp  = std::make_shared< gnuplot_output_object<RealType> >("solution_Ru.dat");
-    auto diff_gp  = std::make_shared< gnuplot_output_object<RealType> >("difference.dat");
+    auto uT_gp  = std::make_shared< gnuplot_output_object<RealType> >("interface_uT.dat");
+    auto Ru_gp  = std::make_shared< gnuplot_output_object<RealType> >("interface_Ru.dat");
+    auto diff_gp  = std::make_shared< gnuplot_output_object<RealType> >("interface_diff.dat");
 
 
     std::vector<RealType>   solution_uT, solution_Ru, eigval_data;
@@ -1449,6 +1624,13 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
     size_t      cell_i   = 0;
     for (auto& cl : msh.cells)
     {
+        if (location(msh, cl) == element_location::ON_INTERFACE)
+        {
+            solution_uT.push_back(0.0);
+            solution_Ru.push_back(0.0);
+            continue;
+        }
+
         cell_basis<cuthho_poly_mesh<RealType>, RealType> cb(msh, cl, hdi.cell_degree());
         auto cbs = cb.size();
 
@@ -1477,7 +1659,7 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
         solution_Ru.push_back(r_val);
 
         //auto tps = make_test_points(msh, cl, level_set_function, element_location::IN_NEGATIVE_SIDE);
-        auto qps = integrate(msh, cl, 8, element_location::IN_NEGATIVE_SIDE);
+        auto qps = integrate(msh, cl, 5/*, element_location::IN_NEGATIVE_SIDE*/);
         for (auto& qp : qps)
         {
             auto tp = qp.first;
@@ -1544,10 +1726,101 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
 
 
 
+
+template<typename Mesh, typename Function>
+void
+test_interface_gr(const Mesh& msh, const Function& level_set_function, size_t degree)
+{
+    using RealType = typename Mesh::coordinate_type;
+
+    auto test_fun_neg = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
+        return pt.x();
+    };
+
+    auto test_fun_pos = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
+        return 2*pt.x()*pt.y();
+    };
+
+    timecounter tc;
+
+    hho_degree_info hdi(degree+1, degree);
+
+    std::ofstream ofs1("gr1.dat");
+    std::ofstream ofs2("gr2.dat");
+
+    for (auto& cl : msh.cells)
+    {
+        if (location(msh, cl) == element_location::ON_INTERFACE)
+        {
+            auto gr = make_hho_laplacian_interface(msh, cl, level_set_function, hdi);
+            Matrix<RealType, Dynamic, Dynamic> lc = gr.second;
+                
+            Matrix<RealType, Dynamic, Dynamic> stab_n = make_hho_cut_stabilization(msh, cl, hdi, element_location::IN_NEGATIVE_SIDE);
+            Matrix<RealType, Dynamic, Dynamic> stab_p = make_hho_cut_stabilization(msh, cl, hdi, element_location::IN_POSITIVE_SIDE);
+
+            Matrix<RealType, Dynamic, 1> proj_n = project_function(msh, cl, hdi, element_location::IN_NEGATIVE_SIDE, test_fun_neg);
+            Matrix<RealType, Dynamic, 1> proj_p = project_function(msh, cl, hdi, element_location::IN_POSITIVE_SIDE, test_fun_pos);
+                
+
+            auto fcs = faces(msh, cl);
+            auto num_faces = fcs.size();
+            auto cbs = cell_basis<cuthho_poly_mesh<RealType>,RealType>::size(hdi.cell_degree());
+            auto fbs = face_basis<cuthho_poly_mesh<RealType>,RealType>::size(hdi.face_degree());
+
+            Matrix<RealType, Dynamic, 1> proj = Matrix<RealType, Dynamic, 1>::Zero( 2*cbs + 2*num_faces*fbs );
+
+            proj.block(  0, 0, cbs, 1) = proj_n.head(cbs);
+            proj.block(cbs, 0, cbs, 1) = proj_p.head(cbs);
+            proj.block( 2*cbs, 0, num_faces*fbs, 1) = proj_n.tail(num_faces*fbs);
+            proj.block( 2*cbs + num_faces*fbs, 0, num_faces*fbs, 1) = proj_p.tail(num_faces*fbs);
+
+            Matrix<RealType, Dynamic, 1> rec = gr.first * proj;
+
+            cell_basis<cuthho_poly_mesh<RealType>,RealType> rb(msh, cl, hdi.reconstruction_degree());
+
+            auto qps_n = integrate(msh, cl, 5, element_location::IN_NEGATIVE_SIDE);
+            for (auto& qp : qps_n)
+            {
+                auto tp = qp.first;
+                auto t_phi = rb.eval_basis( tp );
+
+                RealType val = rec.block(0,0,cbs,1).dot(t_phi);
+
+                ofs1 << tp.x() << " " << tp.y() << " " << val << std::endl;
+            }
+
+            auto qps_p = integrate(msh, cl, 5, element_location::IN_POSITIVE_SIDE);
+            for (auto& qp : qps_p)
+            {
+                auto tp = qp.first;
+                auto t_phi = rb.eval_basis( tp );
+
+                RealType val = rec.block(cbs,0,cbs,1).dot(t_phi);
+
+                ofs2 << tp.x() << " " << tp.y() << " " << val << std::endl;
+            }
+        }
+    }
+    ofs1.close();
+    ofs2.close();
+}
+
+
+
+
+
+
+
+
+
+
 int main(int argc, char **argv)
 {
     using RealType = double;
     size_t degree = 0;
+
+    bool dump = false;
+    bool interface = false;
 
     mesh_init_params<RealType> mip;
     mip.Nx = 5;
@@ -1556,7 +1829,7 @@ int main(int argc, char **argv)
     bool displace_nodes = true;
 
     int ch;
-    while ( (ch = getopt(argc, argv, "k:M:N:m")) != -1 )
+    while ( (ch = getopt(argc, argv, "k:M:N:mdi")) != -1 )
     {
         switch(ch)
         {
@@ -1574,6 +1847,14 @@ int main(int argc, char **argv)
 
             case 'm':
                 displace_nodes = false;
+                break;
+
+            case 'd':
+                dump = true;
+                break;
+
+            case 'i':
+                interface = true;
                 break;
 
             case '?':
@@ -1595,7 +1876,7 @@ int main(int argc, char **argv)
     tc.toc();
     std::cout << bold << yellow << "Mesh generation: " << tc << " seconds" << reset << std::endl;
     /************** LEVEL SET FUNCTION **************/
-    RealType radius = 0.35;
+    RealType radius = 0.45;
     auto level_set_function = circle_level_set<RealType>(radius, 0.5, 0.5);
     //auto level_set_function = line_level_set<RealType>(0.5);
     /************** DO cutHHO MESH PROCESSING **************/
@@ -1619,12 +1900,18 @@ int main(int argc, char **argv)
     tc.toc();
     std::cout << bold << yellow << "cutHHO-specific mesh preprocessing: " << tc << " seconds" << reset << std::endl;
 
-#if 0
+    if (dump)
+    {
+        dump_mesh(msh);
+        test_triangulation(msh);
+    }
 
-    dump_mesh(msh);
-    test_triangulation(msh);
-#endif
-    run_cuthho_interface(msh, level_set_function, degree);
+    if (interface)
+        run_cuthho_interface(msh, level_set_function, degree);
+    else
+        run_cuthho_fictdom(msh, level_set_function, degree);
+
+    test_interface_gr(msh, level_set_function, degree);
 
 
 #if 0

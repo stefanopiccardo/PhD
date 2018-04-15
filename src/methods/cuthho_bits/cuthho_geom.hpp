@@ -718,7 +718,7 @@ integrate(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::face
     auto scale = pts[1] - pts[0];
     auto meas = scale.to_vector().norm();
 
-    auto qps = edge_quadrature<T>(degree);  // <-- This has to be changed! Slows down everything!
+    auto qps = edge_quadrature<T>(degree);
 
     for (auto itor = qps.begin(); itor != qps.end(); itor++)
     {
@@ -755,7 +755,7 @@ integrate_interface(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T,
 
     auto int_sign = va.dot(vb) < 0 ? -1.0 : +1.0;
 
-    auto qps = edge_quadrature<T>(degree);  // <-- This has to be changed! Slows down everything!
+    auto qps = edge_quadrature<T>(degree);
 
     for (size_t i = 1; i < cl.user_data.interface.size(); i++)
     {

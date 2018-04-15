@@ -93,7 +93,7 @@ conjugated_gradient(const Eigen::SparseMatrix<T>& A,
 
     while ( 1 )
     {
-        if ( parms.verbose ) {
+        if ( parms.verbose && (iter%100 == 0) ) {
             std::cout << erase_line << " -> Iteration " << iter << ", rr = ";
             std::cout << nr/nr0 << "\r";
             std::cout.flush();
