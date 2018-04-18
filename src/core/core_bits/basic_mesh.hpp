@@ -27,6 +27,7 @@
 #include <fstream>
 #include <vector>
 #include <array>
+#include <random>
 
 #include "point.hpp"
 
@@ -325,13 +326,27 @@ struct mesh_impl<T, 0, CellUD, FaceUD, NodeUD> {
         size_t numpoints = (parms.Nx + 1) * (parms.Ny + 1);
         points.reserve(numpoints);
 
+        std::default_random_engine generator;
+        std::uniform_real_distribution<double> dist_x(-hx/10.0, hx/10.0);
+        std::uniform_real_distribution<double> dist_y(-hy/10.0, hy/10.0);
+        auto disp_x = std::bind( dist_x, generator );
+        auto disp_y = std::bind( dist_y, generator );
+
         size_t point_num = 0;
         for (size_t j = 0; j < parms.Ny+1; j++)
         {
             for(size_t i = 0; i < parms.Nx+1; i++)
             {
-                auto px = parms.min_x + i*hx;
-                auto py = parms.min_y + j*hy;
+                double dx = 0.0;
+                double dy = 0.0;
+                //if ( i != 0 && i != parms.Nx )
+                //    dx = disp_x();
+
+                //if ( j != 0 && j != parms.Ny )
+                //    dy = disp_y();
+
+                auto px = parms.min_x + i*hx + dx;
+                auto py = parms.min_y + j*hy + dy;
                 point_type pt(px, py);
                 points.push_back(pt);
                 node_type n;
