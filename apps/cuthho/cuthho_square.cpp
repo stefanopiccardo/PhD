@@ -444,25 +444,19 @@ make_hho_laplacian_interface(const cuthho_mesh<T, ET>& msh,
         Matrix<T, Dynamic, Dynamic> a = qp.second * phi * (dphi * n).transpose();
         Matrix<T, Dynamic, Dynamic> b = qp.second * (dphi * n) * phi.transpose();
         Matrix<T, Dynamic, Dynamic> c = qp.second * phi * phi.transpose() * cell_eta(msh, cl) / hT;
-        
+
         stiff.block(  0,   0, rbs, rbs) -= a;
         stiff.block(rbs,   0, rbs, rbs) += a;
 
         stiff.block(  0,   0, rbs, rbs) -= b;
         stiff.block(  0, rbs, rbs, rbs) += b;
-        
+
         stiff.block(  0,   0, rbs, rbs) += c;
-        //stiff.block(  0, rbs, rbs, rbs) -= c;
-        //stiff.block(rbs,   0, rbs, rbs) -= c;
+        stiff.block(  0, rbs, rbs, rbs) -= c;
+        stiff.block(rbs,   0, rbs, rbs) -= c;
         stiff.block(rbs, rbs, rbs, rbs) += c;
 
     }
-
-    std::cout << "*******" << std::endl;
-    std::cout << stiff << std::endl;
-
-    //stiff(0,0) += 1;
-    //stiff(rbs, rbs) += 1;
 
     gr_lhs = stiff;
     gr_rhs.block(0,   0, 2*rbs, cbs) = stiff.block(0,   0, 2*rbs, cbs);
@@ -501,10 +495,9 @@ make_hho_laplacian_interface(const cuthho_mesh<T, ET>& msh,
         }
     }
 
-    Matrix<T, Dynamic, Dynamic> oper = gr_lhs.llt().solve(gr_rhs);
+    Matrix<T, Dynamic, Dynamic> oper = gr_lhs.ldlt().solve(gr_rhs);
     Matrix<T, Dynamic, Dynamic> data = gr_rhs.transpose() * oper;
 
-    std::cout << oper << std::endl;
     return std::make_pair(oper, data);
 }
 
@@ -1505,15 +1498,8 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
 
     /************** DEFINE PROBLEM RHS, SOLUTION AND BCS **************/
     auto rhs_fun = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
-        //return 2.0 * M_PI * M_PI * std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
-        return 0;
+        return 2.0 * M_PI * M_PI * std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
     };
-
-    auto rhs_fun_2 = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
-        //return 2.0 * M_PI * M_PI * std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
-        return 50;
-    };
-
     auto sol_fun = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
         return std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
         //auto v = (pt.y() - 0.5) * 2.0;
@@ -1579,10 +1565,8 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
 
 
             Matrix<RealType, Dynamic, 1> f = Matrix<RealType, Dynamic, 1>::Zero(2*cbs);
-            f.head(cbs) = make_rhs(msh, cl, hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE, rhs_fun_2);
-            f.tail(cbs) = make_rhs(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, rhs_fun_2);
-
-            std::cout << f.transpose() << std::endl;
+            f.head(cbs) = make_rhs(msh, cl, hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE, rhs_fun);
+            f.tail(cbs) = make_rhs(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, rhs_fun);
 
             assembler.assemble_cut(msh, cl, lc, f);
         }
@@ -1590,7 +1574,7 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
 
     assembler.finalize();
 
-    dump_sparse_matrix(assembler.LHS, "matrix.dat");
+    //dump_sparse_matrix(assembler.LHS, "matrix.dat");
 
     tc.toc();
     std::cout << bold << yellow << "Matrix assembly: " << tc << " seconds" << reset << std::endl;
@@ -1848,7 +1832,7 @@ int main(int argc, char **argv)
 
             case 'N':
                 mip.Ny = atoi(optarg);
-                break;            
+                break;
 
             case 'r':
                 int_refsteps = atoi(optarg);
