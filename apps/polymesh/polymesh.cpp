@@ -105,6 +105,8 @@ int main(int argc, char **argv)
     silo.add_mesh(msh, "mesh");
     silo.close();
 
+    std::ofstream ofs("pi.dat");
+
     size_t cell_i = 0;
     T error = 0.0;
     for (auto& cl : msh.cells)
@@ -119,8 +121,17 @@ int main(int argc, char **argv)
 
         error += diff.dot(mass*diff);
 
+        auto qpts = integrate(msh, cl, 5);
+        for (auto& qp : qpts)
+        {
+            ofs << qp.first.x() << " " << qp.first.y() << " " << cell_i << std::endl;
+        }
+
+
         cell_i++;
     }
+
+    ofs.close();
 
     std::cout << error << std::endl;
 

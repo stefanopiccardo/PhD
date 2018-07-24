@@ -291,11 +291,11 @@ void test_triangulation(const cuthho_mesh<T, ET>& msh)
 }
 
 template<typename T>
-struct material_parameters
+struct params
 {
-    T kappa_1, kappa_2;
+    T kappa_1, kappa_2, eta;
 
-    material_parameters() : kappa_1(1.0), kappa_2(1.0) {}
+    params() : kappa_1(1.0), kappa_2(1.0), eta(5.0) {}
 };
 
 template<typename T, size_t ET>
@@ -392,7 +392,7 @@ std::pair<   Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynam
              Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>  >
 make_hho_laplacian_interface(const cuthho_mesh<T, ET>& msh,
     const typename cuthho_mesh<T, ET>::cell_type& cl,
-    const Function& level_set_function, hho_degree_info di)
+    const Function& level_set_function, hho_degree_info di, const params<T>& parms = params<T>())
 {
 
     if ( !is_cut(msh, cl) )
@@ -421,14 +421,14 @@ make_hho_laplacian_interface(const cuthho_mesh<T, ET>& msh,
     for (auto& qp : qps_n)
     {
         auto dphi = cb.eval_gradients(qp.first);
-        stiff.block(0,0,rbs,rbs) += qp.second * dphi * dphi.transpose();
+        stiff.block(0,0,rbs,rbs) += parms.kappa_1 * qp.second * dphi * dphi.transpose();
     }
 
     auto qps_p = integrate(msh, cl, 2*recdeg, element_location::IN_POSITIVE_SIDE);
     for (auto& qp : qps_p)
     {
         auto dphi = cb.eval_gradients(qp.first);
-        stiff.block(rbs,rbs,rbs,rbs) += qp.second * dphi * dphi.transpose();
+        stiff.block(rbs,rbs,rbs,rbs) += parms.kappa_2 * qp.second * dphi * dphi.transpose();
     }
 
     auto hT = measure(msh, cl);
@@ -441,9 +441,9 @@ make_hho_laplacian_interface(const cuthho_mesh<T, ET>& msh,
         auto dphi       = cb.eval_gradients(qp.first);
         Matrix<T,2,1> n = level_set_function.normal(qp.first);
 
-        Matrix<T, Dynamic, Dynamic> a = qp.second * phi * (dphi * n).transpose();
-        Matrix<T, Dynamic, Dynamic> b = qp.second * (dphi * n) * phi.transpose();
-        Matrix<T, Dynamic, Dynamic> c = qp.second * phi * phi.transpose() * cell_eta(msh, cl) / hT;
+        Matrix<T, Dynamic, Dynamic> a = parms.kappa_1 * qp.second * phi * (dphi * n).transpose();
+        Matrix<T, Dynamic, Dynamic> b = parms.kappa_1 * qp.second * (dphi * n) * phi.transpose();
+        Matrix<T, Dynamic, Dynamic> c = parms.kappa_1 * qp.second * phi * phi.transpose() * parms.eta / hT;
 
         stiff.block(  0,   0, rbs, rbs) -= a;
         stiff.block(rbs,   0, rbs, rbs) += a;
@@ -477,9 +477,9 @@ make_hho_laplacian_interface(const cuthho_mesh<T, ET>& msh,
             auto f_phi = fb.eval_basis(qp.first);
             auto r_dphi = cb.eval_gradients(qp.first);
 
-            gr_rhs.block(0, 0, rbs, cbs) -= qp.second * (r_dphi * n) * c_phi.transpose();
+            gr_rhs.block(0, 0, rbs, cbs) -= parms.kappa_1 * qp.second * (r_dphi * n) * c_phi.transpose();
             size_t col_ofs = 2*cbs + i*fbs;
-            gr_rhs.block(0, col_ofs, rbs, fbs) += qp.second * (r_dphi * n) * f_phi.transpose();
+            gr_rhs.block(0, col_ofs, rbs, fbs) += parms.kappa_1 * qp.second * (r_dphi * n) * f_phi.transpose();
         }
 
         auto qps_p = integrate(msh, fc, 2*recdeg, element_location::IN_POSITIVE_SIDE);
@@ -489,9 +489,9 @@ make_hho_laplacian_interface(const cuthho_mesh<T, ET>& msh,
             auto f_phi = fb.eval_basis(qp.first);
             auto r_dphi = cb.eval_gradients(qp.first);
 
-            gr_rhs.block(rbs, cbs, rbs, cbs) -= qp.second * (r_dphi * n) * c_phi.transpose();
+            gr_rhs.block(rbs, cbs, rbs, cbs) -= parms.kappa_2 * qp.second * (r_dphi * n) * c_phi.transpose();
             size_t col_ofs = 2*cbs + fbs*fcs.size() + i*fbs;
-            gr_rhs.block(rbs, col_ofs, rbs, fbs) += qp.second * (r_dphi * n) * f_phi.transpose();
+            gr_rhs.block(rbs, col_ofs, rbs, fbs) += parms.kappa_2 * qp.second * (r_dphi * n) * f_phi.transpose();
         }
     }
 
@@ -1448,24 +1448,15 @@ auto make_interface_assembler(const Mesh& msh, hho_degree_info hdi)
 
 
 
-
-
-
-
-
-
-
-
-
 template<typename Mesh, typename Function>
 void
-run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t degree)
+output_mesh_info(const Mesh& msh, const Function& level_set_function)
 {
     using RealType = typename Mesh::coordinate_type;
 
     /************** OPEN SILO DATABASE **************/
     silo_database silo;
-    silo.create("cuthho_interface.silo");
+    silo.create("cuthho_meshinfo.silo");
     silo.add_mesh(msh, "mesh");
 
     /************** MAKE A SILO VARIABLE FOR CELL POSITIONING **************/
@@ -1495,6 +1486,147 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
         node_pos.push_back( location(msh, n) == element_location::IN_POSITIVE_SIDE ? +1.0 : -1.0 );
     silo.add_variable("mesh", "node_pos", node_pos.data(), node_pos.size(), nodal_variable_t);
 
+    std::vector<RealType> cell_set;
+    for (auto& cl : msh.cells)
+    {
+        RealType r;
+
+        switch ( cl.user_data.agglo_set )
+        {
+            case cell_agglo_set::UNDEF:
+                r = 0.0;
+                break;
+
+            case cell_agglo_set::T_OK:
+                r = 1.0;
+                break;
+
+            case cell_agglo_set::T_KO_NEG:
+                r = 2.0;
+                break;
+
+            case cell_agglo_set::T_KO_POS:
+                r = 3.0;
+                break;
+
+        }
+
+        cell_set.push_back( r );
+    }
+    silo.add_variable("mesh", "agglo_set", cell_set.data(), cell_set.size(), zonal_variable_t);
+
+    silo.close();
+}
+
+
+
+template<typename Mesh>
+std::vector<size_t>
+agglomerate_cells(const Mesh& msh, const typename Mesh::cell_type& cl_tgt,
+                  const typename Mesh::cell_type& cl_other)
+{
+    auto ofs_tgt    = offset(msh, cl_tgt);
+    auto ofs_other  = offset(msh, cl_other);
+
+    auto pts_tgt    = points(msh, cl_tgt);
+    auto pts_other  = points(msh, cl_other);
+
+    size_t Nx = 0;
+
+    std::vector<size_t> ret;
+
+    if (ofs_other == ofs_tgt - Nx - 1)
+    {
+        ret.push_back( pts_tgt[0] );
+        ret.push_back( pts_tgt[1] );
+        ret.push_back( pts_tgt[2] );
+        ret.push_back( pts_tgt[3] );
+        ret.push_back( pts_other[2] );
+        ret.push_back( pts_other[3] );
+        ret.push_back( pts_other[0] );
+        ret.push_back( pts_other[1] );
+    }
+    else if (ofs_other == ofs_tgt - 1)
+    {
+        ret.push_back( pts_tgt[0] );
+        ret.push_back( pts_tgt[1] );
+        ret.push_back( pts_tgt[2] );
+        ret.push_back( pts_tgt[3] );
+        ret.push_back( pts_other[3] );
+        ret.push_back( pts_other[0] );
+    }
+    else if (ofs_other == ofs_tgt + Nx - 1)
+    {
+        ret.push_back( pts_tgt[0] );
+        ret.push_back( pts_tgt[1] );
+        ret.push_back( pts_tgt[2] );
+        ret.push_back( pts_tgt[3] );
+        ret.push_back( pts_other[2] );
+        ret.push_back( pts_other[3] );
+        ret.push_back( pts_other[0] );
+        ret.push_back( pts_other[1] );
+    }
+    else if (ofs_other == ofs_tgt + Nx)
+    {
+        ret.push_back( pts_tgt[0] );
+        ret.push_back( pts_tgt[1] );
+        ret.push_back( pts_tgt[2] );
+        ret.push_back( pts_other[2] );
+        ret.push_back( pts_other[3] );
+        ret.push_back( pts_other[0] );
+    }
+    else if (ofs_other == ofs_tgt + Nx + 1)
+    {   
+        ret.push_back( pts_tgt[0] );
+        ret.push_back( pts_tgt[1] );
+        ret.push_back( pts_tgt[2] );
+        ret.push_back( pts_other[1] );
+        ret.push_back( pts_other[2] );
+        ret.push_back( pts_other[3] );
+        ret.push_back( pts_other[0] );
+        ret.push_back( pts_other[3] );
+    }
+    else if (ofs_other == ofs_tgt + 1)
+    {
+        ret.push_back( pts_tgt[0] );
+        ret.push_back( pts_tgt[1] );
+        ret.push_back( pts_other[1] );
+        ret.push_back( pts_other[2] );
+        ret.push_back( pts_other[3] );
+        ret.push_back( pts_tgt[3] );
+    }
+    else if (ofs_other == ofs_tgt - Nx + 1)
+    {
+        ret.push_back( pts_tgt[0] );
+        ret.push_back( pts_tgt[1] );
+        ret.push_back( pts_other[0] );
+        ret.push_back( pts_other[1] );
+        ret.push_back( pts_other[2] );
+        ret.push_back( pts_other[3] );
+        ret.push_back( pts_tgt[2] );
+        ret.push_back( pts_tgt[3] );
+    }
+    else if (ofs_other == ofs_tgt - Nx)
+    {
+        ret.push_back( pts_tgt[0] );
+        ret.push_back( pts_other[0] );
+        ret.push_back( pts_other[1] );
+        ret.push_back( pts_other[2] );
+        ret.push_back( pts_tgt[2] );
+        ret.push_back( pts_tgt[3] );
+    }
+    else throw std::invalid_argument("The specified cells are not neighbors");
+
+    return ret;
+}
+
+
+
+template<typename Mesh, typename Function>
+void
+run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t degree)
+{
+    using RealType = typename Mesh::coordinate_type;
 
     /************** DEFINE PROBLEM RHS, SOLUTION AND BCS **************/
     auto rhs_fun = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
@@ -1522,6 +1654,10 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
 
     timecounter tc;
 
+    struct params<RealType> parms;
+
+    parms.kappa_2 = 1;
+
     /************** ASSEMBLE PROBLEM **************/
     hho_degree_info hdi(degree+1, degree);
 
@@ -1531,10 +1667,15 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
     {
         if (location(msh, cl) != element_location::ON_INTERFACE)
         {
-            auto where = element_location::IN_NEGATIVE_SIDE;
+            RealType kappa;
+            if ( location(msh, cl) == element_location::IN_NEGATIVE_SIDE )
+                kappa = parms.kappa_1;
+            else
+                kappa = parms.kappa_2;
+
             auto gr = make_hho_laplacian(msh, cl, hdi);
             Matrix<RealType, Dynamic, Dynamic> stab = make_hho_naive_stabilization(msh, cl, hdi);
-            Matrix<RealType, Dynamic, Dynamic> lc = gr.second + stab;
+            Matrix<RealType, Dynamic, Dynamic> lc = kappa * gr.second + stab;
             Matrix<RealType, Dynamic, 1> f = Matrix<RealType, Dynamic, 1>::Zero(lc.rows());
             f = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun);
             assembler.assemble(msh, cl, lc, f, bcs_fun);
@@ -1546,11 +1687,11 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
             auto fcs = faces(msh, cl);
             auto nfdofs = fcs.size()*fbs;
 
-            auto gr = make_hho_laplacian_interface(msh, cl, level_set_function, hdi);
+            auto gr = make_hho_laplacian_interface(msh, cl, level_set_function, hdi, parms);
             Matrix<RealType, Dynamic, Dynamic> lc = gr.second;
 
-            Matrix<RealType, Dynamic, Dynamic> stab_n = make_hho_cut_stabilization(msh, cl, hdi, element_location::IN_NEGATIVE_SIDE);
-            Matrix<RealType, Dynamic, Dynamic> stab_p = make_hho_cut_stabilization(msh, cl, hdi, element_location::IN_POSITIVE_SIDE);
+            Matrix<RealType, Dynamic, Dynamic> stab_n = parms.kappa_1 * make_hho_cut_stabilization(msh, cl, hdi, element_location::IN_NEGATIVE_SIDE);
+            Matrix<RealType, Dynamic, Dynamic> stab_p = parms.kappa_2 * make_hho_cut_stabilization(msh, cl, hdi, element_location::IN_POSITIVE_SIDE);
 
             lc.block(    0,     0,    cbs,    cbs) += stab_n.block(  0,   0,    cbs,    cbs);
             lc.block(    0, 2*cbs,    cbs, nfdofs) += stab_n.block(  0, cbs,    cbs, nfdofs);
@@ -1699,11 +1840,6 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
     postoutput.add_object(diff_gp);
     postoutput.write();
 
-
-    silo.add_variable("mesh", "min_eig", eigval_data.data(), eigval_data.size(), zonal_variable_t);
-    silo.add_variable("mesh", "uT", solution_uT.data(), solution_uT.size(), zonal_variable_t);
-    silo.add_variable("mesh", "Ru", solution_Ru.data(), solution_Ru.size(), zonal_variable_t);
-
     tc.toc();
     std::cout << bold << yellow << "Postprocessing: " << tc << " seconds" << reset << std::endl;
 
@@ -1804,21 +1940,35 @@ test_interface_gr(const Mesh& msh, const Function& level_set_function, size_t de
 int main(int argc, char **argv)
 {
     using RealType = double;
-    size_t degree = 0;
+    
+    size_t degree           = 0;
+    size_t int_refsteps     = 4;
 
-    bool dump = false;
-    bool interface = false;
+    bool dump_debug         = false;
+    bool solve_interface    = false;
+    bool solve_fictdom      = false;
+    bool agglomeration      = false;
 
     mesh_init_params<RealType> mip;
     mip.Nx = 5;
     mip.Ny = 5;
 
-    size_t int_refsteps = 4;
-
-    bool displace_nodes = true;
+    /* k <deg>:     method degree
+     * M <num>:     number of cells in x direction
+     * N <num>:     number of cells in y direction
+     * r <num>:     number of interface refinement steps
+     *
+     * i:           solve interface problem
+     * f:           solve fictitious domain problem
+     *
+     * D:           use node displacement to solve bad cuts (default)
+     * A:           use agglomeration to solve bad cuts 
+     *
+     * d:           dump debug data
+     */
 
     int ch;
-    while ( (ch = getopt(argc, argv, "k:M:N:mdir:")) != -1 )
+    while ( (ch = getopt(argc, argv, "k:M:N:r:ifDAd")) != -1 )
     {
         switch(ch)
         {
@@ -1838,16 +1988,24 @@ int main(int argc, char **argv)
                 int_refsteps = atoi(optarg);
                 break;
 
-            case 'm':
-                displace_nodes = false;
+            case 'i':
+                solve_interface = true;
+                break;
+
+            case 'f':
+                solve_fictdom = true;
+                break;
+
+            case 'D':
+                agglomeration = false;
+                break;
+
+            case 'A':
+                agglomeration = true;
                 break;
 
             case 'd':
-                dump = true;
-                break;
-
-            case 'i':
-                interface = true;
+                dump_debug = true;
                 break;
 
             case '?':
@@ -1878,33 +2036,36 @@ int main(int argc, char **argv)
     detect_node_position(msh, level_set_function);
     detect_cut_faces(msh, level_set_function);
 
-    if (displace_nodes)
+    if (agglomeration)
+    {
+        detect_cut_cells(msh, level_set_function);
+        detect_cell_agglo_set(msh, level_set_function);
+        make_neighbors_info(msh);
+    }
+    else
     {
         move_nodes(msh, level_set_function);
-        detect_cut_faces(msh, level_set_function);
-        //move_nodes(msh, level_set_function);
-        //detect_cut_faces(msh, level_set_function);
+        detect_cut_faces(msh, level_set_function); //do it again to update intersection points
+        detect_cut_cells(msh, level_set_function);
     }
 
-    detect_cut_cells(msh, level_set_function);
     refine_interface(msh, level_set_function, int_refsteps);
-    //make_neighbors_info(msh);
-
+    
     tc.toc();
     std::cout << bold << yellow << "cutHHO-specific mesh preprocessing: " << tc << " seconds" << reset << std::endl;
 
-    if (dump)
+    if (dump_debug)
     {
         dump_mesh(msh);
         test_triangulation(msh);
+        output_mesh_info(msh, level_set_function);
     }
 
-    if (interface)
+    if (solve_interface)
         run_cuthho_interface(msh, level_set_function, degree);
-    else
+    
+    if (solve_fictdom)
         run_cuthho_fictdom(msh, level_set_function, degree);
-
-    test_interface_gr(msh, level_set_function, degree);
 
 
 #if 0

@@ -37,8 +37,8 @@ enum class element_location {
 
 enum class cell_agglo_set {
     T_OK,
-    T_KO_1,
-    T_KO_2,
+    T_KO_NEG,
+    T_KO_POS,
     UNDEF
 };
 
@@ -54,6 +54,7 @@ struct cell_cuthho_info
 
     cell_cuthho_info() :
         location(element_location::UNDEF),
+        agglo_set(cell_agglo_set::UNDEF),
         distorted(false)
     {}
 };
@@ -79,8 +80,6 @@ template<typename T>
 struct node_cuthho_info
 {
     element_location    location;
-    //bool                too_close;
-    //T                   displacement;
     bool                displaced;
     point<T,2>          displacement;
 

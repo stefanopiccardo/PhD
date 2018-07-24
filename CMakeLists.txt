@@ -1,5 +1,5 @@
 cmake_minimum_required (VERSION 3.5)
-project (cutHHO)
+project (ProtoN)
 
 if ( WIN32 )
     message(FATAL_ERROR "Sorry, Windows is not supported.")

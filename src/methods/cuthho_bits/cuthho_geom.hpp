@@ -162,6 +162,118 @@ detect_cut_faces(cuthho_mesh<T, ET>& msh, const Function& level_set_function)
 
 template<typename T, size_t ET, typename Function>
 void
+detect_cell_agglo_set(cuthho_mesh<T, ET>& msh, const Function& level_set_function)
+{
+    typedef typename cuthho_mesh<T, ET>::face_type  face_type;
+    typedef typename cuthho_mesh<T, ET>::point_type point_type;
+
+    const T threshold = 0.3;
+
+    for (auto& cl : msh.cells)
+    {
+        auto fcs = faces(msh, cl);
+        auto pts = points(msh, cl);
+        auto nds = nodes(msh, cl);
+
+        if (fcs.size() != 4)
+            throw std::invalid_argument("This works only on quads for now");
+
+        /* If it is a quadrilateral we have 6 possible configurations of the
+         * element-cut intersection. */
+
+        auto agglo_set_single_node = [&](size_t n) -> void
+        {
+            auto f1 = (n == 0) ? fcs.size()-1 : n-1;
+            auto f2 = n;
+
+            auto ma = measure(msh, fcs[f1]);
+            auto pa = (pts[n] - fcs[f1].user_data.intersection_point);
+            auto da = pa.to_vector().norm() / ma;
+
+            auto mb = measure(msh, fcs[f2]);
+            auto pb = (pts[n] - fcs[f2].user_data.intersection_point);
+            auto db = pb.to_vector().norm() / mb;
+
+            assert(da >= 0 && da <= 1);
+            assert(db >= 0 && db <= 1);
+
+            if ( std::min(da, db) > threshold )
+            {
+                cl.user_data.agglo_set = cell_agglo_set::T_OK;
+                return;
+            }
+
+            if ( location(msh, nds[n]) == element_location::IN_NEGATIVE_SIDE )
+                cl.user_data.agglo_set = cell_agglo_set::T_KO_NEG;
+            else
+                cl.user_data.agglo_set = cell_agglo_set::T_KO_POS;
+        };
+        
+        auto agglo_set_double_node = [&](size_t f1, size_t f2) -> void
+        {
+            assert ( (f1 == 0 && f2 == 2) || ( f1 == 1 && f2 == 3 ) );
+
+            auto n1 = f1;
+            auto n2 = (f2+1) % fcs.size();
+
+            auto ma = measure(msh, fcs[f1]);
+            auto pa = (pts[n1] - fcs[f1].user_data.intersection_point);
+            auto da = pa.to_vector().norm() / ma;
+
+            auto mb = measure(msh, fcs[f2]);
+            auto pb = (pts[n2] - fcs[f2].user_data.intersection_point);
+            auto db = pb.to_vector().norm() / mb;
+
+            auto m1 = std::max(da, db);
+            auto m2 = std::max(1-da, 1-db);
+
+            if ( std::min(m1, m2) > threshold )
+            {
+                cl.user_data.agglo_set = cell_agglo_set::T_OK;
+                return;
+            }
+
+            if ( location(msh, nds[n1]) == element_location::IN_NEGATIVE_SIDE )
+                cl.user_data.agglo_set = (m1 <= threshold) ? cell_agglo_set::T_KO_NEG : cell_agglo_set::T_KO_POS;
+            else
+                cl.user_data.agglo_set = (m2 <= threshold) ? cell_agglo_set::T_KO_NEG : cell_agglo_set::T_KO_POS;
+        };
+
+        for (size_t i = 0; i < fcs.size(); i++)
+        {
+            auto f1 = i;
+            auto f2 = (i+1) % fcs.size();
+            auto n = (i+1) % fcs.size();
+
+            if ( is_cut(msh, fcs[f1]) && is_cut(msh, fcs[f2]) )
+                agglo_set_single_node(n);
+
+        }
+
+        if ( is_cut(msh, fcs[0]) && is_cut(msh, fcs[2]) )
+            agglo_set_double_node(0,2);
+
+        if ( is_cut(msh, fcs[1]) && is_cut(msh, fcs[3]) )
+            agglo_set_double_node(1,3);
+/*
+        if ( is_cut(msh, fcs[0]) && is_cut(msh, fcs[3]) )
+            agglo_set_case_1();
+        else if ( is_cut(msh, fcs[0]) && is_cut(msh, fcs[1]) )
+            agglo_set_case_2();
+        else if ( is_cut(msh, fcs[1]) && is_cut(msh, fcs[2]) )
+            agglo_set_case_3();
+        else if ( is_cut(msh, fcs[2]) && is_cut(msh, fcs[3]) )
+            agglo_set_case_4();
+        else if ( is_cut(msh, fcs[0]) && is_cut(msh, fcs[2]) )
+            agglo_set_case_5();
+        else if ( is_cut(msh, fcs[1]) && is_cut(msh, fcs[3]) )
+            agglo_set_case_6();
+            */
+    }
+}
+
+template<typename T, size_t ET, typename Function>
+void
 detect_cut_cells(cuthho_mesh<T, ET>& msh, const Function& level_set_function)
 {
     typedef typename cuthho_mesh<T, ET>::face_type  face_type;
@@ -257,12 +369,14 @@ make_neighbors_info(cuthho_mesh<T, ET>& msh)
         }
     }
 
+    /*
     for (auto& cl : msh.cells)
     {
         for (auto& n : cl.user_data.neighbors)
             std::cout << n << " ";
         std::cout << std::endl;
     }
+    */
 }
 
 //#define USE_OLD_DISPLACEMENT
