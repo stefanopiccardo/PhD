@@ -696,7 +696,7 @@ make_rhs_interface(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, 
 
 	// Dirichlet jump
 	if(where == element_location::IN_NEGATIVE_SIDE) {
-	    auto qpsi = integrate_interface(msh, cl, degree, where);
+	    auto qpsi = integrate_interface(msh, cl, 2*degree, element_location::IN_NEGATIVE_SIDE );
 	    
 	    for (auto& qp : qpsi)
 	    {
@@ -708,26 +708,22 @@ make_rhs_interface(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, 
 	    }
 	}
 	if(where == element_location::IN_POSITIVE_SIDE) {
-	    auto qpsi = integrate_interface(msh, cl, degree, where);
+	    auto qpsi = integrate_interface(msh, cl, 2*degree, element_location::IN_NEGATIVE_SIDE );
 	    
 	    for (auto& qp : qpsi)
 	    {
 		auto phi = cb.eval_basis(qp.first);
-
-		// here something weird -> according to the paper,
-		// we should substract the next term instead of adding it ...
-		ret += qp.second * dir_jump(qp.first) * phi * cell_eta(msh, cl)/hT;
+		ret -= qp.second * dir_jump(qp.first) * phi * cell_eta(msh, cl)/hT;
 	    }
 	}
 
 	// Flux jump
 	if(where == element_location::IN_POSITIVE_SIDE) {
-	    auto qpsi = integrate_interface(msh, cl, degree, where);
+	    auto qpsi = integrate_interface(msh, cl, 2*degree, element_location::IN_NEGATIVE_SIDE);
 	    
 	    for (auto& qp : qpsi)
 	    {
 		auto phi = cb.eval_basis(qp.first);
-
 		ret += qp.second * flux_jump(qp.first) * phi;
 	    }
 	}
