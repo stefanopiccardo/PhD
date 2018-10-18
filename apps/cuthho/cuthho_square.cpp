@@ -1497,8 +1497,6 @@ public:
             }
             else
             {
-                auto face_offset = offset(msh, fc);
-                auto face_SOL_offset = cbs * msh.cells.size() + face_table.at(face_offset)*fbs;
                 ret.block(cbs+face_i*fbs, 0, fbs, 1) = solution.block(face_SOL_offset, 0, fbs, 1);
             }
         }
