@@ -667,77 +667,69 @@ make_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_
 
 
 
-template<typename T, size_t ET, typename F1, typename F2, typename F3, typename F4>
+template<typename T, size_t ET, typename F1>
 Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, 1>
-make_rhs_interface(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
-                   size_t degree, const F1& f, const element_location where,
-                   const F2& level_set_function, const F3& dir_jump,
-                   const F4& flux_jump)
+make_flux_jump(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
+                   size_t degree, const element_location where, const F1& flux_jump)
 {
-    if ( location(msh, cl) == where )
-        return make_rhs(msh, cl, degree, f);
-    else if ( location(msh, cl) == element_location::ON_INTERFACE )
-    {
-        cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, degree);
-        auto cbs = cb.size();
+    cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, degree);
+    auto cbs = cb.size();
+    Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs);
 
-        auto hT = measure(msh, cl);
-
-        Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs);
-
-        // source term
-        auto qps = integrate(msh, cl, 2*degree, where);
-        for (auto& qp : qps)
+    if( location(msh, cl) != element_location::ON_INTERFACE )
+        return ret;
+    
+    if(where == element_location::IN_POSITIVE_SIDE) {
+        auto qpsi = integrate_interface(msh, cl, 2*degree, element_location::IN_NEGATIVE_SIDE);
+            
+        for (auto& qp : qpsi)
         {
             auto phi = cb.eval_basis(qp.first);
-            ret += qp.second * phi * f(qp.first);
+            ret += qp.second * flux_jump(qp.first) * phi;
         }
-
-
-        // Dirichlet jump
-        if(where == element_location::IN_NEGATIVE_SIDE) {
-            auto qpsi = integrate_interface(msh, cl, 2*degree, element_location::IN_NEGATIVE_SIDE );
-	    
-            for (auto& qp : qpsi)
-            {
-                auto phi = cb.eval_basis(qp.first);
-                auto dphi = cb.eval_gradients(qp.first);
-                auto n = level_set_function.normal(qp.first);
-
-                ret += qp.second * dir_jump(qp.first) * ( phi * cell_eta(msh, cl)/hT - dphi*n);
-            }
-        }
-        if(where == element_location::IN_POSITIVE_SIDE) {
-            auto qpsi = integrate_interface(msh, cl, 2*degree, element_location::IN_NEGATIVE_SIDE );
-            
-            for (auto& qp : qpsi)
-            {
-                auto phi = cb.eval_basis(qp.first);
-                ret -= qp.second * dir_jump(qp.first) * phi * cell_eta(msh, cl)/hT;
-            }
-        }
-
-        // Flux jump
-        if(where == element_location::IN_POSITIVE_SIDE) {
-            auto qpsi = integrate_interface(msh, cl, 2*degree, element_location::IN_NEGATIVE_SIDE);
-            
-            for (auto& qp : qpsi)
-            {
-                auto phi = cb.eval_basis(qp.first);
-                ret += qp.second * flux_jump(qp.first) * phi;
-            }
-        }
-        
-        return ret;
     }
-    else
-    {
-        auto cbs = cell_basis<cuthho_mesh<T, ET>,T>::size(degree);
-        Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs);
-        return ret;
-    }
+    return ret;
 }
 
+
+template<typename T, size_t ET, typename F1, typename F2>
+Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, 1>
+make_Dirichlet_jump(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
+                   size_t degree, const element_location where, const F1& level_set_function, 
+                   const F2& dir_jump)
+{
+    cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, degree);
+    auto cbs = cb.size();
+    Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs);
+
+    if( location(msh, cl) != element_location::ON_INTERFACE )
+        return ret;
+
+    auto hT = measure(msh, cl);
+    
+    if(where == element_location::IN_NEGATIVE_SIDE) {
+        auto qpsi = integrate_interface(msh, cl, 2*degree, element_location::IN_NEGATIVE_SIDE );
+	    
+        for (auto& qp : qpsi)
+        {
+            auto phi = cb.eval_basis(qp.first);
+            auto dphi = cb.eval_gradients(qp.first);
+            auto n = level_set_function.normal(qp.first);
+
+            ret += qp.second * dir_jump(qp.first) * ( phi * cell_eta(msh, cl)/hT - dphi*n);
+        }
+    }
+    else if(where == element_location::IN_POSITIVE_SIDE) {
+        auto qpsi = integrate_interface(msh, cl, 2*degree, element_location::IN_NEGATIVE_SIDE );
+            
+        for (auto& qp : qpsi)
+        {
+            auto phi = cb.eval_basis(qp.first);
+            ret -= qp.second * dir_jump(qp.first) * phi * cell_eta(msh, cl)/hT;
+        }
+    }
+    return ret;
+}
 
 
 template<typename T>
@@ -1794,10 +1786,15 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
 
 
             Matrix<RealType, Dynamic, 1> f = Matrix<RealType, Dynamic, 1>::Zero(2*cbs);
-            f.head(cbs) = make_rhs_interface(msh, cl, hdi.cell_degree(), rhs_fun, element_location::IN_NEGATIVE_SIDE, level_set_function, dirichlet_jump, neumann_jump);
-            // f.head(cbs) = make_rhs(msh, cl, hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE, rhs_fun);
-            f.tail(cbs) = make_rhs_interface(msh, cl, hdi.cell_degree(), rhs_fun, element_location::IN_POSITIVE_SIDE, level_set_function, dirichlet_jump, neumann_jump);
-            // f.tail(cbs) = make_rhs(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, rhs_fun);
+
+            f.head(cbs) = make_rhs(msh, cl, hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE, rhs_fun);
+            f.head(cbs) += make_Dirichlet_jump(msh, cl, hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE, level_set_function, dirichlet_jump);
+            f.head(cbs) += make_flux_jump(msh, cl, hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE, neumann_jump);
+
+            f.tail(cbs) = make_rhs(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, rhs_fun);
+            f.tail(cbs) += make_Dirichlet_jump(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, level_set_function, dirichlet_jump);
+            f.tail(cbs) += make_flux_jump(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, neumann_jump);
+
             
             assembler.assemble_cut(msh, cl, lc, f);
         }
