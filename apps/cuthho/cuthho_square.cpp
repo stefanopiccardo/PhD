@@ -1023,8 +1023,9 @@ run_cuthho_fictdom(const Mesh& msh, const Function& level_set_function, size_t d
     size_t      cell_i   = 0;
     for (auto& cl : msh.cells)
     {
-        bool show_fict_dom = false; // false to hide the fictitious domain in the gnuplot outputs
-        if (!show_fict_dom && location(msh,cl) == element_location::IN_POSITIVE_SIDE) continue;
+        bool hide_fict_dom = true; // hide the fictitious domain in the gnuplot outputs
+        if (hide_fict_dom && location(msh,cl) == element_location::IN_POSITIVE_SIDE)
+            continue;
         
         cell_basis<cuthho_poly_mesh<RealType>, RealType> cb(msh, cl, hdi.cell_degree());
         auto cbs = cb.size();
@@ -1084,8 +1085,10 @@ run_cuthho_fictdom(const Mesh& msh, const Function& level_set_function, size_t d
         */
 
         //auto tps = make_test_points(msh, cl, level_set_function, element_location::IN_NEGATIVE_SIDE);
+
+        
         auto qps = integrate(msh, cl, 5, element_location::IN_NEGATIVE_SIDE);
-        if ( show_fict_dom ) qps = integrate(msh, cl, 5/*, element_location::IN_NEGATIVE_SIDE*/);
+        if ( !hide_fict_dom ) qps = integrate(msh, cl, 5/*, element_location::IN_NEGATIVE_SIDE*/);
         
         for (auto& qp : qps)
         {
