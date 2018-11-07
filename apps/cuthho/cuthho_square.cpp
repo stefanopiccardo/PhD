@@ -1725,11 +1725,11 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
 
 
     auto dirichlet_jump = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
-        return 1.0;
+        return 0.0;
     };
 
     auto neumann_jump = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
-        return 0.0; //2.0;
+        return 0.0;
     };
 
     
@@ -1818,7 +1818,7 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
 
             auto gr = make_hho_laplacian(msh, cl, hdi);
             Matrix<RealType, Dynamic, Dynamic> stab = make_hho_naive_stabilization(msh, cl, hdi);
-            Matrix<RealType, Dynamic, Dynamic> lc = kappa * gr.second + stab;
+            Matrix<RealType, Dynamic, Dynamic> lc = kappa * ( gr.second + stab );
             Matrix<RealType, Dynamic, 1> f = Matrix<RealType, Dynamic, 1>::Zero(lc.rows());
             f = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun);
             assembler.assemble(msh, cl, lc, f, bcs_fun);
@@ -1851,11 +1851,11 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
             Matrix<RealType, Dynamic, 1> f = Matrix<RealType, Dynamic, 1>::Zero(2*cbs);
 
             f.head(cbs) = make_rhs(msh, cl, hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE, rhs_fun);
-            f.head(cbs) += make_Dirichlet_jump(msh, cl, hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE, level_set_function, dirichlet_jump);
+            f.head(cbs) += parms.kappa_1 * make_Dirichlet_jump(msh, cl, hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE, level_set_function, dirichlet_jump);
             f.head(cbs) += make_flux_jump(msh, cl, hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE, neumann_jump);
 
             f.tail(cbs) = make_rhs(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, rhs_fun);
-            f.tail(cbs) += make_Dirichlet_jump(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, level_set_function, dirichlet_jump);
+            f.tail(cbs) += parms.kappa_1 * make_Dirichlet_jump(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, level_set_function, dirichlet_jump);
             f.tail(cbs) += make_flux_jump(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, neumann_jump);
 
             
