@@ -1700,6 +1700,7 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
     using RealType = typename Mesh::coordinate_type;
 
     /************** DEFINE PROBLEM RHS, SOLUTION AND BCS **************/
+#if 0 // test case 1 : a domain decomposition
     auto rhs_fun = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
         return 2.0 * M_PI * M_PI * std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
     };
@@ -1730,13 +1731,75 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
     auto neumann_jump = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
         return 0.0; //2.0;
     };
-    
 
-    timecounter tc;
+    
+    struct params<RealType> parms;
+
+    parms.kappa_1 = 1.0;
+    parms.kappa_2 = 1.0;
+
+#elif 1 // test case 2 : a constrast problem
 
     struct params<RealType> parms;
 
-    parms.kappa_2 = 1;
+    parms.kappa_1 = 1.0;
+    parms.kappa_2 = 10000.0;
+    
+    auto rhs_fun = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
+        return -4.0;
+    };
+    auto sol_fun = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
+        RealType r2;
+        RealType kappa1 = 1.0;
+        RealType kappa2 = 10000.0;
+        
+        r2 = (pt.x() - 0.5) * (pt.x() - 0.5) + (pt.y() - 0.5) * (pt.y() - 0.5);
+        if( r2 < 1.0/9 )
+            return r2 / kappa1;
+        
+        else
+            return r2 / kappa2 + 1.0/9 * ( 1.0 / kappa1 - 1.0 / kappa2 );
+    };
+
+    auto sol_grad = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> auto {
+        Matrix<RealType, 1, 2> ret;
+
+        RealType kappa1 = 1.0;
+        RealType kappa2 = 10000.0;
+
+        RealType r2 = (pt.x() - 0.5) * (pt.x() - 0.5) + (pt.y() - 0.5) * (pt.y() - 0.5);
+
+        if( r2 < 1.0/9 )
+        {
+            ret(0) = 2 * ( pt.x() - 0.5 ) / kappa1 ;
+            ret(1) = 2 * ( pt.y() - 0.5 ) / kappa1 ;
+        }
+        else
+        {
+            ret(0) = 2 * ( pt.x() - 0.5 ) / kappa2 ;
+            ret(1) = 2 * ( pt.y() - 0.5 ) / kappa2 ;
+        }
+        
+        return ret;
+    };
+
+    auto bcs_fun = [&](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
+        return sol_fun(pt);
+    };
+
+
+    auto dirichlet_jump = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
+        return 0.0;
+    };
+
+    auto neumann_jump = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
+        return 0.0;
+    };
+
+#elif 0 // test case 3 : a jump problem
+#endif
+
+    timecounter tc;
 
     /************** ASSEMBLE PROBLEM **************/
     hho_degree_info hdi(degree+1, degree);
@@ -2170,7 +2233,7 @@ int main(int argc, char **argv)
     tc.toc();
     std::cout << bold << yellow << "Mesh generation: " << tc << " seconds" << reset << std::endl;
     /************** LEVEL SET FUNCTION **************/
-    RealType radius = 0.35;
+    RealType radius = 1.0/3.0;
     auto level_set_function = circle_level_set<RealType>(radius, 0.5, 0.5);
     //auto level_set_function = line_level_set<RealType>(0.5);
     /************** DO cutHHO MESH PROCESSING **************/
