@@ -1738,7 +1738,7 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
     parms.kappa_1 = 1.0;
     parms.kappa_2 = 1.0;
 
-#elif 1 // test case 2 : a constrast problem
+#elif 0 // test case 2 : a constrast problem
 
     struct params<RealType> parms;
 
@@ -1796,7 +1796,73 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
         return 0.0;
     };
 
-#elif 0 // test case 3 : a jump problem
+#elif 1 // test case 3 : a jump problem
+    auto rhs_fun = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
+        RealType r2 = (pt.x() - 0.5) * (pt.x() - 0.5) + (pt.y() - 0.5) * (pt.y() - 0.5);
+        if(r2 < 1.0/9) {
+            return 2.0 * M_PI * M_PI * std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
+        }
+        else
+        {
+            return 0.0;
+        }
+    };
+    auto sol_fun = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
+        //return std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
+        RealType r2 = (pt.x() - 0.5) * (pt.x() - 0.5) + (pt.y() - 0.5) * (pt.y() - 0.5);
+        if(r2 < 1.0/9) {
+            return std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
+        }
+        else
+        {
+            return exp(pt.x()) * std::cos(pt.y());
+        }
+    };
+
+    auto sol_grad = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> auto {
+        Matrix<RealType, 1, 2> ret;
+
+        RealType r2 = (pt.x() - 0.5) * (pt.x() - 0.5) + (pt.y() - 0.5) * (pt.y() - 0.5);
+        if(r2 < 1.0/9) {
+            ret(0) = M_PI * std::cos(M_PI*pt.x()) * std::sin(M_PI*pt.y());
+            ret(1) = M_PI * std::sin(M_PI*pt.x()) * std::cos(M_PI*pt.y());
+        }
+        else
+        {
+            ret(0) = exp(pt.x()) * std::cos(pt.y());
+            ret(1) = - exp(pt.x()) * std::sin(pt.y());
+        }
+        
+        return ret;
+    };
+
+    auto bcs_fun = [&](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
+        return sol_fun(pt);
+    };
+
+
+    auto dirichlet_jump = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
+        return std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y()) - exp(pt.x()) * std::cos(pt.y());
+    };
+
+    auto neumann_jump = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
+        Matrix<RealType, 1, 2> normal;
+        normal(0) = 2*pt.x() - 1.0;
+        normal(1) = 2*pt.y() - 1.0;
+
+        normal = normal/normal.norm();
+
+        
+        return (M_PI * std::cos(M_PI*pt.x()) * std::sin(M_PI*pt.y()) - exp(pt.x()) * std::cos(pt.y())) * normal(0) + ( M_PI * std::sin(M_PI*pt.x()) * std::cos(M_PI*pt.y()) + exp(pt.x()) * std::sin(pt.y()) ) * normal(1);
+    };
+
+    
+    struct params<RealType> parms;
+
+    parms.kappa_1 = 1.0;
+    parms.kappa_2 = 1.0;
+
+
 #endif
 
     timecounter tc;
