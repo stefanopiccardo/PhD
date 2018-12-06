@@ -719,7 +719,8 @@ template<typename T, size_t ET>
 Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>
 make_hho_cut_stabilization(const cuthho_mesh<T, ET>& msh,
                            const typename cuthho_mesh<T, ET>::cell_type& cl,
-                           const hho_degree_info& di, element_location where)
+                           const hho_degree_info& di, element_location where,
+                           const params<T>& parms = params<T>())
 {
     if ( !is_cut(msh, cl) )
         return make_hho_naive_stabilization(msh, cl, di);
@@ -767,6 +768,15 @@ make_hho_cut_stabilization(const cuthho_mesh<T, ET>& msh,
         oper.block(0, 0, fbs, cbs) = mass.llt().solve(trace);
 
         data += oper.transpose() * mass * oper * (1./hT);
+    }
+
+
+    auto iqps = integrate_interface(msh, cl, 2*celdeg, element_location::IN_NEGATIVE_SIDE);
+    for (auto& qp : iqps)
+    {
+        const auto c_phi  = cb.eval_basis(qp.first);
+        
+        data += qp.second * c_phi * c_phi.transpose() * parms.eta / hT;
     }
 
     return data;
