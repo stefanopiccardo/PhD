@@ -1117,7 +1117,8 @@ run_cuthho_fictdom(const Mesh& msh, const Function& level_set_function, size_t d
         }
         else
         {
-            auto gr = make_hho_laplacian(msh, cl, level_set_function, hdi, where);
+            // auto gr = make_hho_laplacian(msh, cl, level_set_function, hdi, where);
+            auto gr = make_hho_gradrec_vector(msh, cl, level_set_function, hdi, where);
             Matrix<RealType, Dynamic, Dynamic> stab = make_hho_cut_stabilization(msh, cl, hdi, where);
             Matrix<RealType, Dynamic, Dynamic> lc = gr.second + stab;
             Matrix<RealType, Dynamic, 1> f = Matrix<RealType, Dynamic, 1>::Zero(lc.rows());
