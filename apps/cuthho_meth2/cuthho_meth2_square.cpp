@@ -601,7 +601,7 @@ make_hho_gradrec_vector(const Mesh& msh, const typename Mesh::cell_type& cl, con
 
     if(celdeg > 0)
     {
-        const auto qps = integrate(msh, cl, celdeg - 1 + facdeg);
+        const auto qps = integrate(msh, cl, celdeg - 1 + facdeg, where);
         for (auto& qp : qps)
         {
             const auto c_dphi = cb.eval_gradients(qp.point());
@@ -618,7 +618,7 @@ make_hho_gradrec_vector(const Mesh& msh, const typename Mesh::cell_type& cl, con
         const auto n  = normal(msh, cl, fc);
         auto fb = make_scalar_monomial_basis(msh, fc, facdeg);
 
-        const auto qps_f = integrate(msh, fc, facdeg + std::max(facdeg, celdeg));
+        const auto qps_f = integrate(msh, fc, facdeg + std::max(facdeg, celdeg), where);
         for (auto& qp : qps_f)
         {
             const vector_type c_phi      = cb.eval_functions(qp.point());
@@ -631,6 +631,18 @@ make_hho_gradrec_vector(const Mesh& msh, const typename Mesh::cell_type& cl, con
         }
     }
 
+
+    const auto iqps = integrate_interface(msh, cl, 2*graddeg, element_location::IN_NEGATIVE_SIDE);
+    for (auto& qp : iqps)
+    {
+        const auto c_phi        = cb.eval_functions(qp.point());
+        const auto g_phi        = gb.eval_functions(qp.point());
+
+        Matrix<T,2,1> n = level_set_function.normal(qp.point());
+        
+        gr_rhs.block(0 , 0, gbs, cbs) -= qp.weight() * (g_phi * n) * c_phi.transpose();
+    }
+    
     matrix_type oper = gr_lhs.ldlt().solve(gr_rhs);
     matrix_type data = gr_rhs.transpose() * oper;
 
