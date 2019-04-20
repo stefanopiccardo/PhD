@@ -116,7 +116,8 @@ make_hho_naive_stabilization(const Mesh& msh, const typename Mesh::cell_type& cl
 
     cell_basis<Mesh,T> cb(msh, cl, celdeg);
 
-    auto h = measure(msh, cl);
+    // auto h = measure(msh, cl);
+    auto h = diameter(msh, cl);
 
     for (size_t i = 0; i < fcs.size(); i++)
     {

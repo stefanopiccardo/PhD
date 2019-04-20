@@ -341,7 +341,7 @@ make_hho_laplacian(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, 
         stiff += qp.second * dphi * dphi.transpose();
     }
 
-    auto hT = measure(msh, cl);
+    auto hT = diameter(msh, cl);
 
     /* Interface term */
     auto iqps = integrate_interface(msh, cl, 2*recdeg, where);
@@ -431,7 +431,7 @@ make_hho_laplacian_interface(const cuthho_mesh<T, ET>& msh,
         stiff.block(rbs,rbs,rbs,rbs) += parms.kappa_2 * qp.second * dphi * dphi.transpose();
     }
 
-    auto hT = measure(msh, cl);
+    auto hT = diameter(msh, cl);
 
     /* Interface term */
     auto iqps = integrate_interface(msh, cl, 2*recdeg, element_location::IN_NEGATIVE_SIDE);
@@ -530,7 +530,7 @@ check_eigs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cel
     if ( is_cut(msh, cl) )
     {
 
-        auto hT = measure(msh, cl);
+        auto hT = diameter(msh, cl);
 
         /* Interface term */
         auto iqps = integrate_interface(msh, cl, 2*recdeg, where);
@@ -586,7 +586,7 @@ make_hho_cut_stabilization(const cuthho_mesh<T, ET>& msh,
 
     cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, celdeg);
 
-    auto hT = measure(msh, cl);
+    auto hT = diameter(msh, cl);
 
     for (size_t i = 0; i < num_faces; i++)
     {
@@ -632,7 +632,7 @@ make_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_
         cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, degree);
         auto cbs = cb.size();
 
-        auto hT = measure(msh, cl);
+        auto hT = diameter(msh, cl);
 
         Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs);
 
@@ -705,7 +705,7 @@ make_Dirichlet_jump(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T,
     if( location(msh, cl) != element_location::ON_INTERFACE )
         return ret;
 
-    auto hT = measure(msh, cl);
+    auto hT = diameter(msh, cl);
     
     if(where == element_location::IN_NEGATIVE_SIDE) {
         auto qpsi = integrate_interface(msh, cl, 2*degree, element_location::IN_NEGATIVE_SIDE );
