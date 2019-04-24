@@ -654,14 +654,18 @@ make_hho_gradrec_vector(const cuthho_mesh<T, ET>& msh, const typename cuthho_mes
     return std::make_pair(oper, data);
 }
 
-
+//// make_hho_gradrec_vector_interface
+// return the gradient reconstruction for the interface pb
+// method = 1 -> no terms on the interface (bold G)
+// method = 2 -> terms on the interface scaled by 0.5 (tilde bold G)
+// method = 3 -> terms on the interface scaled by 1 (hat bold G)
 template<typename T, size_t ET, typename Function>
 std::pair<   Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>,
              Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>  >
 make_hho_gradrec_vector_interface(const cuthho_mesh<T, ET>& msh,
                                   const typename cuthho_mesh<T, ET>::cell_type& cl,
                                   const Function& level_set_function, const hho_degree_info& di,
-                                  element_location where)
+                                  element_location where, size_t method)
 {
 
     if ( !is_cut(msh, cl) )
@@ -725,7 +729,7 @@ make_hho_gradrec_vector_interface(const cuthho_mesh<T, ET>& msh,
         }
     }
 
-    
+    // term on the interface
     const auto iqps = integrate_interface(msh, cl, celdeg + graddeg, element_location::IN_NEGATIVE_SIDE);
     for (auto& qp : iqps)
     {
@@ -738,7 +742,12 @@ make_hho_gradrec_vector_interface(const cuthho_mesh<T, ET>& msh,
         gr_rhs.block(0 , 0, gbs, cbs) -= qp_g_phi_n * c_phi.transpose();
         gr_rhs.block(0 , cbs, gbs, cbs) += qp_g_phi_n * c_phi.transpose();
     }
+    if (method == 1) gr_rhs = 0.0 * gr_rhs;
+    else if (method == 2) gr_rhs = 0.5 * gr_rhs;
+    else if (method == 3) {}
+    else throw std::invalid_argument("Method should be 1, 2 or 3");
 
+    // other terms
     if(where == element_location::IN_NEGATIVE_SIDE)
     {
         gr_rhs.block(0, 0, gbs, cbs) += rhs_tmp.block(0, 0, gbs, cbs);
@@ -894,13 +903,18 @@ make_hho_cut_stabilization(const cuthho_mesh<T, ET>& msh,
 
 
 
-
+//// make_hho_stabilization_interface
+// stabilization terms
+// method = 1 : negative Nitsche's terms (for bold G -- bold G)
+// method = 2 : no Nitsche's terms (for hat bold G -- bold G .or. tilde bold G -- tilde bold G)
+// method = 3 : positive Nitsche's terms (for hat bold G -- hat bold G)
 template<typename T, size_t ET, typename Function>
 Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>
 make_hho_stabilization_interface(const cuthho_mesh<T, ET>& msh,
                                  const typename cuthho_mesh<T, ET>::cell_type& cl,
                                  const Function& level_set_function,
-                                 const hho_degree_info& di, const params<T>& parms = params<T>())
+                                 const hho_degree_info& di, const size_t method,
+                                 const params<T>& parms = params<T>())
 {
     if ( !is_cut(msh, cl) )
         throw std::invalid_argument("The cell is not cut ...");
@@ -967,10 +981,20 @@ make_hho_stabilization_interface(const cuthho_mesh<T, ET>& msh,
     data.block(cbs, 0, cbs, cbs) -= parms.kappa_1 * term_1;
     data.block(cbs, cbs, cbs, cbs) += (parms.kappa_1 - parms.kappa_2) * term_1;
 
-    data.block(0, cbs, cbs, cbs) += parms.kappa_2 * term_2;
-    data.block(cbs, 0, cbs, cbs) += parms.kappa_2 * term_2.transpose();
-    data.block(cbs, cbs, cbs, cbs) -= parms.kappa_2 * term_2;
-    data.block(cbs, cbs, cbs, cbs) -= parms.kappa_2 * term_2.transpose();
+    if (method == 1)
+    {
+        data.block(0, 0, cbs, cbs) -= parms.kappa_1 * term_2;
+        data.block(0, 0, cbs, cbs) -= parms.kappa_1 * term_2.transpose();
+        data.block(cbs, 0, cbs, cbs) += parms.kappa_1 * term_2;
+        data.block(0, cbs, cbs, cbs) += parms.kappa_1 * term_2.transpose();
+    }
+    if (method == 3)
+    {
+        data.block(0, cbs, cbs, cbs) += parms.kappa_2 * term_2;
+        data.block(cbs, 0, cbs, cbs) += parms.kappa_2 * term_2.transpose();
+        data.block(cbs, cbs, cbs, cbs) -= parms.kappa_2 * term_2;
+        data.block(cbs, cbs, cbs, cbs) -= parms.kappa_2 * term_2.transpose();
+    }
     
     return data;
 }
@@ -2299,11 +2323,11 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
 
             
             auto gr_n = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
-                                                          element_location::IN_NEGATIVE_SIDE);
+                                                          element_location::IN_NEGATIVE_SIDE, 3);
             auto gr_p = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
-                                                          element_location::IN_POSITIVE_SIDE);
+                                                          element_location::IN_POSITIVE_SIDE, 3);
 
-            auto stab = make_hho_stabilization_interface(msh, cl, level_set_function, hdi, parms);
+            auto stab = make_hho_stabilization_interface(msh, cl, level_set_function, hdi, 3, parms);
                         
             Matrix<RealType, Dynamic, Dynamic> lc = stab + parms.kappa_1 * gr_n.second
                 + parms.kappa_2 * gr_p.second;
