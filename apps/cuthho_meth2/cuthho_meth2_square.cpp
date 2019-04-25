@@ -2543,6 +2543,7 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
 
     tc.tic();
     RealType    H1_error = 0.0;
+    RealType    L2_error = 0.0;
     size_t      cell_i   = 0;
     for (auto& cl : msh.cells)
     {
@@ -2617,6 +2618,9 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
                 auto v = cell_dofs_n.dot(t_phi);
                 uT_gp->add_data(qp.first, v);
                 
+                /* Compute L2-error */
+                L2_error += qp.second * (sol_fun(qp.first) - v) * (sol_fun(qp.first) - v);
+
                 RealType Ru_val = rec_dofs.head(cbs).dot( t_phi );
                 Ru_gp->add_data( qp.first, Ru_val );
             }
@@ -2636,6 +2640,9 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
                 auto t_phi = cb.eval_basis( qp.first );
                 auto v = cell_dofs_p.dot(t_phi);
                 uT_gp->add_data(qp.first, v);
+
+                /* Compute L2-error */
+                L2_error += qp.second * (sol_fun(qp.first) - v) * (sol_fun(qp.first) - v);
 
                 RealType Ru_val = rec_dofs.tail(cbs).dot( t_phi );
                 Ru_gp->add_data( qp.first, Ru_val );
@@ -2665,6 +2672,9 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
                 auto v = cell_dofs.dot(t_phi);
                 uT_gp->add_data(qp.first, v);
 
+                /* Compute L2-error */
+                L2_error += qp.second * (sol_fun(qp.first) - v) * (sol_fun(qp.first) - v);
+
                 RealType Ru_val = rec_dofs.dot( t_phi.tail(cbs-1) ) + locdata(0);
                 Ru_gp->add_data( qp.first, Ru_val );
             }
@@ -2674,6 +2684,7 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
     }
 
     std::cout << bold << green << "Energy-norm absolute error:           " << std::sqrt(H1_error) << std::endl;
+    std::cout << bold << green << "L2-norm absolute error:           " << std::sqrt(L2_error) << std::endl;
 
     postoutput.add_object(uT_gp);
     postoutput.add_object(Ru_gp);
