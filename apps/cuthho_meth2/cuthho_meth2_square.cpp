@@ -1106,7 +1106,7 @@ make_flux_jump(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>:
 template<typename T, size_t ET, typename F1, typename F2>
 Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, 1>
 make_Dirichlet_jump(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
-                   size_t degree, const element_location where, const F1& level_set_function, 
+                    size_t degree, const element_location where, const F1& level_set_function,
                     const F2& dir_jump, const size_t method, const params<T>& parms = params<T>())
 {
     cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, degree);
@@ -1165,6 +1165,80 @@ make_Dirichlet_jump(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T,
     if (method == 4 && where == element_location::IN_POSITIVE_SIDE)
         return parms.kappa_2 * term2 - parms.kappa_1 * term1;
 }
+
+
+////////////////////////  STATIC CONDENSATION  //////////////////////////
+template<typename T>
+std::pair<   Matrix<T, Dynamic, Dynamic>, Matrix<T, Dynamic, 1>  >
+static_condensation_compute(const Matrix<T, Dynamic, Dynamic> lhs, const Matrix<T, Dynamic, 1> rhs,
+                            const size_t cell_size, const size_t face_size)
+{
+    size_t size_tot = cell_size + face_size;
+    assert(lhs.cols() == size_tot && lhs.rows() == size_tot);
+    assert(rhs.rows() == size_tot || rhs.rows() == cell_size);
+
+    Matrix<T, Dynamic, Dynamic> lhs_sc = Matrix<T, Dynamic, Dynamic>::Zero(face_size, face_size);
+    Matrix<T, Dynamic, 1> rhs_sc = Matrix<T, Dynamic, 1>::Zero(face_size);
+
+
+    // sub--lhs
+    Matrix<T, Dynamic, Dynamic> K_TT = lhs.topLeftCorner(cell_size, cell_size);
+    Matrix<T, Dynamic, Dynamic> K_TF = lhs.topRightCorner(cell_size, face_size);
+    Matrix<T, Dynamic, Dynamic> K_FT = lhs.bottomLeftCorner(face_size, cell_size);
+    Matrix<T, Dynamic, Dynamic> K_FF = lhs.bottomRightCorner(face_size, face_size);
+
+    // sub--rhs
+    Matrix<T, Dynamic, 1> cell_rhs = Matrix<T, Dynamic, 1>::Zero(cell_size);
+    Matrix<T, Dynamic, 1> face_rhs = Matrix<T, Dynamic, 1>::Zero(face_size);
+    if(rhs.rows() == cell_size)
+        cell_rhs = rhs;
+    else
+    {
+        cell_rhs = rhs.head(cell_size);
+        face_rhs = rhs.tail(face_size);
+    }
+
+    // static condensation
+    auto K_TT_ldlt = K_TT.ldlt();
+    Matrix<T, Dynamic, Dynamic> AL = K_TT_ldlt.solve(K_TF);
+    Matrix<T, Dynamic, 1> bL = K_TT_ldlt.solve(cell_rhs);
+
+    lhs_sc = K_FF - K_FT * AL;
+    rhs_sc = face_rhs - K_FT * bL;
+
+    return std::make_pair(lhs_sc, rhs_sc);
+}
+
+template<typename T>
+Matrix<T, Dynamic, 1>
+static_condensation_recover(const Matrix<T, Dynamic, Dynamic> lhs, const Matrix<T, Dynamic, 1> rhs,
+                            const size_t cell_size, const size_t face_size,
+                            const Matrix<T, Dynamic, 1> solF)
+{
+    size_t size_tot = cell_size + face_size;
+    assert(lhs.cols() == size_tot && lhs.rows() == size_tot);
+    assert(rhs.rows() == size_tot || rhs.rows() == cell_size);
+    assert(solF.rows() == face_size);
+
+    // sub--lhs
+    Matrix<T, Dynamic, Dynamic> K_TT = lhs.topLeftCorner(cell_size, cell_size);
+    Matrix<T, Dynamic, Dynamic> K_TF = lhs.topRightCorner(cell_size, face_size);
+
+    // sub--rhs
+    Matrix<T, Dynamic, 1> cell_rhs = Matrix<T, Dynamic, 1>::Zero(cell_size);
+    cell_rhs = rhs.head(cell_size);
+
+    // recover cell solution
+    Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(size_tot);
+
+    ret.head(cell_size) = K_TT.ldlt().solve(cell_rhs - K_TF*solF);
+    ret.tail(face_size) = solF;
+
+    return ret;
+}
+
+
+///////////////////////////////   TESTS    //////////////////////////////
 
 
 template<typename T>
@@ -1973,6 +2047,389 @@ auto make_interface_assembler(const Mesh& msh, hho_degree_info hdi)
     return interface_assembler<Mesh>(msh, hdi);
 }
 
+////////////////////////////////////////////
+
+template<typename Mesh>
+class interface_condensed_assembler
+{
+    using T = typename Mesh::coordinate_type;
+    std::vector<size_t>                 face_table;
+    size_t num_all_faces;
+
+    hho_degree_info                     di;
+
+    std::vector< Triplet<T> >           triplets;
+
+    class assembly_index
+    {
+        size_t  idx;
+        bool    assem;
+
+    public:
+        assembly_index(size_t i, bool as)
+            : idx(i), assem(as)
+        {}
+
+        operator size_t() const
+        {
+            if (!assem)
+                throw std::logic_error("Invalid assembly_index");
+
+            return idx;
+        }
+
+        bool assemble() const
+        {
+            return assem;
+        }
+
+        friend std::ostream& operator<<(std::ostream& os, const assembly_index& as)
+        {
+            os << "(" << as.idx << "," << as.assem << ")";
+            return os;
+        }
+    };
+
+public:
+
+    SparseMatrix<T>         LHS;
+    Matrix<T, Dynamic, 1>   RHS;
+
+    interface_condensed_assembler(const Mesh& msh, hho_degree_info hdi)
+        : di(hdi)
+    {
+        auto is_dirichlet = [&](const typename Mesh::face_type& fc) -> bool {
+            return fc.is_boundary && fc.bndtype == boundary::DIRICHLET;
+        };
+
+        num_all_faces = 0; /* counts faces with dup. unknowns */
+        for (auto& fc : msh.faces)
+        {
+            if (location(msh, fc) == element_location::ON_INTERFACE)
+                num_all_faces += 2;
+            else
+                num_all_faces += 1;
+        }
+
+        /* We assume that cut cells can not have dirichlet faces */
+        auto num_dirichlet_faces = std::count_if(msh.faces.begin(), msh.faces.end(), is_dirichlet);
+        auto num_other_faces = num_all_faces - num_dirichlet_faces;
+
+        face_table.resize( msh.faces.size() );
+
+        size_t compressed_offset = 0;
+        for (size_t i = 0; i < msh.faces.size(); i++)
+        {
+            auto fc = msh.faces.at(i);
+            if ( !is_dirichlet(fc) )
+            {
+                face_table.at(i) = compressed_offset;
+                if ( location(msh, fc) == element_location::ON_INTERFACE )
+                    compressed_offset += 2;
+                else
+                    compressed_offset += 1;
+            }
+        }
+
+        auto facdeg = di.face_degree();
+        auto fbs = face_basis<Mesh,T>::size(facdeg);
+
+        auto system_size = fbs * num_other_faces;
+
+        LHS = SparseMatrix<T>( system_size, system_size );
+        RHS = Matrix<T, Dynamic, 1>::Zero( system_size );
+    }
+
+    void dump_tables() const
+    {
+        //std::cout << "Compress table: " << std::endl;
+        //for (size_t i = 0; i < compress_table.size(); i++)
+        //    std::cout << i << " -> " << compress_table.at(i) << std::endl;
+    }
+
+    template<typename Function>
+    void
+    assemble(const Mesh& msh, const typename Mesh::cell_type& cl,
+             const Matrix<T, Dynamic, Dynamic>& lhs, const Matrix<T, Dynamic, 1>& rhs,
+             const Function& dirichlet_bf)
+    {
+        if (location(msh, cl) == element_location::ON_INTERFACE)
+            throw std::invalid_argument("UNcut cell expected.");
+
+        auto celdeg = di.cell_degree();
+        auto facdeg = di.face_degree();
+
+        auto cbs = cell_basis<Mesh,T>::size(celdeg);
+        auto fbs = face_basis<Mesh,T>::size(facdeg);
+
+        auto fcs = faces(msh, cl);
+        auto num_faces = fcs.size();
+        size_t f_dofs = num_faces * fbs;
+
+        // static condensation
+        auto mat_sc = static_condensation_compute(lhs, rhs, cbs, f_dofs);
+        Matrix<T, Dynamic, Dynamic> lhs_sc = mat_sc.first;
+        Matrix<T, Dynamic, 1> rhs_sc = mat_sc.second;
+
+        std::vector<assembly_index> asm_map;
+        asm_map.reserve(f_dofs);
+
+        Matrix<T, Dynamic, 1> dirichlet_data = Matrix<T, Dynamic, 1>::Zero(num_faces*fbs);
+
+        for (size_t face_i = 0; face_i < num_faces; face_i++)
+        {
+            auto fc = fcs[face_i];
+            auto face_offset = offset(msh, fc);
+            auto face_LHS_offset = face_table.at(face_offset) * fbs;
+
+            bool dirichlet = fc.is_boundary && fc.bndtype == boundary::DIRICHLET;
+
+            for (size_t i = 0; i < fbs; i++)
+                asm_map.push_back( assembly_index(face_LHS_offset+i, !dirichlet) );
+
+            if (dirichlet)
+            {
+                Matrix<T, Dynamic, Dynamic> mass = make_mass_matrix(msh, fc, facdeg);
+                Matrix<T, Dynamic, 1> rhs = make_rhs(msh, fc, facdeg, dirichlet_bf);
+                dirichlet_data.block(face_i*fbs, 0, fbs, 1) = mass.llt().solve(rhs);
+            }
+        }
+
+        assert( asm_map.size() == lhs_sc.rows() && asm_map.size() == lhs_sc.cols() );
+
+        for (size_t i = 0; i < lhs_sc.rows(); i++)
+        {
+            if (!asm_map[i].assemble())
+                continue;
+
+            for (size_t j = 0; j < lhs_sc.cols(); j++)
+            {
+                if ( asm_map[j].assemble() )
+                    triplets.push_back( Triplet<T>(asm_map[i], asm_map[j], lhs_sc(i,j)) );
+                else
+                    RHS(asm_map[i]) -= lhs_sc(i,j)*dirichlet_data(j);
+            }
+        }
+
+
+        // RHS
+        for (size_t i = 0; i < lhs_sc.rows(); i++)
+        {
+            if (!asm_map[i].assemble())
+                continue;
+
+            RHS(asm_map[i]) += rhs_sc(i);
+        }
+    } // assemble()
+
+    void
+    assemble_cut(const Mesh& msh, const typename Mesh::cell_type& cl,
+             const Matrix<T, Dynamic, Dynamic>& lhs, const Matrix<T, Dynamic, 1>& rhs)
+    {
+        if (location(msh, cl) != element_location::ON_INTERFACE)
+            throw std::invalid_argument("Cut cell expected.");
+
+        auto celdeg = di.cell_degree();
+        auto facdeg = di.face_degree();
+
+        auto cbs = cell_basis<Mesh,T>::size(celdeg);
+        auto fbs = face_basis<Mesh,T>::size(facdeg);
+
+        auto fcs = faces(msh, cl);
+        auto num_faces = fcs.size();
+
+        // static condensation
+        auto mat_sc = static_condensation_compute(lhs, rhs, 2*cbs, 2*num_faces*fbs);
+        Matrix<T, Dynamic, Dynamic> lhs_sc = mat_sc.first;
+        Matrix<T, Dynamic, 1> rhs_sc = mat_sc.second;
+
+        std::vector<assembly_index> asm_map;
+        asm_map.reserve( 2*num_faces*fbs );
+
+
+        for (size_t face_i = 0; face_i < num_faces; face_i++)
+        {
+            auto fc = fcs[face_i];
+            auto face_offset = offset(msh, fc);
+            auto face_LHS_offset = face_table.at(face_offset) * fbs;
+
+            bool dirichlet = fc.is_boundary && fc.bndtype == boundary::DIRICHLET;
+            if ( dirichlet )
+                throw std::invalid_argument("Dirichlet boundary on cut cell not supported.");
+
+            for (size_t i = 0; i < fbs; i++)
+                asm_map.push_back( assembly_index(face_LHS_offset+i, true) );
+        }
+
+        for (size_t face_i = 0; face_i < num_faces; face_i++)
+        {
+            auto fc = fcs[face_i];
+            auto face_offset = offset(msh, fc);
+
+            auto d = (location(msh, fc) == element_location::ON_INTERFACE) ? fbs : 0;
+
+            auto face_LHS_offset = face_table.at(face_offset) * fbs + d;
+
+            bool dirichlet = fc.is_boundary && fc.bndtype == boundary::DIRICHLET;
+            if ( dirichlet )
+                throw std::invalid_argument("Dirichlet boundary on cut cell not supported.");
+
+            for (size_t i = 0; i < fbs; i++)
+                asm_map.push_back( assembly_index(face_LHS_offset+i, true) );
+        }
+
+        assert( asm_map.size() == lhs_sc.rows() && asm_map.size() == lhs_sc.cols() );
+
+        for (size_t i = 0; i < lhs_sc.rows(); i++)
+        {
+            if (!asm_map[i].assemble())
+                continue;
+
+            for (size_t j = 0; j < lhs_sc.cols(); j++)
+            {
+                if ( asm_map[j].assemble() )
+                    triplets.push_back( Triplet<T>(asm_map[i], asm_map[j], lhs_sc(i,j)) );
+            }
+        }
+
+        size_t face_offset_loc = 0;
+        for (size_t face_i = 0; face_i < num_faces; face_i++)
+        {
+            auto fc = fcs[face_i];
+            auto face_offset = offset(msh, fc);
+
+            auto face_LHS_offset = face_table.at(face_offset) * fbs;
+
+            if( location(msh, fc) == element_location::ON_INTERFACE )
+            {
+                RHS.block(face_LHS_offset , 0 , fbs , 1)
+                    += rhs_sc.block(face_i * fbs , 0 , fbs , 1);
+
+                RHS.block(face_LHS_offset + fbs , 0 , fbs , 1)
+                    += rhs_sc.block((num_faces + face_i) * fbs , 0 , fbs , 1);
+            }
+            else if( location(msh, fc) == element_location::IN_NEGATIVE_SIDE )
+            {
+                RHS.block(face_LHS_offset , 0 , fbs , 1)
+                    += rhs_sc.block(face_i * fbs , 0 , fbs , 1);
+            }
+            else if( location(msh, fc) == element_location::IN_POSITIVE_SIDE )
+            {
+                RHS.block(face_LHS_offset , 0 , fbs , 1)
+                    += rhs_sc.block((num_faces + face_i) * fbs , 0 , fbs , 1);
+            }
+            else
+                throw std::logic_error("shouldn't have arrived here...");
+        }
+    } // assemble_cut()
+
+
+    //// take_local_data
+    // loc_mat is the full loc matrix (cell + faces dofs)
+    // loc_rhs can be either cell rhs or full rhs
+    template<typename Function>
+    Matrix<T, Dynamic, 1>
+    take_local_data(const Mesh& msh, const typename Mesh::cell_type& cl,
+                    const Matrix<T, Dynamic, 1>& solution,
+                    const Function& dirichlet_bf,
+                    const element_location where, const Matrix<T, Dynamic, Dynamic> loc_mat,
+                    const Matrix<T, Dynamic, 1> loc_rhs)
+    {
+        auto celdeg = di.cell_degree();
+        auto facdeg = di.face_degree();
+
+        auto cbs = cell_basis<Mesh,T>::size(celdeg);
+        auto fbs = face_basis<Mesh,T>::size(facdeg);
+
+        auto fcs = faces(msh, cl);
+        auto num_faces = fcs.size();
+
+        Matrix<T, Dynamic, 1> solF;
+
+        if( location(msh, cl) == element_location::ON_INTERFACE )
+            solF = Matrix<T, Dynamic, 1>::Zero(2*num_faces*fbs);
+        else
+            solF = Matrix<T, Dynamic, 1>::Zero(num_faces*fbs);
+
+        for (size_t face_i = 0; face_i < num_faces; face_i++)
+        {
+            auto fc = fcs[face_i];
+
+            auto face_offset = offset(msh, fc);
+            size_t face_SOL_offset = face_table.at(face_offset) * fbs;
+            if ( location(msh, fc) == element_location::ON_INTERFACE )
+            {
+                // we assume that there is not boundary condition on cut cells
+                solF.block(face_i*fbs, 0, fbs, 1) = solution.block(face_SOL_offset, 0, fbs, 1);
+                solF.block( (num_faces+face_i)*fbs, 0, fbs, 1)
+                    = solution.block(face_SOL_offset + fbs, 0, fbs, 1);
+                continue;
+            }
+            // else
+
+            bool dirichlet = fc.is_boundary && fc.bndtype == boundary::DIRICHLET;
+
+            if (dirichlet)  // we assume that a cut cell has no Dirichlet faces
+            {
+                Matrix<T, Dynamic, Dynamic> mass = make_mass_matrix(msh, fc, facdeg);
+                Matrix<T, Dynamic, 1> rhs = make_rhs(msh, fc, facdeg, dirichlet_bf);
+                solF.block(face_i*fbs, 0, fbs, 1) = mass.llt().solve(rhs);
+                continue;
+            }
+
+            if( location(msh, cl) == element_location::ON_INTERFACE &&
+                location(msh, fc) == element_location::IN_POSITIVE_SIDE )
+            {
+                solF.block((num_faces+face_i)*fbs, 0, fbs, 1)
+                    = solution.block(face_SOL_offset, 0, fbs, 1);
+                continue;
+            }
+            // else
+            solF.block(face_i*fbs, 0, fbs, 1) = solution.block(face_SOL_offset, 0, fbs, 1);
+        }
+
+        // Recover the full solution
+        Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs + num_faces*fbs);
+
+        if( location(msh, cl) == element_location::ON_INTERFACE )
+        {
+            if( where == element_location::IN_NEGATIVE_SIDE )
+            {
+                ret.head(cbs) = static_condensation_recover(loc_mat, loc_rhs, 2*cbs, 2*num_faces*fbs, solF).head(cbs);
+                ret.tail(num_faces*fbs) = solF.head(num_faces*fbs);
+            }
+
+            if( where == element_location::IN_POSITIVE_SIDE )
+            {
+                ret.head(cbs) = static_condensation_recover(loc_mat, loc_rhs, 2*cbs, 2*num_faces*fbs, solF).block(cbs, 0, cbs, 1);
+                ret.tail(num_faces*fbs) = solF.tail(num_faces*fbs);
+            }
+        }
+        else
+        {
+            ret.head(cbs) = static_condensation_recover(loc_mat, loc_rhs, cbs, num_faces*fbs, solF).head(cbs);
+            ret.tail(num_faces*fbs) = solF;
+        }
+
+        return ret;
+    }
+
+    void finalize(void)
+    {
+        LHS.setFromTriplets( triplets.begin(), triplets.end() );
+        triplets.clear();
+    }
+};
+
+
+template<typename Mesh>
+auto make_interface_condensed_assembler(const Mesh& msh, hho_degree_info hdi)
+{
+    return interface_condensed_assembler<Mesh>(msh, hdi);
+}
+
+
+//////////////////////////
 
 
 
@@ -2152,6 +2609,174 @@ agglomerate_cells(const Mesh& msh, const typename Mesh::cell_type& cl_tgt,
 }
 
 
+template<typename T, size_t ET, typename F1, typename F2, typename F3, typename F4>
+std::pair<   Matrix<T, Dynamic, Dynamic>, Matrix<T, Dynamic, 1>  >
+compute_interface_contrib(const cuthho_mesh<T, ET>& msh,
+                          const typename cuthho_mesh<T, ET>::cell_type& cl,
+                          const F1& level_set_function, const F2& dir_jump,
+                          const F3& neumann_jump, const F4& rhs_fun,
+                          const size_t method, const hho_degree_info hdi,
+                          const params<T>& parms = params<T>())
+{
+    auto cbs = cell_basis<cuthho_poly_mesh<T>,T>::size(hdi.cell_degree());
+    auto gbs = vector_cell_basis<cuthho_poly_mesh<T>,T>::size(hdi.grad_degree());
+    auto fbs = face_basis<cuthho_poly_mesh<T>,T>::size(hdi.face_degree());
+    auto fcs = faces(msh, cl);
+    auto nfdofs = fcs.size()*fbs;
+
+    Matrix<T, Dynamic, Dynamic> lc;
+    Matrix<T, Dynamic, 1> f;
+
+    if( location(msh, cl) != element_location::ON_INTERFACE )
+    {
+        T kappa;
+        if ( location(msh, cl) == element_location::IN_NEGATIVE_SIDE )
+            kappa = parms.kappa_1;
+        else
+            kappa = parms.kappa_2;
+
+        auto gr = make_hho_gradrec_vector(msh, cl, hdi);
+        Matrix<T, Dynamic, Dynamic> stab = make_hho_naive_stabilization(msh, cl, hdi);
+        Matrix<T, Dynamic, Dynamic> lc = kappa * ( gr.second + stab );
+        f = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun);
+        return std::make_pair(lc, f);
+    }
+    // else
+
+    f = Matrix<T, Dynamic, 1>::Zero( 2*(cbs+nfdofs) );
+    f.head(cbs) = make_rhs(msh, cl, hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE, rhs_fun);
+    f.block(cbs, 0, cbs, 1) = make_rhs(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, rhs_fun);
+
+///////////////////////////////////////////////////////////////////////////////////////////
+    if (method == 1) // bold G -- bold G + negative Nitsche's terms
+    {
+        auto gr_n = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
+                                                      element_location::IN_NEGATIVE_SIDE, 1);
+        auto gr_p = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
+                                                      element_location::IN_POSITIVE_SIDE, 1);
+        auto stab = make_hho_stabilization_interface(msh, cl, level_set_function, hdi, 1, parms);
+
+        // LHS
+        lc = stab + parms.kappa_1 * gr_n.second + parms.kappa_2 * gr_p.second;
+
+        // complete RHS
+        // neg part
+        f.head(cbs) += make_Dirichlet_jump(msh, cl, hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE, level_set_function, dir_jump, 1, parms);
+        f.head(cbs) += make_flux_jump(msh, cl, hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE, neumann_jump);
+
+        // pos part
+        f.block(cbs, 0, cbs, 1) += make_Dirichlet_jump(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, level_set_function, dir_jump, 1, parms);
+
+    }
+///////////////////////////////////////////////////////////////////////////////////////////
+    else if (method == 2) // tilde bold G -- tilde bold G
+    {
+        auto gr_n = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
+                                                      element_location::IN_NEGATIVE_SIDE, 2);
+        auto gr_p = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
+                                                      element_location::IN_POSITIVE_SIDE, 2);
+        auto stab = make_hho_stabilization_interface(msh, cl, level_set_function, hdi, 2, parms);
+
+        // LHS
+        lc = stab + parms.kappa_1 * gr_n.second + parms.kappa_2 * gr_p.second;
+
+        // complete RHS
+        // neg part
+        f.head(cbs) += make_Dirichlet_jump(msh, cl, hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE, level_set_function, dir_jump, 2, parms);
+        f.head(cbs) += 0.5 * make_flux_jump(msh, cl, hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE, neumann_jump);
+
+        // pos part
+        f.block(cbs, 0, cbs, 1) += make_Dirichlet_jump(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, level_set_function, dir_jump, 2, parms);
+        f.block(cbs, 0, cbs, 1) += 0.5 * make_flux_jump(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, neumann_jump);
+
+        // rhs term with GR
+        vector_cell_basis<cuthho_poly_mesh<T>, T> gb( msh, cl, hdi.grad_degree() );
+        Matrix<T, Dynamic, 1> F_bis = Matrix<T, Dynamic, 1>::Zero( gbs );
+        auto iqps = integrate_interface(msh, cl, 2*hdi.grad_degree(),
+                                        element_location::IN_NEGATIVE_SIDE);
+        for (auto& qp : iqps)
+        {
+            const auto g_phi    = gb.eval_basis(qp.first);
+            const Matrix<T,2,1> n      = level_set_function.normal(qp.first);
+
+            F_bis += qp.second * dir_jump(qp.first) * g_phi * n;
+        }
+        f -= 0.5 * F_bis.transpose() * (parms.kappa_1 * gr_n.first + parms.kappa_2 * gr_p.first);
+    }
+///////////////////////////////////////////////////////////////////////////////////////////
+    else if (method == 3) // hat bold G -- bold G
+    {
+        auto gr_n = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
+                                                      element_location::IN_NEGATIVE_SIDE, 3);
+        auto gr_p = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
+                                                      element_location::IN_POSITIVE_SIDE, 1);
+        auto stab = make_hho_stabilization_interface(msh, cl, level_set_function, hdi, 3, parms);
+
+        // LHS
+        lc = stab + parms.kappa_1 * gr_n.second + parms.kappa_2 * gr_p.second;
+
+        // complete RHS
+        // neg part
+        f.head(cbs) += make_Dirichlet_jump(msh, cl, hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE, level_set_function, dir_jump, 3, parms);
+
+        // pos part
+        f.block(cbs, 0, cbs, 1) += make_Dirichlet_jump(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, level_set_function, dir_jump, 3, parms);
+        f.block(cbs, 0, cbs, 1) += make_flux_jump(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, neumann_jump);
+
+        // rhs term with GR
+        vector_cell_basis<cuthho_poly_mesh<T>, T> gb( msh, cl, hdi.grad_degree() );
+        Matrix<T, Dynamic, 1> F_bis = Matrix<T, Dynamic, 1>::Zero( gbs );
+        auto iqps = integrate_interface(msh, cl, 2*hdi.grad_degree(),
+                                        element_location::IN_NEGATIVE_SIDE);
+        for (auto& qp : iqps)
+        {
+            const auto g_phi    = gb.eval_basis(qp.first);
+            const Matrix<T,2,1> n      = level_set_function.normal(qp.first);
+
+            F_bis += qp.second * dir_jump(qp.first) * g_phi * n;
+        }
+        f -= F_bis.transpose() * (parms.kappa_1 * gr_n.first );
+
+    }
+///////////////////////////////////////////////////////////////////////////////////////////
+    else if (method == 4) // hat bold G -- hat bold G + positive Nitsche's terms
+    {
+        auto gr_n = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
+                                                      element_location::IN_NEGATIVE_SIDE, 3);
+        auto gr_p = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
+                                                      element_location::IN_POSITIVE_SIDE, 3);
+        auto stab = make_hho_stabilization_interface(msh, cl, level_set_function, hdi, 4, parms);
+
+        // LHS
+        lc = stab + parms.kappa_1 * gr_n.second + parms.kappa_2 * gr_p.second;
+
+        // complete RHS
+        // neg part
+        f.head(cbs) += make_Dirichlet_jump(msh, cl, hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE, level_set_function, dir_jump, 4, parms);
+
+        // pos part
+        f.block(cbs, 0, cbs, 1) += make_Dirichlet_jump(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, level_set_function, dir_jump, 4, parms);
+        f.block(cbs, 0, cbs, 1) += make_flux_jump(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, neumann_jump);
+
+        // rhs term with GR
+        vector_cell_basis<cuthho_poly_mesh<T>, T> gb( msh, cl, hdi.grad_degree() );
+        Matrix<T, Dynamic, 1> F_bis = Matrix<T, Dynamic, 1>::Zero( gbs );
+        auto iqps = integrate_interface(msh, cl, 2*hdi.grad_degree(),
+                                        element_location::IN_NEGATIVE_SIDE);
+        for (auto& qp : iqps)
+        {
+            const auto g_phi    = gb.eval_basis(qp.first);
+            const Matrix<T,2,1> n      = level_set_function.normal(qp.first);
+
+            F_bis += qp.second * dir_jump(qp.first) * g_phi * n;
+        }
+        f -= F_bis.transpose() * (parms.kappa_1 * gr_n.first + parms.kappa_2 * gr_p.first);
+    }
+////////////////////////////////////////////////////////////////////////////////////////////
+
+    return std::make_pair(lc, f);
+}
+
 
 template<typename Mesh, typename Function>
 void
@@ -2328,183 +2953,52 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
 
     timecounter tc;
 
+    bool sc = true; // static condensation
+
     /************** ASSEMBLE PROBLEM **************/
     hho_degree_info hdi(degree+1, degree);
 
     tc.tic();
     auto assembler = make_interface_assembler(msh, hdi);
+    auto assembler_sc = make_interface_condensed_assembler(msh, hdi);
     for (auto& cl : msh.cells)
     {
+        auto contrib = compute_interface_contrib(msh, cl, level_set_function, dirichlet_jump,
+                                                 neumann_jump, rhs_fun, method, hdi, parms);
+        auto lc = contrib.first;
+        auto f = contrib.second;
+
         if (location(msh, cl) != element_location::ON_INTERFACE)
         {
-            RealType kappa;
-            if ( location(msh, cl) == element_location::IN_NEGATIVE_SIDE )
-                kappa = parms.kappa_1;
+            if( sc )
+                assembler_sc.assemble(msh, cl, lc, f, bcs_fun);
             else
-                kappa = parms.kappa_2;
-
-            auto gr = make_hho_gradrec_vector(msh, cl, hdi);
-            Matrix<RealType, Dynamic, Dynamic> stab = make_hho_naive_stabilization(msh, cl, hdi);
-            Matrix<RealType, Dynamic, Dynamic> lc = kappa * ( gr.second + stab );
-            Matrix<RealType, Dynamic, 1> f = Matrix<RealType, Dynamic, 1>::Zero(lc.rows());
-            f = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun);
-            assembler.assemble(msh, cl, lc, f, bcs_fun);
+                assembler.assemble(msh, cl, lc, f, bcs_fun);
         }
         else
         {
-            auto cbs = cell_basis<cuthho_poly_mesh<RealType>,RealType>::size(hdi.cell_degree());
-            auto gbs = vector_cell_basis<cuthho_poly_mesh<RealType>,RealType>::size(hdi.grad_degree());
-            auto fbs = face_basis<cuthho_poly_mesh<RealType>,RealType>::size(hdi.face_degree());
-            auto fcs = faces(msh, cl);
-            auto nfdofs = fcs.size()*fbs;
-
-            Matrix<RealType, Dynamic, Dynamic> lc;
-            Matrix<RealType, Dynamic, 1> f = Matrix<RealType, Dynamic, 1>::Zero( 2*(cbs+nfdofs) );
-            f.head(cbs) = make_rhs(msh, cl, hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE, rhs_fun);
-            f.block(cbs, 0, cbs, 1) = make_rhs(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, rhs_fun);
-
-///////////////////////////////////////////////////////////////////////////////////////////
-            if (method == 1) // bold G -- bold G + negative Nitsche's terms
-            {
-                auto gr_n = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
-                                                              element_location::IN_NEGATIVE_SIDE, 1);
-                auto gr_p = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
-                                                              element_location::IN_POSITIVE_SIDE, 1);              
-                auto stab = make_hho_stabilization_interface(msh, cl, level_set_function, hdi, 1, parms);
-
-                // LHS
-                lc = stab + parms.kappa_1 * gr_n.second + parms.kappa_2 * gr_p.second;
-
-                // complete RHS
-                // neg part
-                f.head(cbs) += make_Dirichlet_jump(msh, cl, hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE, level_set_function, dirichlet_jump, 1, parms);
-                f.head(cbs) += make_flux_jump(msh, cl, hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE, neumann_jump);
-
-                // pos part
-                f.block(cbs, 0, cbs, 1) += make_Dirichlet_jump(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, level_set_function, dirichlet_jump, 1, parms);
-
-            }
-///////////////////////////////////////////////////////////////////////////////////////////
-            else if (method == 2) // tilde bold G -- tilde bold G
-            {
-                auto gr_n = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
-                                                              element_location::IN_NEGATIVE_SIDE, 2);
-                auto gr_p = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
-                                                              element_location::IN_POSITIVE_SIDE, 2);
-
-                auto stab = make_hho_stabilization_interface(msh, cl, level_set_function, hdi, 2, parms);
-
-                // LHS
-                lc = stab + parms.kappa_1 * gr_n.second + parms.kappa_2 * gr_p.second;
-
-                // complete RHS
-                // neg part
-                f.head(cbs) += make_Dirichlet_jump(msh, cl, hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE, level_set_function, dirichlet_jump, 2, parms);
-                f.head(cbs) += 0.5 * make_flux_jump(msh, cl, hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE, neumann_jump);
-
-                // pos part
-                f.block(cbs, 0, cbs, 1) += make_Dirichlet_jump(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, level_set_function, dirichlet_jump, 2, parms);
-                f.block(cbs, 0, cbs, 1) += 0.5 * make_flux_jump(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, neumann_jump);
-
-                // rhs term with GR
-                vector_cell_basis<cuthho_poly_mesh<RealType>, RealType> gb( msh, cl, hdi.grad_degree() );
-                Matrix<RealType, Dynamic, 1> F2 = Matrix<RealType, Dynamic, 1>::Zero( gbs );
-                auto iqps = integrate_interface(msh, cl, 2*hdi.grad_degree(),
-                                                element_location::IN_NEGATIVE_SIDE);
-                for (auto& qp : iqps)
-                {
-                    const auto g_phi    = gb.eval_basis(qp.first);
-                    const Matrix<RealType,2,1> n      = level_set_function.normal(qp.first);
-
-                    F2 += qp.second * dirichlet_jump(qp.first) * g_phi * n;
-                }
-                f -= 0.5 * F2.transpose() * (parms.kappa_1 * gr_n.first + parms.kappa_2 * gr_p.first);
-            }
-///////////////////////////////////////////////////////////////////////////////////////////
-            else if (method == 3) // hat bold G -- bold G
-            {
-                auto gr_n = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
-                                                              element_location::IN_NEGATIVE_SIDE, 3);
-                auto gr_p = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
-                                                              element_location::IN_POSITIVE_SIDE, 1);
-
-                auto stab = make_hho_stabilization_interface(msh, cl, level_set_function, hdi, 3, parms);
-
-                // LHS
-                lc = stab + parms.kappa_1 * gr_n.second + parms.kappa_2 * gr_p.second;
-
-                // complete RHS
-                // neg part
-                f.head(cbs) += make_Dirichlet_jump(msh, cl, hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE, level_set_function, dirichlet_jump, 3, parms);
-
-                // pos part
-                f.block(cbs, 0, cbs, 1) += make_Dirichlet_jump(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, level_set_function, dirichlet_jump, 3, parms);
-                f.block(cbs, 0, cbs, 1) += make_flux_jump(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, neumann_jump);
-
-                // rhs term with GR
-                vector_cell_basis<cuthho_poly_mesh<RealType>, RealType> gb( msh, cl, hdi.grad_degree() );
-                Matrix<RealType, Dynamic, 1> F2 = Matrix<RealType, Dynamic, 1>::Zero( gbs );
-                auto iqps = integrate_interface(msh, cl, 2*hdi.grad_degree(),
-                                                element_location::IN_NEGATIVE_SIDE);
-                for (auto& qp : iqps)
-                {
-                    const auto g_phi    = gb.eval_basis(qp.first);
-                    const Matrix<RealType,2,1> n      = level_set_function.normal(qp.first);
-
-                    F2 += qp.second * dirichlet_jump(qp.first) * g_phi * n;
-                }
-                f -= F2.transpose() * (parms.kappa_1 * gr_n.first );
-
-            }
-///////////////////////////////////////////////////////////////////////////////////////////
-            else if (method == 4) // hat bold G -- hat bold G + positive Nitsche's terms
-            {
-                auto gr_n = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
-                                                              element_location::IN_NEGATIVE_SIDE, 3);
-                auto gr_p = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
-                                                              element_location::IN_POSITIVE_SIDE, 3);
-
-                auto stab = make_hho_stabilization_interface(msh, cl, level_set_function, hdi, 4, parms);
-
-                // LHS
-                lc = stab + parms.kappa_1 * gr_n.second + parms.kappa_2 * gr_p.second;
-
-                // complete RHS
-                // neg part
-                f.head(cbs) += make_Dirichlet_jump(msh, cl, hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE, level_set_function, dirichlet_jump, 4, parms);
-
-                // pos part
-                f.block(cbs, 0, cbs, 1) += make_Dirichlet_jump(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, level_set_function, dirichlet_jump, 4, parms);
-                f.block(cbs, 0, cbs, 1) += make_flux_jump(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, neumann_jump);
-
-                // rhs term with GR
-                vector_cell_basis<cuthho_poly_mesh<RealType>, RealType> gb( msh, cl, hdi.grad_degree() );
-                Matrix<RealType, Dynamic, 1> F2 = Matrix<RealType, Dynamic, 1>::Zero( gbs );
-                auto iqps = integrate_interface(msh, cl, 2*hdi.grad_degree(),
-                                                element_location::IN_NEGATIVE_SIDE);
-                for (auto& qp : iqps)
-                {
-                    const auto g_phi    = gb.eval_basis(qp.first);
-                    const Matrix<RealType,2,1> n      = level_set_function.normal(qp.first);
-
-                    F2 += qp.second * dirichlet_jump(qp.first) * g_phi * n;
-                }
-                f -= F2.transpose() * (parms.kappa_1 * gr_n.first + parms.kappa_2 * gr_p.first);
-            }
-////////////////////////////////////////////////////////////////////////////////////////////
-
-            assembler.assemble_cut(msh, cl, lc, f);
+            if( sc )
+                assembler_sc.assemble_cut(msh, cl, lc, f);
+            else
+                assembler.assemble_cut(msh, cl, lc, f);
         }
     }
 
-    assembler.finalize();
+    if( sc )
+        assembler_sc.finalize();
+    else
+        assembler.finalize();
 
     //dump_sparse_matrix(assembler.LHS, "matrix.dat");
 
     tc.toc();
     std::cout << bold << yellow << "Matrix assembly: " << tc << " seconds" << reset << std::endl;
 
-    std::cout << "System unknowns: " << assembler.LHS.rows() << std::endl;
+    if( sc )
+        std::cout << "System unknowns: " << assembler_sc.LHS.rows() << std::endl;
+    else
+        std::cout << "System unknowns: " << assembler.LHS.rows() << std::endl;
+
     std::cout << "Cells: " << msh.cells.size() << std::endl;
     std::cout << "Faces: " << msh.faces.size() << std::endl;
 
@@ -2512,19 +3006,39 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
     tc.tic();
 #if 0
     SparseLU<SparseMatrix<RealType>>  solver;
+    Matrix<RealType, Dynamic, 1> sol;
 
-    solver.analyzePattern(assembler.LHS);
-    solver.factorize(assembler.LHS);
-    Matrix<RealType, Dynamic, 1> sol = solver.solve(assembler.RHS);
+    if( sc )
+    {
+        solver.analyzePattern(assembler_sc.LHS);
+        solver.factorize(assembler_sc.LHS);
+        sol = solver.solve(assembler_sc.RHS);
+    }
+    else
+    {
+        solver.analyzePattern(assembler.LHS);
+        solver.factorize(assembler.LHS);
+        sol = solver.solve(assembler.RHS);
+    }
 #endif
 //#if 0
-    Matrix<RealType, Dynamic, 1> sol = Matrix<RealType, Dynamic, 1>::Zero(assembler.RHS.rows());
+    Matrix<RealType, Dynamic, 1> sol;
     cg_params<RealType> cgp;
-    cgp.max_iter = assembler.LHS.rows();
     cgp.histfile = "cuthho_cg_hist.dat";
     cgp.verbose = true;
     cgp.apply_preconditioner = true;
-    conjugated_gradient(assembler.LHS, assembler.RHS, sol, cgp);
+    if( sc )
+    {
+        sol = Matrix<RealType, Dynamic, 1>::Zero(assembler_sc.RHS.rows());
+        cgp.max_iter = assembler_sc.LHS.rows();
+        conjugated_gradient(assembler_sc.LHS, assembler_sc.RHS, sol, cgp);
+    }
+    else
+    {
+        sol = Matrix<RealType, Dynamic, 1>::Zero(assembler.RHS.rows());
+        cgp.max_iter = assembler.LHS.rows();
+        conjugated_gradient(assembler.LHS, assembler.RHS, sol, cgp);
+    }
 //#endif
     tc.toc();
     std::cout << bold << yellow << "Linear solver: " << tc << " seconds" << reset << std::endl;
@@ -2557,9 +3071,24 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
 
         if (location(msh, cl) == element_location::ON_INTERFACE)
         {
-            locdata_n = assembler.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_NEGATIVE_SIDE);
+            if( sc )
+            {
+                auto contrib = compute_interface_contrib(
+                    msh, cl, level_set_function, dirichlet_jump,
+                    neumann_jump, rhs_fun, method, hdi, parms);
+                auto lc = contrib.first;
+                auto f = contrib.second;
+
+                locdata_n = assembler_sc.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_NEGATIVE_SIDE, lc, f);
+                locdata_p = assembler_sc.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_POSITIVE_SIDE, lc, f);
+            }
+            else
+            {
+                locdata_n = assembler.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_NEGATIVE_SIDE);
+                locdata_p = assembler.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_POSITIVE_SIDE);
+            }
+
             cell_dofs_n = locdata_n.head(cbs);
-            locdata_p = assembler.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_POSITIVE_SIDE);
             cell_dofs_p = locdata_p.head(cbs);
 
 
@@ -2606,7 +3135,17 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
         }
         else
         {
-            locdata = assembler.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_POSITIVE_SIDE);
+            if( sc )
+            {
+                auto contrib = compute_interface_contrib(
+                    msh, cl, level_set_function, dirichlet_jump,
+                    neumann_jump, rhs_fun, method, hdi, parms);
+                auto lc = contrib.first;
+                auto f = contrib.second;
+                locdata = assembler_sc.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_POSITIVE_SIDE, lc, f);
+            }
+            else
+                locdata = assembler.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_POSITIVE_SIDE);
             cell_dofs = locdata.head(cbs);
 
             auto qps = integrate(msh, cl, 2*hdi.cell_degree());
