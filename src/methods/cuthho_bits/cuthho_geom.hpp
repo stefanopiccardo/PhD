@@ -168,6 +168,7 @@ detect_cell_agglo_set(cuthho_mesh<T, ET>& msh, const Function& level_set_functio
     typedef typename cuthho_mesh<T, ET>::point_type point_type;
 
     const T threshold = 0.3;
+    const T threshold_cells = 0.2;
 
     for (auto& cl : msh.cells)
     {
@@ -177,6 +178,26 @@ detect_cell_agglo_set(cuthho_mesh<T, ET>& msh, const Function& level_set_functio
 
         if (fcs.size() != 4)
             throw std::invalid_argument("This works only on quads for now");
+
+        if( !is_cut(msh, cl) )
+        {
+            cl.user_data.agglo_set = cell_agglo_set::T_OK;
+            continue;
+        }
+
+        //// another criterion on the area of the cell
+        if( measure(msh, cl, element_location::IN_NEGATIVE_SIDE)
+            < threshold_cells * measure(msh, cl) )
+        {
+            cl.user_data.agglo_set = cell_agglo_set::T_KO_NEG;
+            continue;
+        }
+        else if( measure(msh, cl, element_location::IN_POSITIVE_SIDE)
+            < threshold_cells * measure(msh, cl) )
+        {
+            cl.user_data.agglo_set = cell_agglo_set::T_KO_POS;
+            continue;
+        }
 
         /* If it is a quadrilateral we have 6 possible configurations of the
          * element-cut intersection. */
