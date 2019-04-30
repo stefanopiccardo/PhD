@@ -168,6 +168,7 @@ detect_cell_agglo_set(cuthho_mesh<T, ET>& msh, const Function& level_set_functio
     typedef typename cuthho_mesh<T, ET>::point_type point_type;
 
     const T threshold = 0.3;
+    const T threshold_cells = 0.2;
 
     for (auto& cl : msh.cells)
     {
@@ -177,6 +178,26 @@ detect_cell_agglo_set(cuthho_mesh<T, ET>& msh, const Function& level_set_functio
 
         if (fcs.size() != 4)
             throw std::invalid_argument("This works only on quads for now");
+
+        if( !is_cut(msh, cl) )
+        {
+            cl.user_data.agglo_set = cell_agglo_set::T_OK;
+            continue;
+        }
+
+        //// another criterion on the area of the cell
+        if( measure(msh, cl, element_location::IN_NEGATIVE_SIDE)
+            < threshold_cells * measure(msh, cl) )
+        {
+            cl.user_data.agglo_set = cell_agglo_set::T_KO_NEG;
+            continue;
+        }
+        else if( measure(msh, cl, element_location::IN_POSITIVE_SIDE)
+            < threshold_cells * measure(msh, cl) )
+        {
+            cl.user_data.agglo_set = cell_agglo_set::T_KO_POS;
+            continue;
+        }
 
         /* If it is a quadrilateral we have 6 possible configurations of the
          * element-cut intersection. */
@@ -340,12 +361,14 @@ detect_cut_cells(cuthho_mesh<T, ET>& msh, const Function& level_set_function)
 }
 
 /* this creates Delta(T) */
+// two neighbors have at least one common face
 template<typename T, size_t ET>
 void
 make_neighbors_info(cuthho_mesh<T, ET>& msh)
 {
     for (size_t i = 0; i < msh.cells.size(); i++)
     {
+        auto fc_i = faces(msh,msh.cells[i]);
         for (size_t j = i+1; j < msh.cells.size(); j++)
         {
             auto &cl1 = msh.cells.at(i);
@@ -353,9 +376,17 @@ make_neighbors_info(cuthho_mesh<T, ET>& msh)
 
             bool are_neighbors = false;
 
-            for (size_t ip = 0; ip < cl1.ptids.size(); ip++)
-                for (size_t jp = 0; jp < cl2.ptids.size(); jp++)
-                    if ( cl1.ptids[ip] == cl2.ptids[jp] )
+            // // two neighbors have at least one common node
+            // for (size_t ip = 0; ip < cl1.ptids.size(); ip++)
+            //     for (size_t jp = 0; jp < cl2.ptids.size(); jp++)
+            //         if ( cl1.ptids[ip] == cl2.ptids[jp] )
+            //             are_neighbors = true;
+
+            // two neighbors have at least one common face
+            auto fc_j = faces(msh,msh.cells[j]);
+            for (size_t i_face = 0; i_face < fc_i.size(); i_face++)
+                for (size_t j_face = 0; j_face < fc_j.size(); j_face++)
+                    if ( fc_i[i_face] == fc_j[j_face] )
                         are_neighbors = true;
 
             if ( !are_neighbors )
@@ -737,7 +768,8 @@ struct temp_tri
         auto v1 = pts[1] - pts[0];
         auto v2 = pts[2] - pts[0];
 
-        return std::abs( v1.x()*v2.y() - v2.x()*v1.y() ) / 2.0;
+        return ( v1.x()*v2.y() - v2.x()*v1.y() ) / 2.0;
+        // can be negative
     }
 };
 
@@ -1257,3 +1289,282 @@ auto make_assembler(const cuthho_mesh<T, ET>& msh, hho_degree_info hdi)
 }
 
 #endif
+
+///////////////////   AGGLOMERATION   ///////////////////
+
+
+//////////////  MERGE_CELLS
+/// merge cl1 and cl2
+/// modify the msh
+// output : the agglomerated cell
+/////  For the moment we can merge only cells that have at least a common face
+/////  This procedure currently cannot be iterated
+template<typename Mesh>
+typename Mesh::cell_type
+merge_cells(Mesh& msh, const typename Mesh::cell_type cl1,
+            const typename Mesh::cell_type cl2)
+{
+    //////////////////  TESTS ON INPUTS  //////////////////
+    // verify that the two cells are different
+    if(cl1 == cl2)
+        throw std::invalid_argument("Cannot merge a cell with itself.");
+
+    // identify the common faces
+    const auto fcs1 = faces(msh, cl1);
+    const auto fcs2 = faces(msh, cl2);
+
+    std::vector<typename Mesh::face_type> com_faces;
+    for(size_t i = 0; i < fcs1.size(); i++)
+    {
+        const auto fc1 = fcs1[i];
+        for(size_t j = 0; j < fcs2.size(); j++)
+        {
+            const auto fc2 = fcs2[j];
+            if(fc1 == fc2) com_faces.push_back(fc1);
+        }
+    }
+    // verify that those cells have exactly one common face
+    if(com_faces.size() == 0)
+        throw std::invalid_argument("The cells do not have common faces.");
+
+    if(com_faces.size() > 1)
+        throw std::invalid_argument("The routine currently works only for one common face.");
+
+    //////////////    CREATE THE MERGED CELL   //////////////
+    typename Mesh::cell_type cl;
+
+    typename Mesh::face_type com_f = com_faces[0];
+    size_t f_pt1 = com_f.ptids[0];
+    size_t f_pt2 = com_f.ptids[1];
+
+    // list of points
+    std::vector<size_t> pts1, pts2;
+    // in order to be consistent with the cell representation, start with the smallest index
+    if(cl1.ptids[0] < cl2.ptids[0])
+    {
+        pts1 = cl1.ptids;
+        pts2 = cl2.ptids;
+    }
+    else
+    {
+        pts1 = cl2.ptids;
+        pts2 = cl1.ptids;
+    }
+
+    // write points of pts1 until we reach the common face
+    size_t ref_pt = pts1[0];
+    size_t cp = 0;
+    cl.ptids.push_back(ref_pt);
+
+    bool on_face = false;
+    if(ref_pt == f_pt1 || ref_pt == f_pt2) on_face = true;
+
+    while(!on_face)
+    {
+        cp++;
+        ref_pt = pts1[cp];
+        cl.ptids.push_back(ref_pt);
+        if(ref_pt == f_pt1 || ref_pt == f_pt2) on_face = true;
+    }
+
+    // look for the corresponding point in pts2
+    for(size_t i = 0; i < pts2.size(); i++)
+    {
+        if(ref_pt == pts2[i])
+        {
+            cp = i;
+            break;
+        }
+    }
+    // write points of pts2 until we reach once more the common face
+    on_face = false;
+    while( !on_face )
+    {
+        cp = (cp + 1) % pts2.size();
+        ref_pt = pts2[cp];
+        cl.ptids.push_back(ref_pt);
+        if(ref_pt == f_pt1 || ref_pt == f_pt2) on_face = true;
+    }
+    // look for the corresponding point in pts1
+    for(size_t i=0; i < pts1.size(); i++)
+    {
+        if(ref_pt == pts1[i])
+        {
+            cp = i;
+            break;
+        }
+    }
+
+    // finish to write the points of pts1
+    cp++;
+    while(cp < pts1.size())
+    {
+        cl.ptids.push_back(pts1[cp]);
+        cp++;
+    }
+
+
+    ///////////// build the cell_cuthho_info (using the sub_cells info)
+    // location
+    if(cl1.user_data.location == element_location::ON_INTERFACE || cl2.user_data.location == element_location::ON_INTERFACE)
+        cl.user_data.location = element_location::ON_INTERFACE;
+    else if(cl1.user_data.location == element_location::IN_NEGATIVE_SIDE)
+        cl.user_data.location = element_location::IN_NEGATIVE_SIDE;
+    else if(cl1.user_data.location == element_location::IN_POSITIVE_SIDE)
+        cl.user_data.location = element_location::IN_POSITIVE_SIDE;
+    else
+        throw std::logic_error("we shouldn't arrive here (cuthho_info) !!!");
+
+    // agglo_set ---> NOT DONE : needed to iterate the agglomeration procedure
+    cl.user_data.agglo_set = cell_agglo_set::T_OK;
+
+    // p0, p1 and interface
+    bool cut1 = cl1.user_data.location == element_location::ON_INTERFACE;
+    bool cut2 = cl2.user_data.location == element_location::ON_INTERFACE;
+    if(cut1 && !cut2)
+    {
+        cl.user_data.interface = cl1.user_data.interface;
+        cl.user_data.p0 = cl1.user_data.p0;
+        cl.user_data.p1 = cl1.user_data.p1;
+    }
+    else if(!cut1 && cut2)
+    {
+        cl.user_data.interface = cl2.user_data.interface;
+        cl.user_data.p0 = cl2.user_data.p0;
+        cl.user_data.p1 = cl2.user_data.p1;
+    }
+    else if(cut1 && cut2)
+    {
+        if(cl1.user_data.p0[0] == cl2.user_data.p1[0] &&
+           cl1.user_data.p0[1] == cl2.user_data.p1[1])
+        {
+            cl.user_data.interface = cl2.user_data.interface;
+            for(size_t i = 0; i < cl1.user_data.interface.size(); i++ )
+            {
+                cl.user_data.interface.push_back(cl1.user_data.interface[i]);
+            }
+            cl.user_data.p0 = cl2.user_data.p0;
+            cl.user_data.p1 = cl1.user_data.p1;
+        }
+        else if(cl2.user_data.p0[0] == cl1.user_data.p1[0] &&
+                cl2.user_data.p0[1] == cl1.user_data.p1[1])
+        {
+            cl.user_data.interface = cl1.user_data.interface;
+            for(size_t i = 0; i < cl2.user_data.interface.size(); i++ )
+            {
+                cl.user_data.interface.push_back(cl2.user_data.interface[i]);
+            }
+            cl.user_data.p0 = cl1.user_data.p0;
+            cl.user_data.p1 = cl2.user_data.p1;
+        }
+        else
+            throw std::logic_error("we shouldn't arrive here (interface) !!!");
+    }
+    // distorted -> has to be updated for more general merges (if a node is withdrawn)
+    if(cl1.user_data.distorted || cl2.user_data.distorted )
+        cl.user_data.distorted = true;
+
+    // neighbors ---> NOT DONE : needed to iterate the agglomeration procedure
+
+
+
+    ///////////    INSERT THE MERGED CELL AND REMOVE SUBCELLS AND FACES   ////////////
+
+    // add cl
+    msh.cells.push_back(cl);
+    // remove cl1, cl2 and the common face
+    msh.cells.erase(std::remove(begin(msh.cells), end(msh.cells), cl1), end(msh.cells));
+    msh.cells.erase(std::remove(begin(msh.cells), end(msh.cells), cl2), end(msh.cells));
+    msh.faces.erase(std::remove(begin(msh.faces), end(msh.faces), com_f), end(msh.faces));
+
+    // sort the lists
+    std::sort(msh.faces.begin(), msh.faces.end());
+    std::sort(msh.cells.begin(), msh.cells.end());
+
+    return cl;
+}
+
+
+
+
+
+
+////// make_agglomeration
+// the main agglomeration routine
+// currently, the mesh obtained must have convex cells
+// obtained by merging sub_cells with one face in common
+// for non-convex cells -> modify measure and integrate
+// for merging more general cells -> modify merge_cells
+// for diagonal cells -> modify make_neighbors_info
+// no iterations after merging bad cells once
+template<typename Mesh, typename Function>
+void
+make_agglomeration(Mesh& msh, const Function& level_set_function)
+{
+    size_t cp = 0;
+
+    // while agglomeration is not over -> go on
+    while( cp < msh.cells.size() )
+    {
+        cp = 0;
+        // loop on the cells
+        for (auto cl : msh.cells)
+        {
+            cp++;
+
+            element_location where;
+
+            if(cl.user_data.agglo_set == cell_agglo_set::T_OK)
+                continue;
+            else if(cl.user_data.agglo_set == cell_agglo_set::UNDEF)
+                throw std::logic_error("UNDEF agglo_set");
+            else if(cl.user_data.agglo_set == cell_agglo_set::T_KO_NEG)
+                where = element_location::IN_NEGATIVE_SIDE;
+            else if(cl.user_data.agglo_set == cell_agglo_set::T_KO_POS)
+                where = element_location::IN_POSITIVE_SIDE;
+
+            // look for a neighboring cell to merge with
+            // here find the neighbors
+            typename Mesh::coordinate_type area = 1000000;
+            typename Mesh::cell_type best_neigh = cl;
+
+            auto fcs = faces(msh,cl);
+            for (auto cl_n : msh.cells)
+            {
+                bool are_neighbors = false;
+                auto fcs_n = faces(msh,cl_n);
+
+                // two cells are neighbors if they have at least a common face
+                for (size_t i_face = 0; i_face < fcs.size(); i_face++)
+                    for (size_t j_face = 0; j_face < fcs_n.size(); j_face++)
+                        if ( fcs[i_face] == fcs_n[j_face] )
+                            are_neighbors = true;
+
+                if ( !are_neighbors )
+                    continue;
+
+                if( cl_n == cl )
+                    continue;
+
+                if (location(msh, cl_n) != where
+                    && location(msh, cl_n) != element_location::ON_INTERFACE)
+                    continue;
+
+                // search for the "best" neighbor -> the one with the smallest volume
+                if( area > measure(msh, cl_n, where) )
+                {
+                    area = measure(msh, cl_n, where);
+                    best_neigh = cl_n;
+                }
+            }
+
+            if(best_neigh == cl)
+            {
+                throw std::logic_error("No possible agglomerations !!!");
+            }
+
+            merge_cells(msh, cl, best_neigh);
+            break;
+        }
+    }
+}

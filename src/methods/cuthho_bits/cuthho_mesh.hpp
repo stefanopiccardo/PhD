@@ -52,10 +52,12 @@ struct cell_cuthho_info
     bool                        distorted;
     std::set<size_t>            neighbors;
 
+    bool                        highlight; // for tests
     cell_cuthho_info() :
         location(element_location::UNDEF),
         agglo_set(cell_agglo_set::UNDEF),
-        distorted(false)
+        distorted(false),
+        highlight(false)
     {}
 };
 

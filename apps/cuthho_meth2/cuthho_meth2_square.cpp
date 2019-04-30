@@ -3385,16 +3385,18 @@ int main(int argc, char **argv)
         detect_cut_cells(msh, level_set_function);
         detect_cell_agglo_set(msh, level_set_function);
         make_neighbors_info(msh);
+        refine_interface(msh, level_set_function, int_refsteps);
+        make_agglomeration(msh, level_set_function);
     }
     else
     {
         move_nodes(msh, level_set_function);
         detect_cut_faces(msh, level_set_function); //do it again to update intersection points
         detect_cut_cells(msh, level_set_function);
+        refine_interface(msh, level_set_function, int_refsteps);
     }
 
-    refine_interface(msh, level_set_function, int_refsteps);
-    
+
     tc.toc();
     std::cout << bold << yellow << "cutHHO-specific mesh preprocessing: " << tc << " seconds" << reset << std::endl;
 
