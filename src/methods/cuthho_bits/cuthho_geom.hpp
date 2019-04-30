@@ -361,12 +361,14 @@ detect_cut_cells(cuthho_mesh<T, ET>& msh, const Function& level_set_function)
 }
 
 /* this creates Delta(T) */
+// two neighbors have at least one common face
 template<typename T, size_t ET>
 void
 make_neighbors_info(cuthho_mesh<T, ET>& msh)
 {
     for (size_t i = 0; i < msh.cells.size(); i++)
     {
+        auto fc_i = faces(msh,msh.cells[i]);
         for (size_t j = i+1; j < msh.cells.size(); j++)
         {
             auto &cl1 = msh.cells.at(i);
@@ -374,9 +376,17 @@ make_neighbors_info(cuthho_mesh<T, ET>& msh)
 
             bool are_neighbors = false;
 
-            for (size_t ip = 0; ip < cl1.ptids.size(); ip++)
-                for (size_t jp = 0; jp < cl2.ptids.size(); jp++)
-                    if ( cl1.ptids[ip] == cl2.ptids[jp] )
+            // // two neighbors have at least one common node
+            // for (size_t ip = 0; ip < cl1.ptids.size(); ip++)
+            //     for (size_t jp = 0; jp < cl2.ptids.size(); jp++)
+            //         if ( cl1.ptids[ip] == cl2.ptids[jp] )
+            //             are_neighbors = true;
+
+            // two neighbors have at least one common face
+            auto fc_j = faces(msh,msh.cells[j]);
+            for (size_t i_face = 0; i_face < fc_i.size(); i_face++)
+                for (size_t j_face = 0; j_face < fc_j.size(); j_face++)
+                    if ( fc_i[i_face] == fc_j[j_face] )
                         are_neighbors = true;
 
             if ( !are_neighbors )
