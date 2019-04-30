@@ -768,7 +768,8 @@ struct temp_tri
         auto v1 = pts[1] - pts[0];
         auto v2 = pts[2] - pts[0];
 
-        return std::abs( v1.x()*v2.y() - v2.x()*v1.y() ) / 2.0;
+        return ( v1.x()*v2.y() - v2.x()*v1.y() ) / 2.0;
+        // can be negative
     }
 };
 
