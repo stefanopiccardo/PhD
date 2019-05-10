@@ -410,6 +410,55 @@ make_neighbors_info(cuthho_mesh<T, ET>& msh)
     */
 }
 
+
+//// version for cartesian meshes -> very quick
+/* this creates Delta(T) */
+// two neighbors have at least one common face
+template<typename T, size_t ET>
+void
+make_neighbors_info_cartesian(cuthho_mesh<T, ET>& msh)
+{
+    std::cout << "WARNING : make_neighbors_info_cartesian "
+              << "works for cartesian meshes only !!"
+              << std::endl;
+
+    size_t N = sqrt(msh.cells.size());
+
+    // first row of cells -> look left
+    for (size_t i = 1; i < N; i++)
+    {
+        auto &cl1 = msh.cells.at(i);
+        auto &cl2 = msh.cells.at(i-1);
+
+        cl1.user_data.neighbors.insert(i-1);
+        cl2.user_data.neighbors.insert(i);
+    }
+
+    // other rows of cells
+    for (size_t j = 1; j < N; j++)
+    {
+        // first cell of the row -> look bottom
+        auto &cl1 = msh.cells.at( j*N );
+        auto &cl2 = msh.cells.at( (j-1)*N );
+        cl1.user_data.neighbors.insert( (j-1)*N );
+        cl2.user_data.neighbors.insert( j*N );
+
+        // other cells -> look left and bottom
+        for (size_t i = 1; i < N; i++)
+        {
+            auto &cl_c = msh.cells.at( j*N + i ); // current
+            auto &cl_l = msh.cells.at( j*N + i - 1 ); // left
+            auto &cl_b = msh.cells.at( (j-1)*N + i ); // bottom
+
+            cl_c.user_data.neighbors.insert( j*N + i - 1 );
+            cl_c.user_data.neighbors.insert( (j-1)*N + i );
+
+            cl_l.user_data.neighbors.insert( j*N + i );
+            cl_b.user_data.neighbors.insert( j*N + i );
+        }
+    }
+}
+
 //#define USE_OLD_DISPLACEMENT
 
 #ifdef USE_OLD_DISPLACEMENT
