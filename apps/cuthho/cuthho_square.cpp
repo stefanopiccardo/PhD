@@ -2312,7 +2312,8 @@ int main(int argc, char **argv)
     {
         detect_cut_cells(msh, level_set_function);
         detect_cell_agglo_set(msh, level_set_function);
-        make_neighbors_info(msh);
+        make_neighbors_info_cartesian(msh);
+        // make_neighbors_info(msh);
         refine_interface(msh, level_set_function, int_refsteps);
         make_agglomeration(msh, level_set_function);
     }

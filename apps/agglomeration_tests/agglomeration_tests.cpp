@@ -511,7 +511,8 @@ int main(int argc, char **argv)
     if (agglomeration)
     {
         detect_cell_agglo_set(msh, level_set_function);
-        make_neighbors_info(msh);
+        make_neighbors_info_cartesian(msh);
+        // make_neighbors_info(msh);
         refine_interface(msh, level_set_function, int_refsteps);
         // test_agglo(msh, level_set_function);
         make_agglomeration(msh, level_set_function);
