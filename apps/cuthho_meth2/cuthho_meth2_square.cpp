@@ -2882,7 +2882,66 @@ run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t
         return 0.0;
     };
 
-#elif 1 // test case 3 : a jump problem
+#elif 0 // test case 3 : a higher order constrast problem
+
+    struct params<RealType> parms;
+
+    parms.kappa_1 = 1.0;
+    parms.kappa_2 = 10000.0;
+
+    auto rhs_fun = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
+        RealType r2 = (pt.x() - 0.5) * (pt.x() - 0.5) + (pt.y() - 0.5) * (pt.y() - 0.5);
+        return -4.0 * 9 * r2 * r2;
+    };
+    auto sol_fun = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
+        RealType r2;
+        RealType kappa1 = 1.0;
+        RealType kappa2 = 10000.0;
+
+        r2 = (pt.x() - 0.5) * (pt.x() - 0.5) + (pt.y() - 0.5) * (pt.y() - 0.5);
+        if( r2 < 1.0/9 )
+            return r2 * r2 * r2 / kappa1;
+
+        else
+            return r2 * r2 * r2 / kappa2 + 1.0/(9*9*9) * ( 1.0 / kappa1 - 1.0 / kappa2 );
+    };
+
+    auto sol_grad = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> auto {
+        Matrix<RealType, 1, 2> ret;
+
+        RealType kappa1 = 1.0;
+        RealType kappa2 = 10000.0;
+
+        RealType r2 = (pt.x() - 0.5) * (pt.x() - 0.5) + (pt.y() - 0.5) * (pt.y() - 0.5);
+
+        if( r2 < 1.0/9 )
+        {
+            ret(0) = 3 * 2 * r2 * r2 * ( pt.x() - 0.5 ) / kappa1 ;
+            ret(1) = 3 * 2 * r2 * r2 * ( pt.y() - 0.5 ) / kappa1 ;
+        }
+        else
+        {
+            ret(0) = 3 * 2 * r2 * r2 * ( pt.x() - 0.5 ) / kappa2 ;
+            ret(1) = 3 * 2 * r2 * r2 * ( pt.y() - 0.5 ) / kappa2 ;
+        }
+
+        return ret;
+    };
+
+    auto bcs_fun = [&](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
+        return sol_fun(pt);
+    };
+
+
+    auto dirichlet_jump = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
+        return 0.0;
+    };
+
+    auto neumann_jump = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
+        return 0.0;
+    };
+
+#elif 1 // test case 4 : a jump problem
     auto rhs_fun = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
         RealType r2 = (pt.x() - 0.5) * (pt.x() - 0.5) + (pt.y() - 0.5) * (pt.y() - 0.5);
         if(r2 < 1.0/9) {
