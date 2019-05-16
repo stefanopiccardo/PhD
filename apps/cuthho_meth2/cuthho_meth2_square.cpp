@@ -406,6 +406,128 @@ test_quadrature_bis(const Mesh& msh, const Function& level_set_function, size_t 
 }
 
 
+
+
+template<typename Mesh, typename Function>
+void test_projection(const Mesh& msh, const Function& level_set_function, size_t degree)
+{
+    using T = typename Mesh::coordinate_type;
+
+    // reference function (to be projected)
+    auto ref_fun = [](const typename cuthho_poly_mesh<T>::point_type& pt) -> T {
+        return std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
+    };
+
+    auto grad_ref_fun = [](const typename cuthho_poly_mesh<T>::point_type& pt) -> auto {
+        Matrix<T, 1, 2> ret;
+
+        ret(0) = M_PI * std::cos(M_PI*pt.x()) * std::sin(M_PI*pt.y());
+        ret(1) = M_PI * std::sin(M_PI*pt.x()) * std::cos(M_PI*pt.y());
+
+        return ret;
+    };
+
+    T H1_error_uncut = 0.0;
+    T H1_error_cut = 0.0;
+    T L2_error_uncut = 0.0;
+    T L2_error_cut = 0.0;
+
+    size_t proj_degree = degree + 1;
+    auto cbs = cell_basis<Mesh, T>::size(proj_degree);
+    for (auto cl : msh.cells)
+    {
+        // basis functions
+        cell_basis<Mesh, T> cb(msh, cl, proj_degree);
+
+        // local mass matrix
+        Matrix<T, Dynamic, Dynamic> mass = make_mass_matrix(msh, cl, proj_degree);
+
+        // projection : right-hand side
+        Matrix<T, Dynamic, 1> RHS = Matrix<T, Dynamic, 1>::Zero(cbs);
+        auto qps = integrate(msh, cl, 2*proj_degree);
+        for (auto& qp : qps)
+        {
+            auto phi = cb.eval_basis(qp.first);
+            RHS += qp.second * ref_fun(qp.first) * phi;
+        }
+
+        // computation of degrees of projection coefficients
+        auto M_ldlt = mass.ldlt();
+        Matrix<T, Dynamic, 1> U = M_ldlt.solve(RHS);
+
+        // computation of H1 and L2 errors
+        if( location(msh, cl) == element_location::ON_INTERFACE )
+        {
+            auto qps_n = integrate(msh, cl, 2*proj_degree, element_location::IN_NEGATIVE_SIDE);
+            for (auto& qp : qps_n)
+            {
+                // H1_error
+                auto t_dphi = cb.eval_gradients( qp.first );
+                Matrix<T, 1, 2> grad = Matrix<T, 1, 2>::Zero();
+                for (size_t i = 1; i < cbs; i++ )
+                    grad += U(i) * t_dphi.block(i, 0, 1, 2);
+
+                Matrix<T, Dynamic, 1> delta_grad = grad_ref_fun(qp.first) - grad;
+                H1_error_cut += qp.second * delta_grad.dot(delta_grad);
+
+                // L2_error
+                auto t_phi = cb.eval_basis( qp.first );
+                auto v = U.dot(t_phi);
+                L2_error_cut += qp.second * (ref_fun(qp.first) - v) * (ref_fun(qp.first) - v);
+            }
+
+            auto qps_p = integrate(msh, cl, 2*proj_degree, element_location::IN_POSITIVE_SIDE);
+            for (auto& qp : qps_p)
+            {
+                // H1_error
+                auto t_dphi = cb.eval_gradients( qp.first );
+                Matrix<T, 1, 2> grad = Matrix<T, 1, 2>::Zero();
+                for (size_t i = 1; i < cbs; i++ )
+                    grad += U(i) * t_dphi.block(i, 0, 1, 2);
+
+                Matrix<T, Dynamic, 1> delta_grad = grad_ref_fun(qp.first) - grad;
+                H1_error_cut += qp.second * delta_grad.dot(delta_grad);
+
+                // L2_error
+                auto t_phi = cb.eval_basis( qp.first );
+                auto v = U.dot(t_phi);
+                L2_error_cut += qp.second * (ref_fun(qp.first) - v) * (ref_fun(qp.first) - v);
+            }
+        }
+        else
+        {
+            auto qps = integrate(msh, cl, 2*proj_degree);
+            for (auto& qp : qps)
+            {
+                // H1_error
+                auto t_dphi = cb.eval_gradients( qp.first );
+                Matrix<T, 1, 2> grad = Matrix<T, 1, 2>::Zero();
+                for (size_t i = 1; i < cbs; i++ )
+                    grad += U(i) * t_dphi.block(i, 0, 1, 2);
+
+                Matrix<T, Dynamic, 1> delta_grad = grad_ref_fun(qp.first) - grad;
+                H1_error_uncut += qp.second * delta_grad.dot(delta_grad);
+
+                // L2_error
+                auto t_phi = cb.eval_basis( qp.first );
+                auto v = U.dot(t_phi);
+                L2_error_uncut += qp.second * (ref_fun(qp.first) - v) * (ref_fun(qp.first) - v);
+            }
+        }
+    }
+
+    // write the results
+    std::cout << bold << green << "UNcut cells: " << std::endl;
+    std::cout << bold << green << "Energy-norm absolute error:           " << std::sqrt(H1_error_uncut) << std::endl;
+    std::cout << bold << green << "L2-norm absolute error:           " << std::sqrt(L2_error_uncut) << std::endl;
+
+    std::cout << bold << green << "CUT cells: " << std::endl;
+    std::cout << bold << green << "Energy-norm absolute error:           " << std::sqrt(H1_error_cut) << std::endl;
+    std::cout << bold << green << "L2-norm absolute error:           " << std::sqrt(L2_error_cut) << std::endl;
+}
+
+
+
 //////////////////////////   END  TESTS   /////////////////////////////
 
 template<typename T>
