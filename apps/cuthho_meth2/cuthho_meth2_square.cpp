@@ -290,6 +290,124 @@ void test_triangulation(const cuthho_mesh<T, ET>& msh)
     ofs.close();
 }
 
+
+
+template<typename Mesh, typename Function>
+void
+test_quadrature_bis(const Mesh& msh, const Function& level_set_function, size_t degree)
+{
+    using T = typename Mesh::coordinate_type;
+
+    // x^k
+    auto ref_x = [](const typename cuthho_poly_mesh<T>::point_type& pt, const size_t k) -> T {
+        return iexp_pow(pt.x(), k);
+    };
+
+    // y^k
+    auto ref_y = [](const typename cuthho_poly_mesh<T>::point_type& pt, const size_t k) -> T {
+        return iexp_pow(pt.y(), k);
+    };
+
+    T integral_x = 0.0;
+    T integral_y = 0.0;
+
+    auto cbs = cell_basis<Mesh, T>::size(degree);
+    for (auto cl : msh.cells)
+    {
+        // basis functions
+        cell_basis<Mesh, T> cb(msh, cl, degree);
+
+        if( location(msh, cl) == element_location::ON_INTERFACE )
+        {
+            // local mass matrix
+            Matrix<T, Dynamic, Dynamic> mass1 = Matrix<T, Dynamic, Dynamic>::Zero(cbs,cbs);
+            Matrix<T, Dynamic, Dynamic> mass2 = Matrix<T, Dynamic, Dynamic>::Zero(cbs,cbs);
+
+            // projection : right-hand side
+            Matrix<T, Dynamic, 1> RHS_1x = Matrix<T, Dynamic, 1>::Zero(cbs);
+            Matrix<T, Dynamic, 1> RHS_2x = Matrix<T, Dynamic, 1>::Zero(cbs);
+            Matrix<T, Dynamic, 1> RHS_1y = Matrix<T, Dynamic, 1>::Zero(cbs);
+            Matrix<T, Dynamic, 1> RHS_2y = Matrix<T, Dynamic, 1>::Zero(cbs);
+
+            auto qps_n = integrate(msh, cl, 2*degree, element_location::IN_NEGATIVE_SIDE);
+            for (auto& qp : qps_n)
+            {
+                auto phi = cb.eval_basis(qp.first);
+                RHS_1x += qp.second * ref_x(qp.first, degree) * phi;
+                RHS_1y += qp.second * ref_y(qp.first, degree) * phi;
+
+                mass1 += qp.second * phi * phi.transpose();
+            }
+            auto qps_p = integrate(msh, cl, 2*degree, element_location::IN_POSITIVE_SIDE);
+            for (auto& qp : qps_p)
+            {
+                auto phi = cb.eval_basis(qp.first);
+                RHS_2x += qp.second * ref_x(qp.first, degree) * phi;
+                RHS_2y += qp.second * ref_y(qp.first, degree) * phi;
+
+                mass2 += qp.second * phi * phi.transpose();
+            }
+            // computation of degrees of projection coefficients
+            auto M1_ldlt = mass1.ldlt();
+            auto M2_ldlt = mass2.ldlt();
+            Matrix<T, Dynamic, 1> U_1x = M1_ldlt.solve(RHS_1x);
+            Matrix<T, Dynamic, 1> U_1y = M1_ldlt.solve(RHS_1y);
+            Matrix<T, Dynamic, 1> U_2x = M2_ldlt.solve(RHS_2x);
+            Matrix<T, Dynamic, 1> U_2y = M2_ldlt.solve(RHS_2y);
+
+            // computation of the integral value
+            for (auto& qp : qps_n)
+            {
+                auto t_phi = cb.eval_basis( qp.first );
+                integral_x += qp.second * U_1x.dot(t_phi);
+                integral_y += qp.second * U_1y.dot(t_phi);
+            }
+            for (auto& qp : qps_p)
+            {
+                auto t_phi = cb.eval_basis( qp.first );
+                integral_x += qp.second * U_2x.dot(t_phi);
+                integral_y += qp.second * U_2y.dot(t_phi);
+            }
+        }
+        else
+        {
+            // local mass matrix
+            Matrix<T, Dynamic, Dynamic> mass = make_mass_matrix(msh, cl, degree);
+
+            // projection : right-hand side
+            Matrix<T, Dynamic, 1> RHS_x = Matrix<T, Dynamic, 1>::Zero(cbs);
+            Matrix<T, Dynamic, 1> RHS_y = Matrix<T, Dynamic, 1>::Zero(cbs);
+            auto qps = integrate(msh, cl, degree);
+            for (auto& qp : qps)
+            {
+                auto phi = cb.eval_basis(qp.first);
+                RHS_x += qp.second * ref_x(qp.first, degree) * phi;
+                RHS_y += qp.second * ref_y(qp.first, degree) * phi;
+            }
+
+            // computation of degrees of projection coefficients
+            auto M_ldlt = mass.ldlt();
+            Matrix<T, Dynamic, 1> U_x = M_ldlt.solve(RHS_x);
+            Matrix<T, Dynamic, 1> U_y = M_ldlt.solve(RHS_y);
+
+            // computation of the integral value
+            for (auto& qp : qps)
+            {
+                auto t_phi = cb.eval_basis( qp.first );
+                integral_x += qp.second * U_x.dot(t_phi);
+                integral_y += qp.second * U_y.dot(t_phi);
+            }
+        }
+    }
+
+    // final error
+    std::cout << "error x^k = " << 1.0/(degree+1) - integral_x << std::endl;
+    std::cout << "error y^k = " << 1.0/(degree+1) - integral_y << std::endl;
+}
+
+
+//////////////////////////   END  TESTS   /////////////////////////////
+
 template<typename T>
 struct params
 {
