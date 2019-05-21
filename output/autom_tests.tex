@@ -19,19 +19,19 @@
 
 \foreach \n in{0,...,3}
 {
-  \begin{tabular}{|| c || c | c || c | c ||}
+  \begin{tabular}{|| c || c | c || c | c || c ||}
   \hline
   \hline
-  \multicolumn{5}{|| c ||}{$k=\n$}
+  \multicolumn{6}{|| c ||}{$k=\n$}
   \\
   \hline
   \hline
-   $N$ & $H^1$ & order & $L^2$ & order
+   $N$ & $H^1$ & order & $L^2$ & order & condition number
    %\cmidrule(lr){2-2}\cmidrule(lr){3-3}
    \DTLforeach{Test\n}{%
-   \raf=N,\Her=H1,\ordre=ordre1,\Ler=L2,\ordreL=ordre2}{%
+   \raf=N,\Her=H1,\ordre=ordre1,\Ler=L2,\ordreL=ordre2,\cond=cond}{%
   \\
-  \raf &  \Her &  \ordre & \Ler & \ordreL }
+  \raf &  \Her &  \ordre & \Ler & \ordreL & \cond}
   \\
   \hline
 \end{tabular}
@@ -49,5 +49,10 @@
 \caption{Convergence rates for $L^2$ errors}
 \end{figure}
 
+
+\begin{figure}
+\input{./output/figCond.tex}
+\caption{Condition number}
+\end{figure}
 
 \end{document}
