@@ -222,7 +222,7 @@ template<typename T, size_t ET>
 T
 cell_eta(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl)
 {
-    return 5.0;
+    return 50.0;
 }
 
 template<typename T, size_t ET, typename Function>
@@ -363,7 +363,7 @@ make_hho_laplacian_interface(const cuthho_mesh<T, ET>& msh,
 
         Matrix<T, Dynamic, Dynamic> a = parms.kappa_1 * qp.second * phi * (dphi * n).transpose();
         Matrix<T, Dynamic, Dynamic> b = parms.kappa_1 * qp.second * (dphi * n) * phi.transpose();
-        Matrix<T, Dynamic, Dynamic> c = parms.kappa_1 * qp.second * phi * phi.transpose() * parms.eta / hT;
+        Matrix<T, Dynamic, Dynamic> c = parms.kappa_1 * qp.second * phi * phi.transpose() * cell_eta(msh, cl) / hT;
 
         stiff.block(  0,   0, rbs, rbs) -= a;
         stiff.block(rbs,   0, rbs, rbs) += a;

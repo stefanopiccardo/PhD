@@ -44,10 +44,10 @@ class test_case
 template<typename T>
 struct params
 {
-    T kappa_1, kappa_2, eta;
+    T kappa_1, kappa_2;
 
-    params() : kappa_1(1.0), kappa_2(1.0), eta(30.0) {}
-    params(T kap1, T kap2, T et) : kappa_1(kap1), kappa_2(kap2), eta(et) {}
+    params() : kappa_1(1.0), kappa_2(1.0) {}
+    params(T kap1, T kap2) : kappa_1(kap1), kappa_2(kap2) {}
 };
 
 
