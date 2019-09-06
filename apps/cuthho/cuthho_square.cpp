@@ -788,11 +788,18 @@ public:
     }
 };
 
-template<typename Mesh, typename Function>
+template<typename Mesh, typename testType>
 void
-run_cuthho_fictdom(const Mesh& msh, const Function& level_set_function, size_t degree)
+run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
 {
     using RealType = typename Mesh::coordinate_type;
+
+    auto level_set_function = test_case.level_set_;
+
+    auto rhs_fun = test_case.rhs_fun;
+    auto sol_fun = test_case.sol_fun;
+    auto sol_grad = test_case.sol_grad;
+    auto bcs_fun = test_case.bcs_fun;
 
     /************** OPEN SILO DATABASE **************/
     silo_database silo;
@@ -825,30 +832,6 @@ run_cuthho_fictdom(const Mesh& msh, const Function& level_set_function, size_t d
     for (auto& n : msh.nodes)
         node_pos.push_back( location(msh, n) == element_location::IN_POSITIVE_SIDE ? +1.0 : -1.0 );
     silo.add_variable("mesh", "node_pos", node_pos.data(), node_pos.size(), nodal_variable_t);
-
-
-    /************** DEFINE PROBLEM RHS, SOLUTION AND BCS **************/
-    auto rhs_fun = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
-        return 2.0 * M_PI * M_PI * std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
-    };
-
-    auto sol_fun = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
-        return std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
-    };
-
-    auto sol_grad = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> auto {
-        Matrix<RealType, 1, 2> ret;
-
-        ret(0) = M_PI * std::cos(M_PI*pt.x()) * std::sin(M_PI*pt.y());
-        ret(1) = M_PI * std::sin(M_PI*pt.x()) * std::cos(M_PI*pt.y());
-
-        return ret;
-    };
-
-    auto bcs_fun = [&](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
-        return sol_fun(pt);
-    };
-
 
     timecounter tc;
 
@@ -1613,177 +1596,21 @@ agglomerate_cells(const Mesh& msh, const typename Mesh::cell_type& cl_tgt,
 
 
 
-template<typename Mesh, typename Function>
+template<typename Mesh, typename testType>
 void
-run_cuthho_interface(const Mesh& msh, const Function& level_set_function, size_t degree)
+run_cuthho_interface(const Mesh& msh, size_t degree, testType test_case)
 {
     using RealType = typename Mesh::coordinate_type;
 
-    /************** DEFINE PROBLEM RHS, SOLUTION AND BCS **************/
-#if 0 // test case 1 : a domain decomposition
-    auto rhs_fun = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
-        return 2.0 * M_PI * M_PI * std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
-    };
-    auto sol_fun = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
-        return std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
-        //auto v = (pt.y() - 0.5) * 2.0;
-        //return pt.y();
-    };
+    auto level_set_function = test_case.level_set_;
 
-    auto sol_grad = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> auto {
-        Matrix<RealType, 1, 2> ret;
-
-        ret(0) = M_PI * std::cos(M_PI*pt.x()) * std::sin(M_PI*pt.y());
-        ret(1) = M_PI * std::sin(M_PI*pt.x()) * std::cos(M_PI*pt.y());
-
-        return ret;
-    };
-
-    auto bcs_fun = [&](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
-        return sol_fun(pt);
-    };
-
-
-    auto dirichlet_jump = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
-        return 0.0;
-    };
-
-    auto neumann_jump = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
-        return 0.0;
-    };
-
-    
-    struct params<RealType> parms;
-
-    parms.kappa_1 = 1.0;
-    parms.kappa_2 = 1.0;
-
-#elif 0 // test case 2 : a constrast problem
-
-    struct params<RealType> parms;
-
-    parms.kappa_1 = 1.0;
-    parms.kappa_2 = 10000.0;
-    
-    auto rhs_fun = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
-        return -4.0;
-    };
-    auto sol_fun = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
-        RealType r2;
-        RealType kappa1 = 1.0;
-        RealType kappa2 = 10000.0;
-        
-        r2 = (pt.x() - 0.5) * (pt.x() - 0.5) + (pt.y() - 0.5) * (pt.y() - 0.5);
-        if( r2 < 1.0/9 )
-            return r2 / kappa1;
-        
-        else
-            return r2 / kappa2 + 1.0/9 * ( 1.0 / kappa1 - 1.0 / kappa2 );
-    };
-
-    auto sol_grad = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> auto {
-        Matrix<RealType, 1, 2> ret;
-
-        RealType kappa1 = 1.0;
-        RealType kappa2 = 10000.0;
-
-        RealType r2 = (pt.x() - 0.5) * (pt.x() - 0.5) + (pt.y() - 0.5) * (pt.y() - 0.5);
-
-        if( r2 < 1.0/9 )
-        {
-            ret(0) = 2 * ( pt.x() - 0.5 ) / kappa1 ;
-            ret(1) = 2 * ( pt.y() - 0.5 ) / kappa1 ;
-        }
-        else
-        {
-            ret(0) = 2 * ( pt.x() - 0.5 ) / kappa2 ;
-            ret(1) = 2 * ( pt.y() - 0.5 ) / kappa2 ;
-        }
-        
-        return ret;
-    };
-
-    auto bcs_fun = [&](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
-        return sol_fun(pt);
-    };
-
-
-    auto dirichlet_jump = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
-        return 0.0;
-    };
-
-    auto neumann_jump = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
-        return 0.0;
-    };
-
-#elif 1 // test case 3 : a jump problem
-    auto rhs_fun = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
-        RealType r2 = (pt.x() - 0.5) * (pt.x() - 0.5) + (pt.y() - 0.5) * (pt.y() - 0.5);
-        if(r2 < 1.0/9) {
-            return 2.0 * M_PI * M_PI * std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
-        }
-        else
-        {
-            return 0.0;
-        }
-    };
-    auto sol_fun = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
-        //return std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
-        RealType r2 = (pt.x() - 0.5) * (pt.x() - 0.5) + (pt.y() - 0.5) * (pt.y() - 0.5);
-        if(r2 < 1.0/9) {
-            return std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y());
-        }
-        else
-        {
-            return exp(pt.x()) * std::cos(pt.y());
-        }
-    };
-
-    auto sol_grad = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> auto {
-        Matrix<RealType, 1, 2> ret;
-
-        RealType r2 = (pt.x() - 0.5) * (pt.x() - 0.5) + (pt.y() - 0.5) * (pt.y() - 0.5);
-        if(r2 < 1.0/9) {
-            ret(0) = M_PI * std::cos(M_PI*pt.x()) * std::sin(M_PI*pt.y());
-            ret(1) = M_PI * std::sin(M_PI*pt.x()) * std::cos(M_PI*pt.y());
-        }
-        else
-        {
-            ret(0) = exp(pt.x()) * std::cos(pt.y());
-            ret(1) = - exp(pt.x()) * std::sin(pt.y());
-        }
-        
-        return ret;
-    };
-
-    auto bcs_fun = [&](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
-        return sol_fun(pt);
-    };
-
-
-    auto dirichlet_jump = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
-        return std::sin(M_PI*pt.x()) * std::sin(M_PI*pt.y()) - exp(pt.x()) * std::cos(pt.y());
-    };
-
-    auto neumann_jump = [](const typename cuthho_poly_mesh<RealType>::point_type& pt) -> RealType {
-        Matrix<RealType, 1, 2> normal;
-        normal(0) = 2*pt.x() - 1.0;
-        normal(1) = 2*pt.y() - 1.0;
-
-        normal = normal/normal.norm();
-
-        
-        return (M_PI * std::cos(M_PI*pt.x()) * std::sin(M_PI*pt.y()) - exp(pt.x()) * std::cos(pt.y())) * normal(0) + ( M_PI * std::sin(M_PI*pt.x()) * std::cos(M_PI*pt.y()) + exp(pt.x()) * std::sin(pt.y()) ) * normal(1);
-    };
-
-    
-    struct params<RealType> parms;
-
-    parms.kappa_1 = 1.0;
-    parms.kappa_2 = 1.0;
-
-
-#endif
+    auto rhs_fun = test_case.rhs_fun;
+    auto sol_fun = test_case.sol_fun;
+    auto sol_grad = test_case.sol_grad;
+    auto bcs_fun = test_case.bcs_fun;
+    auto dirichlet_jump = test_case.dirichlet_jump;
+    auto neumann_jump = test_case.neumann_jump;
+    struct params<RealType> parms = test_case.parms;
 
     timecounter tc;
 
@@ -2256,11 +2083,15 @@ int main(int argc, char **argv)
         output_mesh_info(msh, level_set_function);
     }
 
+    // jumps sin_sin -> exp_cos
+    auto test_case = make_test_case_laplacian_jumps_1(msh, level_set_function);
+    // auto test_case = make_test_case_laplacian_sin_sin(msh, level_set_function);
+
     if (solve_interface)
-        run_cuthho_interface(msh, level_set_function, degree);
+        run_cuthho_interface(msh, degree, test_case);
     
     if (solve_fictdom)
-        run_cuthho_fictdom(msh, level_set_function, degree);
+        run_cuthho_fictdom(msh, degree, test_case);
 
 
 #if 0
