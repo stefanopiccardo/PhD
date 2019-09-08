@@ -932,7 +932,8 @@ compute_fictdom_contrib(const cuthho_mesh<T, ET>& msh,
     if(method == 1)
     {
         auto gr = make_hho_gradrec_vector(msh, cl, level_set_function, hdi, where, 1);
-        Matrix<T, Dynamic, Dynamic> stab = make_hho_cut_stabilization2(msh, cl, hdi, where);
+        Matrix<T, Dynamic, Dynamic> stab = make_hho_cut_stabilization(msh, cl, hdi, where)
+            + make_hho_cut_interface_penalty(msh, cl, hdi, cell_eta(msh, cl));
         Matrix<T, Dynamic, Dynamic> lc = gr.second + stab;
         Matrix<T, Dynamic, 1> f = Matrix<T, Dynamic, 1>::Zero(lc.rows());
         f = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun, where, level_set_function, bcs_fun, gr.first);
@@ -942,7 +943,8 @@ compute_fictdom_contrib(const cuthho_mesh<T, ET>& msh,
     else if(method == 2)
     {
         auto gr = make_hho_gradrec_vector(msh, cl, level_set_function, hdi, where, 2);
-        Matrix<T, Dynamic, Dynamic> stab = make_hho_cut_stabilization2(msh, cl, hdi, where);
+        Matrix<T, Dynamic, Dynamic> stab = make_hho_cut_stabilization(msh, cl, hdi, where)
+            + make_hho_cut_interface_penalty(msh, cl, hdi, cell_eta(msh, cl));
         Matrix<T, Dynamic, Dynamic> Nitsche = make_Nitsche(msh, cl, level_set_function, hdi);
         Matrix<T, Dynamic, Dynamic> lc = gr.second + stab + Nitsche;
         // Matrix<T, Dynamic, Dynamic> lc = gr.second + stab;
