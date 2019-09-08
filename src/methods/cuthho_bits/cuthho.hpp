@@ -233,7 +233,8 @@ make_hho_laplacian_interface(const cuthho_mesh<T, ET>& msh,
 ///////////////////////   STABILIZATION   //////////////////////////
 
 
-// make_hho_cut_stabilization -> for the file cuthho_square.cpp
+// make_hho_cut_stabilization
+// stabilization term on the faces
 template<typename T, size_t ET>
 Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>
 make_hho_cut_stabilization(const cuthho_mesh<T, ET>& msh,
@@ -284,7 +285,7 @@ make_hho_cut_stabilization(const cuthho_mesh<T, ET>& msh,
         if (qps.size() == 0) /* Avoid to invert a zero matrix */
             continue;
 
-        oper.block(0, 0, fbs, cbs) = mass.llt().solve(trace);
+        oper.block(0, 0, fbs, cbs) = mass.ldlt().solve(trace);
 
         data += oper.transpose() * mass * oper * (1./hT);
     }
@@ -293,77 +294,40 @@ make_hho_cut_stabilization(const cuthho_mesh<T, ET>& msh,
 }
 
 
-// make_hho_cut_stabilization2 -> for the file cuthho_meth2_square.cpp
+
+// make_hho_cut_interface_penalty
+// eta is the penalty (Nitsche's) parameter
+// return eta h_T^{-1} (u_T , v_T)_{Gamma}
 template<typename T, size_t ET>
 Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>
-make_hho_cut_stabilization2(const cuthho_mesh<T, ET>& msh,
-                           const typename cuthho_mesh<T, ET>::cell_type& cl,
-                           const hho_degree_info& di, element_location where)
+make_hho_cut_interface_penalty(const cuthho_mesh<T, ET>& msh,
+                               const typename cuthho_mesh<T, ET>::cell_type& cl,
+                               const hho_degree_info& di, const T eta)
 {
-    if ( !is_cut(msh, cl) )
-        return make_hho_naive_stabilization(msh, cl, di);
-
     auto celdeg = di.cell_degree();
     auto facdeg = di.face_degree();
 
     auto cbs = cell_basis<cuthho_mesh<T, ET>,T>::size(celdeg);
     auto fbs = face_basis<cuthho_mesh<T, ET>,T>::size(facdeg);
 
-    auto fcs = faces(msh, cl);
-    auto num_faces = fcs.size();
-
-    Matrix<T, Dynamic, Dynamic> data = Matrix<T, Dynamic, Dynamic>::Zero(cbs+num_faces*fbs, cbs+num_faces*fbs);
-    Matrix<T, Dynamic, Dynamic> If = Matrix<T, Dynamic, Dynamic>::Identity(fbs, fbs);
+    auto num_faces = faces(msh, cl).size();
 
     cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, celdeg);
 
+    Matrix<T, Dynamic, Dynamic> data = Matrix<T, Dynamic, Dynamic>::Zero(cbs+num_faces*fbs, cbs+num_faces*fbs);
+
     auto hT = diameter(msh, cl);
-
-
-    for (size_t i = 0; i < num_faces; i++)
-    {
-        auto fc = fcs[i];
-        // face_basis<cuthho_mesh<T, ET>,T> fb(msh, fc, facdeg);
-        cut_face_basis<cuthho_mesh<T, ET>,T> fb(msh, fc, facdeg, where);
-
-        Matrix<T, Dynamic, Dynamic> oper = Matrix<T, Dynamic, Dynamic>::Zero(fbs, cbs+num_faces*fbs);
-        Matrix<T, Dynamic, Dynamic> mass = Matrix<T, Dynamic, Dynamic>::Zero(fbs, fbs);
-        Matrix<T, Dynamic, Dynamic> trace = Matrix<T, Dynamic, Dynamic>::Zero(fbs, cbs);
-
-        oper.block(0, cbs+i*fbs, fbs, fbs) = -If;
-
-        auto qps = integrate(msh, fc, facdeg + celdeg, where);
-        for (auto& qp : qps)
-        {
-            auto c_phi = cb.eval_basis(qp.first);
-            auto f_phi = fb.eval_basis(qp.first);
-
-            mass += qp.second * f_phi * f_phi.transpose();
-            trace += qp.second * f_phi * c_phi.transpose();
-        }
-
-        if (qps.size() == 0) /* Avoid to invert a zero matrix */
-            continue;
-
-        oper.block(0, 0, fbs, cbs) = mass.ldlt().solve(trace);
-
-        data += oper.transpose() * mass * oper * (1./hT);
-    }
-
 
     auto iqps = integrate_interface(msh, cl, 2*celdeg, element_location::IN_NEGATIVE_SIDE);
     for (auto& qp : iqps)
     {
         const auto c_phi  = cb.eval_basis(qp.first);
 
-        data.block(0, 0, cbs, cbs) += qp.second * c_phi * c_phi.transpose() * cell_eta(msh, cl) / hT;
+        data.block(0, 0, cbs, cbs) += qp.second * c_phi * c_phi.transpose() * eta / hT;
     }
 
     return data;
 }
-
-
-
 
 
 
@@ -402,8 +366,8 @@ make_hho_stabilization_interface(const cuthho_mesh<T, ET>& msh,
     auto hT = diameter(msh, cl);
 
 
-    const auto stab_n = make_hho_cut_stabilization2(msh, cl, di,element_location::IN_NEGATIVE_SIDE);
-    const auto stab_p = make_hho_cut_stabilization2(msh, cl, di,element_location::IN_POSITIVE_SIDE);
+    const auto stab_n = make_hho_cut_stabilization(msh, cl, di,element_location::IN_NEGATIVE_SIDE);
+    const auto stab_p = make_hho_cut_stabilization(msh, cl, di,element_location::IN_POSITIVE_SIDE);
 
     // cells--cells
     data.block(0, 0, cbs, cbs) += parms.kappa_1 * stab_n.block(0, 0, cbs, cbs);
@@ -427,7 +391,7 @@ make_hho_stabilization_interface(const cuthho_mesh<T, ET>& msh,
 
 
     // complementary terms on the interface (cells--cells)
-    Matrix<T, Dynamic, Dynamic> term_1 = Matrix<T, Dynamic, Dynamic>::Zero(cbs, cbs);
+    Matrix<T, Dynamic, Dynamic> term_1 = make_hho_cut_interface_penalty(msh, cl, di, cell_eta(msh, cl)).block(0, 0, cbs, cbs);
     Matrix<T, Dynamic, Dynamic> term_2 = Matrix<T, Dynamic, Dynamic>::Zero(cbs, cbs);
 
     auto iqps = integrate_interface(msh, cl, 2*celdeg, element_location::IN_NEGATIVE_SIDE);
@@ -437,7 +401,6 @@ make_hho_stabilization_interface(const cuthho_mesh<T, ET>& msh,
         const auto dphi   = cb.eval_gradients(qp.first);
         const Matrix<T,2,1> n      = level_set_function.normal(qp.first);
 
-        term_1 += qp.second * c_phi * c_phi.transpose() * cell_eta(msh, cl) / hT;
         term_2 += qp.second * c_phi * (dphi * n).transpose();
     }
 
@@ -445,13 +408,15 @@ make_hho_stabilization_interface(const cuthho_mesh<T, ET>& msh,
     {
         data.block(0, cbs, cbs, cbs) -= parms.kappa_2 * term_1;
         data.block(cbs, 0, cbs, cbs) -= parms.kappa_2 * term_1;
-        data.block(0, 0, cbs, cbs) += (parms.kappa_2 - parms.kappa_1) * term_1;
+        data.block(0, 0, cbs, cbs) += parms.kappa_2 * term_1;
+        data.block(cbs, cbs, cbs, cbs) += parms.kappa_2 * term_1;
     }
     else
     {
+        data.block(0, 0, cbs, cbs) += parms.kappa_1 * term_1;
         data.block(0, cbs, cbs, cbs) -= parms.kappa_1 * term_1;
         data.block(cbs, 0, cbs, cbs) -= parms.kappa_1 * term_1;
-        data.block(cbs, cbs, cbs, cbs) += (parms.kappa_1 - parms.kappa_2) * term_1;
+        data.block(cbs, cbs, cbs, cbs) += parms.kappa_1 * term_1;
     }
 
     if (method == 1)
