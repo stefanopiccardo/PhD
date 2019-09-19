@@ -1136,17 +1136,18 @@ public:
         // neg part
         f.block(0, 0, cbs, 1) += make_rhs(msh, cl, celdeg, test_case.rhs_fun,
                                           element_location::IN_NEGATIVE_SIDE);
-        f.head(cbs) += make_Dirichlet_jump(msh, cl, celdeg, element_location::IN_NEGATIVE_SIDE,
-                                           level_set_function, dir_jump, 1, parms);
+        f.head(cbs) += parms.kappa_1 *
+            make_Dirichlet_jump(msh, cl, celdeg, element_location::IN_NEGATIVE_SIDE,
+                                level_set_function, dir_jump, eta);
         f.head(cbs) += make_flux_jump(msh, cl, celdeg, element_location::IN_NEGATIVE_SIDE,
                                       test_case.neumann_jump);
 
         // pos part
         f.block(cbs, 0, cbs, 1) = make_rhs(msh, cl, celdeg, test_case.rhs_fun,
                                            element_location::IN_POSITIVE_SIDE);
-        f.block(cbs, 0, cbs, 1)
-            += make_Dirichlet_jump(msh, cl, celdeg, element_location::IN_POSITIVE_SIDE,
-                                   level_set_function, dir_jump, 1, parms);
+        f.block(cbs, 0, cbs, 1) += parms.kappa_1 *
+            make_Dirichlet_jump(msh, cl, celdeg, element_location::IN_POSITIVE_SIDE,
+                                level_set_function, dir_jump, eta);
 
         return std::make_pair(lc, f);
     }
@@ -1212,17 +1213,20 @@ public:
         // neg part
         f.block(0, 0, cbs, 1) += make_rhs(msh, cl, celdeg, test_case.rhs_fun,
                                           element_location::IN_NEGATIVE_SIDE);
-        f.head(cbs) += make_Dirichlet_jump(msh, cl, celdeg, element_location::IN_NEGATIVE_SIDE,
-                                           level_set_function, dir_jump, 2, parms);
+        // we use element_location::IN_POSITIVE_SIDE to get rid of the Nitsche term
+        // (see definition of make_Dirichlet_jump)
+        f.head(cbs) -= parms.kappa_2 *
+            make_Dirichlet_jump(msh, cl, celdeg, element_location::IN_POSITIVE_SIDE,
+                                level_set_function, dir_jump, eta);
         f.head(cbs) += 0.5*make_flux_jump(msh, cl, celdeg, element_location::IN_NEGATIVE_SIDE,
                                       test_case.neumann_jump);
 
         // pos part
         f.block(cbs, 0, cbs, 1) += make_rhs(msh, cl, celdeg, test_case.rhs_fun,
                                            element_location::IN_POSITIVE_SIDE);
-        f.block(cbs, 0, cbs, 1)
-            += make_Dirichlet_jump(msh, cl, celdeg, element_location::IN_POSITIVE_SIDE,
-                                   level_set_function, dir_jump, 2, parms);
+        f.block(cbs, 0, cbs, 1) += parms.kappa_2 *
+            make_Dirichlet_jump(msh, cl, celdeg, element_location::IN_POSITIVE_SIDE,
+                                level_set_function, dir_jump, eta);
         f.block(cbs, 0, cbs, 1)
             += 0.5 * make_flux_jump(msh, cl, celdeg, element_location::IN_POSITIVE_SIDE,
                                     test_case.neumann_jump);
@@ -1306,15 +1310,18 @@ public:
         // neg part
         f.block(0, 0, cbs, 1) += make_rhs(msh, cl, celdeg, test_case.rhs_fun,
                                           element_location::IN_NEGATIVE_SIDE);
-        f.head(cbs) += make_Dirichlet_jump(msh, cl, celdeg, element_location::IN_NEGATIVE_SIDE,
-                                           level_set_function, dir_jump, 3, parms);
+        // we use element_location::IN_POSITIVE_SIDE to get rid of the Nitsche term
+        // (see definition of make_Dirichlet_jump)
+        f.head(cbs) -= parms.kappa_1 *
+            make_Dirichlet_jump(msh, cl, celdeg, element_location::IN_POSITIVE_SIDE,
+                                level_set_function, dir_jump, eta);
 
         // pos part
         f.block(cbs, 0, cbs, 1) += make_rhs(msh, cl, celdeg, test_case.rhs_fun,
                                            element_location::IN_POSITIVE_SIDE);
-        f.block(cbs, 0, cbs, 1)
-            += make_Dirichlet_jump(msh, cl, celdeg, element_location::IN_POSITIVE_SIDE,
-                                   level_set_function, dir_jump, 3, parms);
+        f.block(cbs, 0, cbs, 1) += parms.kappa_1 *
+            make_Dirichlet_jump(msh, cl, celdeg, element_location::IN_POSITIVE_SIDE,
+                                level_set_function, dir_jump, eta);
         f.block(cbs, 0, cbs, 1)
             += make_flux_jump(msh, cl, celdeg, element_location::IN_POSITIVE_SIDE,
                                     test_case.neumann_jump);
@@ -1404,15 +1411,22 @@ public:
         // neg part
         f.block(0, 0, cbs, 1) += make_rhs(msh, cl, celdeg, test_case.rhs_fun,
                                           element_location::IN_NEGATIVE_SIDE);
-        f.head(cbs) += make_Dirichlet_jump(msh, cl, celdeg, element_location::IN_NEGATIVE_SIDE,
-                                           level_set_function, dir_jump, 4, parms);
+        // we use element_location::IN_POSITIVE_SIDE to get rid of the Nitsche term
+        // (see definition of make_Dirichlet_jump)
+        f.head(cbs) -= parms.kappa_1 *
+            make_Dirichlet_jump(msh, cl, celdeg, element_location::IN_POSITIVE_SIDE,
+                                level_set_function, dir_jump, eta);
 
         // pos part
         f.block(cbs, 0, cbs, 1) += make_rhs(msh, cl, celdeg, test_case.rhs_fun,
                                            element_location::IN_POSITIVE_SIDE);
-        f.block(cbs, 0, cbs, 1)
-            += make_Dirichlet_jump(msh, cl, celdeg, element_location::IN_POSITIVE_SIDE,
-                                   level_set_function, dir_jump, 4, parms);
+        f.block(cbs, 0, cbs, 1) -= parms.kappa_2 *
+            make_Dirichlet_jump(msh, cl, celdeg, element_location::IN_NEGATIVE_SIDE,
+                                level_set_function, dir_jump, eta);
+        f.block(cbs, 0, cbs, 1) -= (parms.kappa_1-parms.kappa_2) *
+            make_Dirichlet_jump(msh, cl, celdeg, element_location::IN_POSITIVE_SIDE,
+                                level_set_function, dir_jump, eta);
+
         f.block(cbs, 0, cbs, 1)
             += make_flux_jump(msh, cl, celdeg, element_location::IN_POSITIVE_SIDE,
                                     test_case.neumann_jump);
@@ -2544,9 +2558,9 @@ int main(int argc, char **argv)
     // jumps3 sin_sin -> sin_sin + pol
     auto test_case = make_test_case_laplacian_jumps_3(msh, level_set_function);
 
-    // auto method = make_gradrec_interface_method(msh, 1.0, test_case);
     // auto method = make_Nitsche_interface_method(msh, 1.0, test_case);
     // auto method = make_sym_gradrec_interface_method(msh, 1.0, test_case);
+    // auto method = make_gradrec_interface_method(msh, 1.0, test_case);
     auto method = make_Nitsche_interface_method_2(msh, 1.0, test_case);
 
     if (solve_interface)

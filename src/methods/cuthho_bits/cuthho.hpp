@@ -797,12 +797,12 @@ make_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_
 }
 
 
-// make_Dirichlet_jump -> for the file cuthho_square.cpp
+// make_Dirichlet_jump
 template<typename T, size_t ET, typename F1, typename F2>
 Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, 1>
 make_Dirichlet_jump(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
                    size_t degree, const element_location where, const F1& level_set_function, 
-                   const F2& dir_jump)
+                    const F2& dir_jump, T eta)
 {
     cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, degree);
     auto cbs = cb.size();
@@ -822,7 +822,7 @@ make_Dirichlet_jump(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T,
             auto dphi = cb.eval_gradients(qp.first);
             auto n = level_set_function.normal(qp.first);
 
-            ret += qp.second * dir_jump(qp.first) * ( phi * cell_eta(msh, cl)/hT - dphi*n);
+            ret += qp.second * dir_jump(qp.first) * ( phi * eta / hT - dphi*n);
         }
     }
     else if(where == element_location::IN_POSITIVE_SIDE) {
@@ -831,80 +831,10 @@ make_Dirichlet_jump(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T,
         for (auto& qp : qpsi)
         {
             auto phi = cb.eval_basis(qp.first);
-            ret -= qp.second * dir_jump(qp.first) * phi * cell_eta(msh, cl)/hT;
+            ret -= qp.second * dir_jump(qp.first) * phi * eta / hT;
         }
     }
     return ret;
-}
-
-
-
-//// make_Dirichlet_jump -> for the file cuthho_meth2_square.cpp
-// method = 1 : Nitsche in negative part (for bold G -- bold G)
-// method = 2 : kappa_2 + no Nitsche's term (for tilde bold G -- tilde bold G)
-// method = 3 : kappa_1 + no Nitsche's term (for hat bold G -- bold G)
-// method = 4 : Nitsche in positive part (for hat bold G -- hat bold G)
-template<typename T, size_t ET, typename F1, typename F2>
-Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, 1>
-make_Dirichlet_jump(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
-                    size_t degree, const element_location where, const F1& level_set_function,
-                    const F2& dir_jump, const size_t method, const params<T>& parms = params<T>())
-{
-    cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, degree);
-    auto cbs = cb.size();
-    Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs);
-
-    if( location(msh, cl) != element_location::ON_INTERFACE )
-        return ret;
-
-    Matrix<T, Dynamic, 1> term1 = Matrix<T, Dynamic, 1>::Zero(cbs);
-
-    auto hT = diameter(msh, cl);
-
-    auto qpsi = integrate_interface(msh, cl, 2*degree, element_location::IN_NEGATIVE_SIDE );
-
-    for (auto& qp : qpsi)
-    {
-        auto phi = cb.eval_basis(qp.first);
-
-        term1 += qp.second * dir_jump(qp.first) * phi * cell_eta(msh, cl)/hT;
-    }
-
-
-    if (method == 2 && where == element_location::IN_NEGATIVE_SIDE)
-        return parms.kappa_2 * term1;
-
-    if (method == 2 && where == element_location::IN_POSITIVE_SIDE)
-        return - parms.kappa_2 * term1;
-
-    if (method == 3 && where == element_location::IN_NEGATIVE_SIDE)
-        return parms.kappa_1 * term1;
-
-    if (method == 3 && where == element_location::IN_POSITIVE_SIDE)
-        return - parms.kappa_1 * term1;
-
-    Matrix<T, Dynamic, 1> term2 = Matrix<T, Dynamic, 1>::Zero(cbs);
-    for (auto& qp : qpsi)
-    {
-        auto phi = cb.eval_basis(qp.first);
-        auto dphi = cb.eval_gradients(qp.first);
-        auto n = level_set_function.normal(qp.first);
-
-        term2 += qp.second * dir_jump(qp.first) * dphi * n ;
-    }
-
-
-    if (method == 1 && where == element_location::IN_NEGATIVE_SIDE)
-        return parms.kappa_1 * ( term1 - term2 );
-
-    if (method == 1 && where == element_location::IN_POSITIVE_SIDE)
-        return - parms.kappa_1 * term1;
-
-    if (method == 4 && where == element_location::IN_NEGATIVE_SIDE)
-        return parms.kappa_1 * term1;
-
-    if (method == 4 && where == element_location::IN_POSITIVE_SIDE)
-        return parms.kappa_2 * term2 - parms.kappa_1 * term1;
 }
 
 
