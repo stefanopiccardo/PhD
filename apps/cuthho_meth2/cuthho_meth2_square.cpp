@@ -632,7 +632,7 @@ public:
                      const params<T>& parms = params<T>())
     {
         // LHS
-        auto gr = make_hho_gradrec_vector(msh, cl, test_case.level_set_, hdi, where, 1);
+        auto gr = make_hho_gradrec_vector(msh, cl, test_case.level_set_, hdi, where, 1.0);
         Mat stab = make_hho_cut_stabilization(msh, cl, hdi, where)
             + make_hho_cut_interface_penalty(msh, cl, hdi, eta);
         Mat lc = gr.second + stab;
@@ -684,7 +684,7 @@ public:
     {
 
         // LHS
-        auto gr = make_hho_gradrec_vector(msh, cl, test_case.level_set_, hdi, where, 2);
+        auto gr = make_hho_gradrec_vector(msh, cl, test_case.level_set_, hdi, where, 0.0);
         Mat stab = make_hho_cut_stabilization(msh, cl, hdi, where)
             + make_hho_cut_interface_penalty(msh, cl, hdi, eta);
         Mat Nitsche = make_Nitsche(msh, cl, test_case.level_set_, hdi);
@@ -2345,7 +2345,7 @@ void convergence_test(void)
 }
 
 //////////////////////////     MAIN        ////////////////////////////
-#if 1
+#if 0
 int main(int argc, char **argv)
 {
     convergence_test();
@@ -2355,7 +2355,7 @@ int main(int argc, char **argv)
 }
 #endif
 
-#if 0
+#if 1
 int main(int argc, char **argv)
 {
     using RealType = double;

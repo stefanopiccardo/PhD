@@ -444,10 +444,13 @@ make_hho_stabilization_interface(const cuthho_mesh<T, ET>& msh,
 
 ///////////////////////////    GRADREC     //////////////////////////////
 
+
+
+// coeff scales the interface term
 template<typename T, size_t ET, typename Function>
 std::pair<   Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>,
              Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>  >
-make_hho_gradrec_vector(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl, const Function& level_set_function, const hho_degree_info& di, element_location where, const size_t method = 1)
+make_hho_gradrec_vector(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl, const Function& level_set_function, const hho_degree_info& di, element_location where, const T coeff)
 {
 
     if ( !is_cut(msh, cl) )
@@ -506,20 +509,20 @@ make_hho_gradrec_vector(const cuthho_mesh<T, ET>& msh, const typename cuthho_mes
     }
 
 
-    if(method == 1)
+    // interface term (scaled by coeff)
+    matrix_type    interface_term = matrix_type::Zero(gbs, cbs);
+    const auto iqps = integrate_interface(msh, cl, celdeg + graddeg, element_location::IN_NEGATIVE_SIDE);
+    for (auto& qp : iqps)
     {
-        const auto iqps = integrate_interface(msh, cl, celdeg + graddeg, element_location::IN_NEGATIVE_SIDE);
-        for (auto& qp : iqps)
-        {
-            const auto c_phi        = cb.eval_basis(qp.first);
-            const auto g_phi        = gb.eval_basis(qp.first);
+        const auto c_phi        = cb.eval_basis(qp.first);
+        const auto g_phi        = gb.eval_basis(qp.first);
 
-            Matrix<T,2,1> n = level_set_function.normal(qp.first);
-            const vector_type qp_g_phi_n = qp.second * g_phi * n;
+        Matrix<T,2,1> n = level_set_function.normal(qp.first);
+        const vector_type qp_g_phi_n = qp.second * g_phi * n;
 
-            gr_rhs.block(0 , 0, gbs, cbs) -= qp_g_phi_n * c_phi.transpose();
-        }
+        interface_term -= qp_g_phi_n * c_phi.transpose();
     }
+    gr_rhs.block(0, 0, gbs, cbs) += coeff * interface_term;
 
     matrix_type oper = gr_lhs.ldlt().solve(gr_rhs);
     matrix_type data = gr_rhs.transpose() * oper;
