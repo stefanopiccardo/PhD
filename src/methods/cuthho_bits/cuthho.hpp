@@ -532,19 +532,16 @@ make_hho_gradrec_vector(const cuthho_mesh<T, ET>& msh, const typename cuthho_mes
 
 
 
-
 //// make_hho_gradrec_vector_interface
 // return the gradient reconstruction for the interface pb
-// method = 1 -> no terms on the interface (bold G)
-// method = 2 -> terms on the interface scaled by 0.5 (tilde bold G)
-// method = 3 -> terms on the interface scaled by 1 (hat bold G)
+// coeff -> scales the interface term
 template<typename T, size_t ET, typename Function>
 std::pair<   Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>,
              Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>  >
 make_hho_gradrec_vector_interface(const cuthho_mesh<T, ET>& msh,
                                   const typename cuthho_mesh<T, ET>::cell_type& cl,
                                   const Function& level_set_function, const hho_degree_info& di,
-                                  element_location where, size_t method)
+                                  element_location where, T coeff)
 {
 
     if ( !is_cut(msh, cl) )
@@ -605,6 +602,7 @@ make_hho_gradrec_vector_interface(const cuthho_mesh<T, ET>& msh,
     }
 
     // term on the interface
+    matrix_type        interface_term = matrix_type::Zero(gbs, 2*cbs);
     const auto iqps = integrate_interface(msh, cl, celdeg + graddeg, element_location::IN_NEGATIVE_SIDE);
     for (auto& qp : iqps)
     {
@@ -614,13 +612,10 @@ make_hho_gradrec_vector_interface(const cuthho_mesh<T, ET>& msh,
         Matrix<T,2,1> n = level_set_function.normal(qp.first);
         const vector_type qp_g_phi_n = qp.second * g_phi * n;
 
-        gr_rhs.block(0 , 0, gbs, cbs) -= qp_g_phi_n * c_phi.transpose();
-        gr_rhs.block(0 , cbs, gbs, cbs) += qp_g_phi_n * c_phi.transpose();
+        interface_term.block(0 , 0, gbs, cbs) -= qp_g_phi_n * c_phi.transpose();
+        interface_term.block(0 , cbs, gbs, cbs) += qp_g_phi_n * c_phi.transpose();
     }
-    if (method == 1) gr_rhs = 0.0 * gr_rhs;
-    else if (method == 2) gr_rhs = 0.5 * gr_rhs;
-    else if (method == 3) {}
-    else throw std::invalid_argument("Method should be 1, 2 or 3");
+    gr_rhs.block(0, 0, gbs, 2*cbs) += coeff * interface_term;
 
     // other terms
     if(where == element_location::IN_NEGATIVE_SIDE)

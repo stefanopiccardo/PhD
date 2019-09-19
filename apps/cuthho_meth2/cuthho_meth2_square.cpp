@@ -1106,9 +1106,9 @@ public:
 
         // LHS
         auto gr_n = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
-                                                      element_location::IN_NEGATIVE_SIDE, 1);
+                                                      element_location::IN_NEGATIVE_SIDE, 0.0);
         auto gr_p = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
-                                                      element_location::IN_POSITIVE_SIDE, 1);
+                                                      element_location::IN_POSITIVE_SIDE, 0.0);
         Mat stab = make_hho_stabilization_interface(msh, cl, level_set_function, hdi, 1, parms);
         Mat lc = stab + parms.kappa_1 * gr_n.second + parms.kappa_2 * gr_p.second;
 
@@ -1171,9 +1171,9 @@ public:
 
         // LHS
         auto gr_n = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
-                                                      element_location::IN_NEGATIVE_SIDE, 2);
+                                                      element_location::IN_NEGATIVE_SIDE, 0.5);
         auto gr_p = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
-                                                      element_location::IN_POSITIVE_SIDE, 2);
+                                                      element_location::IN_POSITIVE_SIDE, 0.5);
         Mat stab = make_hho_stabilization_interface(msh, cl, level_set_function, hdi, 2, parms);
         Mat lc = stab + parms.kappa_1 * gr_n.second + parms.kappa_2 * gr_p.second;
 
@@ -1255,9 +1255,9 @@ public:
 
         // LHS
         auto gr_n = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
-                                                      element_location::IN_NEGATIVE_SIDE, 3);
+                                                      element_location::IN_NEGATIVE_SIDE, 1.0);
         auto gr_p = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
-                                                      element_location::IN_POSITIVE_SIDE, 1);
+                                                      element_location::IN_POSITIVE_SIDE, 0.0);
         Mat stab = make_hho_stabilization_interface(msh, cl, level_set_function, hdi, 3, parms);
         Mat lc = stab + parms.kappa_1 * gr_n.second + parms.kappa_2 * gr_p.second;
 
@@ -1337,9 +1337,9 @@ public:
 
         // LHS
         auto gr_n = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
-                                                      element_location::IN_NEGATIVE_SIDE, 3);
+                                                      element_location::IN_NEGATIVE_SIDE, 1.0);
         auto gr_p = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
-                                                      element_location::IN_POSITIVE_SIDE, 3);
+                                                      element_location::IN_POSITIVE_SIDE, 1.0);
         Mat stab = make_hho_stabilization_interface(msh, cl, level_set_function, hdi, 4, parms);
         Mat lc = stab + parms.kappa_1 * gr_n.second + parms.kappa_2 * gr_p.second;
 
@@ -2492,6 +2492,8 @@ int main(int argc, char **argv)
     auto test_case = make_test_case_laplacian_jumps_3(msh, level_set_function);
 
     auto method = make_gradrec_interface_method(msh, 1.0, test_case);
+    // auto method = make_Nitsche_interface_method(msh, 1.0, test_case);
+    // auto method = make_sym_gradrec_interface_method(msh, 1.0, test_case);
 
     if (solve_interface)
         run_cuthho_interface(msh, degree, method, test_case);
