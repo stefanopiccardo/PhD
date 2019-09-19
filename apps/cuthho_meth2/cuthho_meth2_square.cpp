@@ -558,59 +558,171 @@ public:
 };
 
 
+///////////////////////   FICTITIOUS DOMAIN METHODS  ///////////////////////////
 
-
-
-
-
-
-template<typename T, size_t ET, typename F1, typename F2, typename F3>
-std::pair<   Matrix<T, Dynamic, Dynamic>, Matrix<T, Dynamic, 1>  >
-compute_fictdom_contrib(const cuthho_mesh<T, ET>& msh,
-                        const typename cuthho_mesh<T, ET>::cell_type& cl,
-                        const F1& level_set_function, const F2& bcs_fun,
-                        const F3& rhs_fun, const size_t method, const hho_degree_info hdi,
-                        const element_location where = element_location::IN_NEGATIVE_SIDE,
-                        const params<T>& parms = params<T>())
+template<typename T, size_t ET, typename testType>
+class fictdom_method
 {
+    using Mat  = Matrix<T, Dynamic, Dynamic>;
+    using Vect = Matrix<T, Dynamic, 1>;
+    using Mesh = cuthho_mesh<T, ET>;
 
-    if( location(msh, cl) != element_location::ON_INTERFACE )
+protected:
+    fictdom_method(){}
+
+    virtual std::pair<Mat, Vect>
+    make_contrib_cut(const Mesh& msh, const typename Mesh::cell_type& cl,
+                     const testType test_case, const hho_degree_info hdi,
+                     const element_location where = element_location::IN_NEGATIVE_SIDE,
+                     const params<T>& parms = params<T>())
+    {
+    }
+
+public:
+    std::pair<Mat, Vect>
+    make_contrib_uncut(const Mesh& msh, const typename Mesh::cell_type& cl,
+                       const hho_degree_info hdi, const testType test_case)
     {
         auto gr = make_hho_gradrec_vector(msh, cl, hdi);
-        Matrix<T, Dynamic, Dynamic> stab = make_hho_naive_stabilization(msh, cl, hdi);
-        Matrix<T, Dynamic, Dynamic> lc = gr.second + stab;
-        Matrix<T, Dynamic, 1> f = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun);
+        Mat stab = make_hho_naive_stabilization(msh, cl, hdi);
+        Mat lc = gr.second + stab;
+        Mat f = make_rhs(msh, cl, hdi.cell_degree(), test_case.rhs_fun);
         return std::make_pair(lc, f);
     }
-    /////////   METHOD 1 : USE NON CONSISTENT GRADIENT RECONSTRUCTION
-    if(method == 1)
+
+
+    std::pair<Mat, Vect>
+    make_contrib(const Mesh& msh, const typename Mesh::cell_type& cl,
+                 const testType test_case, const hho_degree_info hdi,
+                 const element_location where = element_location::IN_NEGATIVE_SIDE,
+                 const params<T>& parms = params<T>())
     {
-        auto gr = make_hho_gradrec_vector(msh, cl, level_set_function, hdi, where, 1);
-        Matrix<T, Dynamic, Dynamic> stab = make_hho_cut_stabilization(msh, cl, hdi, where)
-            + make_hho_cut_interface_penalty(msh, cl, hdi, cell_eta(msh, cl));
-        Matrix<T, Dynamic, Dynamic> lc = gr.second + stab;
-        Matrix<T, Dynamic, 1> f = Matrix<T, Dynamic, 1>::Zero(lc.rows());
-        f = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun, where, level_set_function, bcs_fun, gr.first);
-        return std::make_pair(lc, f);
+        if( location(msh, cl) == where )
+            return make_contrib_uncut(msh, cl, hdi, test_case);
+        else if( location(msh, cl) != element_location::ON_INTERFACE )
+        {
+            Mat lc;
+            Vect f;
+            return std::make_pair(lc, f);
+        }
+        else // on interface
+            return make_contrib_cut(msh, cl, test_case, hdi, where, parms);
     }
-    /////////    METHOD 2 : USE NITSCHE'S METHOD
-    else if(method == 2)
+};
+
+/////////////////////////  GRADREC_FICTITIOUS_METHOD
+
+template<typename T, size_t ET, typename testType>
+class gradrec_fictdom_method : public fictdom_method<T, ET, testType>
+{
+    using Mat = Matrix<T, Dynamic, Dynamic>;
+    using Vect = Matrix<T, Dynamic, 1>;
+    using Mesh = cuthho_mesh<T, ET>;
+
+public:
+    T eta;
+
+    gradrec_fictdom_method(T eta_)
+        : fictdom_method<T,ET,testType>(), eta(eta_) {}
+
+    std::pair<Mat, Vect>
+    make_contrib_cut(const Mesh& msh, const typename Mesh::cell_type& cl,
+                     const testType test_case, const hho_degree_info hdi,
+                     const element_location where = element_location::IN_NEGATIVE_SIDE,
+                     const params<T>& parms = params<T>())
     {
-        auto gr = make_hho_gradrec_vector(msh, cl, level_set_function, hdi, where, 2);
-        Matrix<T, Dynamic, Dynamic> stab = make_hho_cut_stabilization(msh, cl, hdi, where)
-            + make_hho_cut_interface_penalty(msh, cl, hdi, cell_eta(msh, cl));
-        Matrix<T, Dynamic, Dynamic> Nitsche = make_Nitsche(msh, cl, level_set_function, hdi);
-        Matrix<T, Dynamic, Dynamic> lc = gr.second + stab + Nitsche;
-        // Matrix<T, Dynamic, Dynamic> lc = gr.second + stab;
-        Matrix<T, Dynamic, 1> f = Matrix<T, Dynamic, 1>::Zero(lc.rows());
-        f = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun, where, level_set_function, bcs_fun, gr.first, 2);
+        // LHS
+        auto gr = make_hho_gradrec_vector(msh, cl, test_case.level_set_, hdi, where, 1);
+        Mat stab = make_hho_cut_stabilization(msh, cl, hdi, where)
+            + make_hho_cut_interface_penalty(msh, cl, hdi, eta);
+        Mat lc = gr.second + stab;
+
+
+        // RHS
+        auto celdeg = hdi.cell_degree();
+        auto cbs = cell_basis<Mesh,T>::size(celdeg);
+
+        Vect f = Vect::Zero(lc.rows());
+        f.block(0, 0, cbs, 1) += make_rhs(msh, cl, celdeg, test_case.rhs_fun, where);
+        f.block(0, 0, cbs, 1) += make_rhs_penalty(msh, cl, celdeg, test_case.bcs_fun, eta);
+        f += make_GR_rhs(msh, cl, celdeg, test_case.bcs_fun, test_case.level_set_, gr.first);
+
         return std::make_pair(lc, f);
     }
+};
+
+
+
+template<typename T, size_t ET, typename testType>
+auto make_gradrec_fictdom_method(const cuthho_mesh<T, ET>& msh, const T eta_,
+                                 const testType test_case)
+{
+    return gradrec_fictdom_method<T, ET, testType>(eta_);
 }
 
+////////////////////////  NITSCHE_FICTITIOUS_METHOD
 
 
+template<typename T, size_t ET, typename testType>
+class Nitsche_fictdom_method : public fictdom_method<T, ET, testType>
+{
+    using Mat = Matrix<T, Dynamic, Dynamic>;
+    using Vect = Matrix<T, Dynamic, 1>;
+    using Mesh = cuthho_mesh<T, ET>;
 
+public:
+    T eta;
+
+    Nitsche_fictdom_method(T eta_)
+        : fictdom_method<T,ET,testType>(), eta(eta_) {}
+
+    std::pair<Mat, Vect>
+    make_contrib_cut(const Mesh& msh, const typename Mesh::cell_type& cl,
+                     const testType test_case, const hho_degree_info hdi,
+                     const element_location where = element_location::IN_NEGATIVE_SIDE,
+                     const params<T>& parms = params<T>())
+    {
+
+        // LHS
+        auto gr = make_hho_gradrec_vector(msh, cl, test_case.level_set_, hdi, where, 2);
+        Mat stab = make_hho_cut_stabilization(msh, cl, hdi, where)
+            + make_hho_cut_interface_penalty(msh, cl, hdi, eta);
+        Mat Nitsche = make_Nitsche(msh, cl, test_case.level_set_, hdi);
+        Mat lc = gr.second + stab + Nitsche;
+
+
+        // RHS
+        auto celdeg = hdi.cell_degree();
+        auto cbs = cell_basis<Mesh,T>::size(celdeg);
+
+        Vect f = Vect::Zero(lc.rows());
+        f.block(0, 0, cbs, 1) += make_rhs(msh, cl, celdeg, test_case.rhs_fun, where);
+        f.block(0, 0, cbs, 1) += make_rhs_penalty(msh, cl, celdeg, test_case.bcs_fun, eta);
+
+        cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, celdeg);
+
+        auto qpsi = integrate_interface(msh, cl, 2*celdeg - 1, element_location::IN_NEGATIVE_SIDE);
+        for (auto& qp : qpsi)
+        {
+            const auto n = test_case.level_set_.normal(qp.first);
+            const auto c_dphi  = cb.eval_gradients(qp.first);
+            const auto c_dphi_n  = c_dphi * n;
+
+            f.block(0, 0, cbs, 1) -= qp.second * test_case.bcs_fun(qp.first) * c_dphi_n;
+        }
+
+        return std::make_pair(lc, f);
+    }
+};
+
+template<typename T, size_t ET, typename testType>
+auto make_Nitsche_fictdom_method(const cuthho_mesh<T, ET>& msh, const T eta_,
+                                 testType test_case)
+{
+    return Nitsche_fictdom_method<T, ET, testType>(eta_);
+}
+
+/////////////////////////////////
 
 template<typename Mesh, typename testType>
 test_info<typename Mesh::coordinate_type>
@@ -662,24 +774,26 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
     timecounter tc;
 
     bool sc = true; // static condensation
-    size_t method = 1; // 1 : non consistent gradient // 2 : Nitsche
 
     /************** ASSEMBLE PROBLEM **************/
     hho_degree_info hdi(degree+1, degree);
 
     element_location where = element_location::IN_NEGATIVE_SIDE;
 
-    /* reconstruction and stabilization template for square cells.
-     * BEWARE of the fact that I'm using cell 0 to compute it! */
-
     tc.tic();
     auto assembler = make_fict_assembler(msh, hdi, where);
     auto assembler_sc = make_fict_condensed_assembler(msh, hdi, where);
 
+
+    // method with gradient reconstruction (penalty-free)
+    auto class_meth = make_gradrec_fictdom_method(msh, 1.0, test_case);
+    // Nitsche's method
+    // auto class_meth = make_Nitsche_fictdom_method(msh, 1.0, test_case);
+
     for (auto& cl : msh.cells)
     {
-        auto contrib = compute_fictdom_contrib(msh, cl, level_set_function, bcs_fun,
-                                               rhs_fun, method, hdi);
+        auto contrib = class_meth.make_contrib(msh, cl, test_case, hdi,
+                                               element_location::IN_NEGATIVE_SIDE);
         auto lc = contrib.first;
         auto f = contrib.second;
 
@@ -2181,9 +2295,9 @@ int main(int argc, char **argv)
     std::cout << bold << yellow << "Mesh generation: " << tc << " seconds" << reset << std::endl;
     /************** LEVEL SET FUNCTION **************/
     RealType radius = 1.0/3.0;
-    // auto level_set_function = circle_level_set<RealType>(radius, 0.5, 0.5);
+    auto level_set_function = circle_level_set<RealType>(radius, 0.5, 0.5);
     // auto level_set_function = line_level_set<RealType>(0.5);
-    auto level_set_function = flower_level_set<RealType>(0.31, 0.5, 0.5, 4, 0.04);
+    // auto level_set_function = flower_level_set<RealType>(0.31, 0.5, 0.5, 4, 0.04);
     /************** DO cutHHO MESH PROCESSING **************/
 
     tc.tic();

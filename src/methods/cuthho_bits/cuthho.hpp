@@ -686,6 +686,87 @@ make_Nitsche(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::c
 
 ///////////////////////////   RHS VECTOR   //////////////////////////////
 
+
+// make volumic rhs
+template<typename T, size_t ET, typename F1>
+Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, 1>
+make_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
+         size_t degree, const F1& f, const element_location where)
+{
+    if ( location(msh, cl) == where )
+        return make_rhs(msh, cl, degree, f);
+
+    cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, degree);
+    auto cbs = cb.size();
+
+    Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs);
+    auto qps = integrate(msh, cl, 2*degree, where);
+    for (auto& qp : qps)
+    {
+        auto phi = cb.eval_basis(qp.first);
+        ret += qp.second * phi * f(qp.first);
+    }
+    return ret;
+}
+
+
+// make_rhs_penalty
+// return (g , v_T)_{Gamma} * eta/h_T
+template<typename T, size_t ET, typename F1>
+Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, 1>
+make_rhs_penalty(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
+                 size_t degree, const F1& g, T eta)
+{
+    cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, degree);
+    auto cbs = cb.size();
+
+    auto hT = diameter(msh, cl);
+
+    Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs);
+    auto qpsi = integrate_interface(msh, cl, 2*degree, element_location::IN_NEGATIVE_SIDE);
+    for (auto& qp : qpsi)
+    {
+        const auto phi = cb.eval_basis(qp.first);
+
+        ret += qp.second * g(qp.first) * phi * eta / hT;
+    }
+    return ret;
+}
+
+
+// make_GR_rhs
+// return -(g , GR(v_T) . n)_{Gamma}
+template<typename T, size_t ET, typename F1, typename F2>
+Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, 1>
+make_GR_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
+            size_t degree, const F1& g, const F2& level_set_function,
+            Matrix<T, Dynamic, Dynamic> GR)
+{
+    cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, degree);
+    auto cbs = cb.size();
+
+    vector_cell_basis<cuthho_mesh<T, ET>,T> gb(msh, cl, degree-1);
+    auto gbs = gb.size();
+
+    auto hT = diameter(msh, cl);
+
+    Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs);
+
+    Matrix<T, Dynamic, 1> source_vect = Matrix<T, Dynamic, 1>::Zero(gbs);
+
+    auto qpsi = integrate_interface(msh, cl, 2*degree-1, element_location::IN_NEGATIVE_SIDE);
+    for (auto& qp : qpsi)
+    {
+        const auto n = level_set_function.normal(qp.first);
+        const auto g_phi  = gb.eval_basis(qp.first);
+
+        source_vect += qp.second * g(qp.first) * g_phi * n;
+    }
+
+    return -GR.transpose() * source_vect;
+}
+
+
 // make_rhs for the file cuthho_square.cpp
 template<typename T, size_t ET, typename F1, typename F2, typename F3>
 Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, 1>
@@ -711,7 +792,7 @@ make_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_
         }
 
 
-        auto qpsi = integrate_interface(msh, cl, degree, where);
+        auto qpsi = integrate_interface(msh, cl, 2*degree, element_location::IN_NEGATIVE_SIDE);
         for (auto& qp : qpsi)
         {
             auto phi = cb.eval_basis(qp.first);
@@ -731,87 +812,6 @@ make_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_
         return ret;
     }
 }
-
-
-
-// make_rhs for the file cuthho_meth2_square.cpp
-template<typename T, size_t ET, typename F1, typename F2, typename F3>
-Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, 1>
-make_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
-         size_t degree, const F1& f, const element_location where, const F2& level_set_function, const F3& bcs, Matrix<T, Dynamic, Dynamic> GR, size_t method = 1)
-{
-    if ( location(msh, cl) == where )
-        return make_rhs(msh, cl, degree, f);
-    else if ( location(msh, cl) == element_location::ON_INTERFACE )
-    {
-        cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, degree);
-        auto cbs = cb.size();
-
-        vector_cell_basis<cuthho_mesh<T, ET>,T> gb(msh, cl, degree-1);
-        auto gbs = gb.size();
-
-
-        auto hT = diameter(msh, cl);
-
-        Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(GR.cols());
-        Matrix<T, Dynamic, 1> source_vect = Matrix<T, Dynamic, 1>::Zero(gbs);
-        Matrix<T, Dynamic, 1> grad_term = Matrix<T, Dynamic, 1>::Zero(GR.cols());
-
-        auto qps = integrate(msh, cl, 2*degree, where);
-        for (auto& qp : qps)
-        {
-            auto phi = cb.eval_basis(qp.first);
-            ret.block(0, 0, cbs, 1) += qp.second * phi * f(qp.first);
-        }
-
-
-        auto qpsi = integrate_interface(msh, cl, 2*degree, element_location::IN_NEGATIVE_SIDE);
-        for (auto& qp : qpsi)
-        {
-            const auto phi = cb.eval_basis(qp.first);
-
-            ret.block(0, 0, cbs, 1)
-                += qp.second * bcs(qp.first) * phi * cell_eta(msh, cl)/hT;
-        }
-
-        auto qpsi2 = integrate_interface(msh, cl, 2*degree - 1, element_location::IN_NEGATIVE_SIDE);
-        if(method == 1)
-        {
-            for (auto& qp : qpsi2)
-            {
-                const auto n = level_set_function.normal(qp.first);
-                const auto g_phi  = gb.eval_basis(qp.first);
-
-                source_vect += qp.second * bcs(qp.first) * g_phi * n;
-            }
-
-            grad_term += GR.transpose() * source_vect;
-
-            ret -= grad_term;
-        }
-        else if (method == 2)
-        {
-            for (auto& qp : qpsi2)
-            {
-                const auto n = level_set_function.normal(qp.first);
-                const auto c_dphi  = cb.eval_gradients(qp.first);
-                const auto c_dphi_n  = c_dphi * n;
-
-                ret.block(0, 0, cbs, 1) -= qp.second * bcs(qp.first) * c_dphi_n;
-            }
-        }
-        return ret;
-    }
-    else
-    {
-        auto cbs = cell_basis<cuthho_mesh<T, ET>,T>::size(degree);
-        Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs);
-        return ret;
-    }
-}
-
-
-
 
 
 // make_Dirichlet_jump -> for the file cuthho_square.cpp
