@@ -1,6 +1,6 @@
 /*
- *       /\        Matteo Cicuttin (C) 2017,2018; Guillaume Delay 2018,2019
- *      /__\       matteo.cicuttin@enpc.fr        guillaume.delay@enpc.fr
+ *       /\        Guillaume Delay 2018,2019
+ *      /__\       guillaume.delay@enpc.fr
  *     /_\/_\      École Nationale des Ponts et Chaussées - CERMICS
  *    /\    /\
  *   /__\  /__\    This is ProtoN, a library for fast Prototyping of

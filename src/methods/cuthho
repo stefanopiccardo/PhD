@@ -27,3 +27,4 @@
 #include "cuthho_bits/cuthho_utils.hpp"
 #include "cuthho_bits/cuthho.hpp"
 #include "cuthho_bits/cut_assemblers.hpp"
+#include "cuthho_bits/cuthho_agglomeration.hpp"
