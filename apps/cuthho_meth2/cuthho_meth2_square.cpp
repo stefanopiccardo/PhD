@@ -1104,18 +1104,34 @@ public:
         auto level_set_function = test_case.level_set_;
         auto dir_jump = test_case.dirichlet_jump;
 
-        // LHS
+        ////////   LHS
+        auto celdeg = hdi.cell_degree();
+        auto cbs = cell_basis<Mesh,T>::size(celdeg);
+
+        // GR
         auto gr_n = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
                                                       element_location::IN_NEGATIVE_SIDE, 0.0);
         auto gr_p = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
                                                       element_location::IN_POSITIVE_SIDE, 0.0);
-        Mat stab = make_hho_stabilization_interface(msh, cl, level_set_function, hdi, 1, parms);
+
+        // stab
+        Mat stab = make_hho_stabilization_interface(msh, cl, level_set_function, hdi, parms);
+
+        Mat penalty = make_hho_cut_interface_penalty(msh, cl, hdi, eta).block(0, 0, cbs, cbs);
+        stab.block(0, 0, cbs, cbs) += parms.kappa_1 * penalty;
+        stab.block(0, cbs, cbs, cbs) -= parms.kappa_1 * penalty;
+        stab.block(cbs, 0, cbs, cbs) -= parms.kappa_1 * penalty;
+        stab.block(cbs, cbs, cbs, cbs) += parms.kappa_1 * penalty;
+
+        Mat Nitsche = make_NS_Nitsche(msh, cl, level_set_function, hdi).block(0, 0, cbs, cbs);
+        stab.block(0, 0, cbs, cbs) -= parms.kappa_1 * Nitsche;
+        stab.block(0, 0, cbs, cbs) -= parms.kappa_1 * Nitsche.transpose();
+        stab.block(cbs, 0, cbs, cbs) += parms.kappa_1 * Nitsche;
+        stab.block(0, cbs, cbs, cbs) += parms.kappa_1 * Nitsche.transpose();
+
         Mat lc = stab + parms.kappa_1 * gr_n.second + parms.kappa_2 * gr_p.second;
 
-        // RHS
-        auto celdeg = hdi.cell_degree();
-        auto cbs = cell_basis<Mesh,T>::size(celdeg);
-
+        ////////    RHS
         Vect f = Vect::Zero(lc.rows());
         // neg part
         f.block(0, 0, cbs, 1) += make_rhs(msh, cl, celdeg, test_case.rhs_fun,
@@ -1169,17 +1185,28 @@ public:
         auto level_set_function = test_case.level_set_;
         auto dir_jump = test_case.dirichlet_jump;
 
-        // LHS
+        ///////////////   LHS
+        auto celdeg = hdi.cell_degree();
+        auto cbs = cell_basis<Mesh,T>::size(celdeg);
+
+        // GR
         auto gr_n = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
                                                       element_location::IN_NEGATIVE_SIDE, 0.5);
         auto gr_p = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
                                                       element_location::IN_POSITIVE_SIDE, 0.5);
-        Mat stab = make_hho_stabilization_interface(msh, cl, level_set_function, hdi, 2, parms);
+
+        // stab
+        Mat stab = make_hho_stabilization_interface(msh, cl, level_set_function, hdi, parms);
+
+        Mat penalty = make_hho_cut_interface_penalty(msh, cl, hdi, eta).block(0, 0, cbs, cbs);
+        stab.block(0, 0, cbs, cbs) += parms.kappa_2 * penalty;
+        stab.block(0, cbs, cbs, cbs) -= parms.kappa_2 * penalty;
+        stab.block(cbs, 0, cbs, cbs) -= parms.kappa_2 * penalty;
+        stab.block(cbs, cbs, cbs, cbs) += parms.kappa_2 * penalty;
+
         Mat lc = stab + parms.kappa_1 * gr_n.second + parms.kappa_2 * gr_p.second;
 
-        // RHS
-        auto celdeg = hdi.cell_degree();
-        auto cbs = cell_basis<Mesh,T>::size(celdeg);
+        ////////////////    RHS
 
         Vect f = Vect::Zero(lc.rows());
         // neg part
@@ -1253,18 +1280,28 @@ public:
         auto level_set_function = test_case.level_set_;
         auto dir_jump = test_case.dirichlet_jump;
 
-        // LHS
+        ///////////////    LHS
+        auto celdeg = hdi.cell_degree();
+        auto cbs = cell_basis<Mesh,T>::size(celdeg);
+
+        // GR
         auto gr_n = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
                                                       element_location::IN_NEGATIVE_SIDE, 1.0);
         auto gr_p = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
                                                       element_location::IN_POSITIVE_SIDE, 0.0);
-        Mat stab = make_hho_stabilization_interface(msh, cl, level_set_function, hdi, 3, parms);
+
+        // stab
+        Mat stab = make_hho_stabilization_interface(msh, cl, level_set_function, hdi, parms);
+
+        Mat penalty = make_hho_cut_interface_penalty(msh, cl, hdi, eta).block(0, 0, cbs, cbs);
+        stab.block(0, 0, cbs, cbs) += parms.kappa_1 * penalty;
+        stab.block(0, cbs, cbs, cbs) -= parms.kappa_1 * penalty;
+        stab.block(cbs, 0, cbs, cbs) -= parms.kappa_1 * penalty;
+        stab.block(cbs, cbs, cbs, cbs) += parms.kappa_1 * penalty;
+
         Mat lc = stab + parms.kappa_1 * gr_n.second + parms.kappa_2 * gr_p.second;
 
-        // RHS
-        auto celdeg = hdi.cell_degree();
-        auto cbs = cell_basis<Mesh,T>::size(celdeg);
-
+        ///////////////    RHS
         Vect f = Vect::Zero(lc.rows());
         // neg part
         f.block(0, 0, cbs, 1) += make_rhs(msh, cl, celdeg, test_case.rhs_fun,
@@ -1335,18 +1372,34 @@ public:
         auto level_set_function = test_case.level_set_;
         auto dir_jump = test_case.dirichlet_jump;
 
-        // LHS
+        ///////////////////    LHS
+        auto celdeg = hdi.cell_degree();
+        auto cbs = cell_basis<Mesh,T>::size(celdeg);
+
+        // GR
         auto gr_n = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
                                                       element_location::IN_NEGATIVE_SIDE, 1.0);
         auto gr_p = make_hho_gradrec_vector_interface(msh, cl, level_set_function, hdi,
                                                       element_location::IN_POSITIVE_SIDE, 1.0);
-        Mat stab = make_hho_stabilization_interface(msh, cl, level_set_function, hdi, 4, parms);
+
+        // stab
+        Mat stab = make_hho_stabilization_interface(msh, cl, level_set_function, hdi, parms);
+
+        Mat penalty = make_hho_cut_interface_penalty(msh, cl, hdi, eta).block(0, 0, cbs, cbs);
+        stab.block(0, 0, cbs, cbs) += parms.kappa_1 * penalty;
+        stab.block(0, cbs, cbs, cbs) -= parms.kappa_1 * penalty;
+        stab.block(cbs, 0, cbs, cbs) -= parms.kappa_1 * penalty;
+        stab.block(cbs, cbs, cbs, cbs) += parms.kappa_1 * penalty;
+
+        Mat Nitsche = make_NS_Nitsche(msh, cl, level_set_function, hdi).block(0, 0, cbs, cbs);
+        stab.block(0, cbs, cbs, cbs) += parms.kappa_2 * Nitsche;
+        stab.block(cbs, 0, cbs, cbs) += parms.kappa_2 * Nitsche.transpose();
+        stab.block(cbs, cbs, cbs, cbs) -= parms.kappa_2 * Nitsche;
+        stab.block(cbs, cbs, cbs, cbs) -= parms.kappa_2 * Nitsche.transpose();
+
         Mat lc = stab + parms.kappa_1 * gr_n.second + parms.kappa_2 * gr_p.second;
 
-        // RHS
-        auto celdeg = hdi.cell_degree();
-        auto cbs = cell_basis<Mesh,T>::size(celdeg);
-
+        //////////////////////    RHS
         Vect f = Vect::Zero(lc.rows());
         // neg part
         f.block(0, 0, cbs, 1) += make_rhs(msh, cl, celdeg, test_case.rhs_fun,
@@ -2491,9 +2544,10 @@ int main(int argc, char **argv)
     // jumps3 sin_sin -> sin_sin + pol
     auto test_case = make_test_case_laplacian_jumps_3(msh, level_set_function);
 
-    auto method = make_gradrec_interface_method(msh, 1.0, test_case);
+    // auto method = make_gradrec_interface_method(msh, 1.0, test_case);
     // auto method = make_Nitsche_interface_method(msh, 1.0, test_case);
     // auto method = make_sym_gradrec_interface_method(msh, 1.0, test_case);
+    auto method = make_Nitsche_interface_method_2(msh, 1.0, test_case);
 
     if (solve_interface)
         run_cuthho_interface(msh, degree, method, test_case);

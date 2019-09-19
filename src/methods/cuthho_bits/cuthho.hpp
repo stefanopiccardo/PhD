@@ -334,19 +334,14 @@ make_hho_cut_interface_penalty(const cuthho_mesh<T, ET>& msh,
 
 
 
-
 //// make_hho_stabilization_interface
-// stabilization terms
-// method = 1 : negative Nitsche's terms (for bold G -- bold G)
-// method = 2 : kappa_2 + no Nitsche's terms (for tilde bold G -- tilde bold G)
-// method = 3 : kappa_1 + no Nitsche's terms (for hat bold G -- bold G )
-// method = 4 : positive Nitsche's terms (for hat bold G -- hat bold G)
+// stabilization terms on the faces
 template<typename T, size_t ET, typename Function>
 Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>
 make_hho_stabilization_interface(const cuthho_mesh<T, ET>& msh,
                                  const typename cuthho_mesh<T, ET>::cell_type& cl,
                                  const Function& level_set_function,
-                                 const hho_degree_info& di, const size_t method,
+                                 const hho_degree_info& di,
                                  const params<T>& parms = params<T>())
 {
     if ( !is_cut(msh, cl) )
@@ -391,52 +386,6 @@ make_hho_stabilization_interface(const cuthho_mesh<T, ET>& msh,
         += parms.kappa_1 * stab_n.block(cbs, cbs, num_faces*fbs, num_faces*fbs);
     data.block(2*cbs + num_faces*fbs, 2*cbs + num_faces*fbs, num_faces*fbs, num_faces*fbs)
         += parms.kappa_2 * stab_p.block(cbs, cbs, num_faces*fbs, num_faces*fbs);
-
-
-
-    // complementary terms on the interface (cells--cells)
-    Matrix<T, Dynamic, Dynamic> term_1 = make_hho_cut_interface_penalty(msh, cl, di, cell_eta(msh, cl)).block(0, 0, cbs, cbs);
-    Matrix<T, Dynamic, Dynamic> term_2 = Matrix<T, Dynamic, Dynamic>::Zero(cbs, cbs);
-
-    auto iqps = integrate_interface(msh, cl, 2*celdeg, element_location::IN_NEGATIVE_SIDE);
-    for (auto& qp : iqps)
-    {
-        const auto c_phi  = cb.eval_basis(qp.first);
-        const auto dphi   = cb.eval_gradients(qp.first);
-        const Matrix<T,2,1> n      = level_set_function.normal(qp.first);
-
-        term_2 += qp.second * c_phi * (dphi * n).transpose();
-    }
-
-    if(method == 2)
-    {
-        data.block(0, cbs, cbs, cbs) -= parms.kappa_2 * term_1;
-        data.block(cbs, 0, cbs, cbs) -= parms.kappa_2 * term_1;
-        data.block(0, 0, cbs, cbs) += parms.kappa_2 * term_1;
-        data.block(cbs, cbs, cbs, cbs) += parms.kappa_2 * term_1;
-    }
-    else
-    {
-        data.block(0, 0, cbs, cbs) += parms.kappa_1 * term_1;
-        data.block(0, cbs, cbs, cbs) -= parms.kappa_1 * term_1;
-        data.block(cbs, 0, cbs, cbs) -= parms.kappa_1 * term_1;
-        data.block(cbs, cbs, cbs, cbs) += parms.kappa_1 * term_1;
-    }
-
-    if (method == 1)
-    {
-        data.block(0, 0, cbs, cbs) -= parms.kappa_1 * term_2;
-        data.block(0, 0, cbs, cbs) -= parms.kappa_1 * term_2.transpose();
-        data.block(cbs, 0, cbs, cbs) += parms.kappa_1 * term_2;
-        data.block(0, cbs, cbs, cbs) += parms.kappa_1 * term_2.transpose();
-    }
-    if (method == 4)
-    {
-        data.block(0, cbs, cbs, cbs) += parms.kappa_2 * term_2;
-        data.block(cbs, 0, cbs, cbs) += parms.kappa_2 * term_2.transpose();
-        data.block(cbs, cbs, cbs, cbs) -= parms.kappa_2 * term_2;
-        data.block(cbs, cbs, cbs, cbs) -= parms.kappa_2 * term_2.transpose();
-    }
 
     return data;
 }
@@ -680,6 +629,42 @@ make_Nitsche(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::c
 }
 
 
+// non symmetric Nitsche
+template<typename T, size_t ET, typename Function>
+Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>
+make_NS_Nitsche(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
+                const Function& level_set_function, hho_degree_info di)
+{
+    auto celdeg = di.cell_degree();
+    auto facdeg = di.face_degree();
+
+    cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, celdeg);
+    auto cbs = cb.size();
+    auto fbs = face_basis<cuthho_mesh<T, ET>,T>::size(facdeg);
+
+    auto fcs = faces(msh, cl);
+    auto num_faces = fcs.size();
+
+    auto size_tot = cbs + num_faces * fbs;
+
+    Matrix<T, Dynamic, Dynamic> ret = Matrix<T, Dynamic, Dynamic>::Zero(size_tot, size_tot);
+
+    if( !is_cut(msh, cl) )
+        return ret;
+
+    auto iqps = integrate_interface(msh, cl, 2*celdeg-1, element_location::IN_NEGATIVE_SIDE);
+    for (auto& qp : iqps)
+    {
+        const auto c_phi  = cb.eval_basis(qp.first);
+        const auto c_dphi  = cb.eval_gradients(qp.first);
+        const Matrix<T,2,1> n = level_set_function.normal(qp.first);
+        const auto c_dphi_n = c_dphi * n;
+
+        ret.block(0, 0, cbs, cbs) += qp.second * c_phi * c_dphi_n.transpose();
+    }
+
+    return ret;
+}
 
 
 ///////////////////////////   RHS VECTOR   //////////////////////////////
