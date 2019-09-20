@@ -666,11 +666,11 @@ run_cuthho_interface(const Mesh& msh, size_t degree, testType test_case)
 
             Matrix<RealType, Dynamic, 1> f = Matrix<RealType, Dynamic, 1>::Zero(2*cbs);
 
-            f.head(cbs) = make_rhs(msh, cl, hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE, rhs_fun);
+            f.head(cbs) = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun, element_location::IN_NEGATIVE_SIDE);
             f.head(cbs) += parms.kappa_1 * make_Dirichlet_jump(msh, cl, hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE, level_set_function, dirichlet_jump, cell_eta(msh, cl) );
 
 
-            f.tail(cbs) = make_rhs(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, rhs_fun);
+            f.tail(cbs) = make_rhs(msh, cl, hdi.cell_degree(), rhs_fun, element_location::IN_POSITIVE_SIDE);
             f.tail(cbs) += parms.kappa_1 * make_Dirichlet_jump(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, level_set_function, dirichlet_jump, cell_eta(msh, cl) );
             f.tail(cbs) += make_flux_jump(msh, cl, hdi.cell_degree(), element_location::IN_POSITIVE_SIDE, neumann_jump);
 
