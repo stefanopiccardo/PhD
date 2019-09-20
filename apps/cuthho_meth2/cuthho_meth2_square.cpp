@@ -454,15 +454,6 @@ void tests_stabilization()
 
 //////////////////////////   END  TESTS   /////////////////////////////
 
-template<typename T, size_t ET>
-T
-cell_eta(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl)
-{
-    return 1.0;
-}
-
-
-
 
 ///////////////////////   FICTITIOUS DOMAIN METHODS  ///////////////////////////
 
