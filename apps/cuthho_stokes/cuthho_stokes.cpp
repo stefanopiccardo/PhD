@@ -100,7 +100,34 @@ make_hho_cut_interface_vector_penalty(const cuthho_mesh<T, ET>& msh,
 
 
 
+/////  GRADREC
 
+template<typename Mesh>
+std::pair<   Matrix<typename Mesh::coordinate_type, Dynamic, Dynamic>,
+             Matrix<typename Mesh::coordinate_type, Dynamic, Dynamic>  >
+make_hho_gradrec_matrix(const Mesh& msh, const typename Mesh::cell_type& cl, const hho_degree_info& di)
+{
+    auto gradrec_vector = make_hho_gradrec_vector(msh, cl, di);
+    auto oper = vector_assembly(gradrec_vector.first);
+    auto data = vector_assembly(gradrec_vector.second);
+
+    return std::make_pair(oper, data);
+}
+
+
+template<typename T, size_t ET, typename Function>
+std::pair< Matrix<T, Dynamic, Dynamic>, Matrix<T, Dynamic, Dynamic>  >
+make_hho_gradrec_matrix
+    (const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
+     const Function& level_set_function, const hho_degree_info& di,
+     element_location where, const T coeff)
+{
+    auto gradrec_vector = make_hho_gradrec_vector(msh, cl, level_set_function, di, where, coeff);
+    auto oper = vector_assembly(gradrec_vector.first);
+    auto data = vector_assembly(gradrec_vector.second);
+
+    return std::make_pair(oper, data);
+}
 
 
 
