@@ -48,6 +48,71 @@ using namespace Eigen;
 #include "methods/hho"
 #include "methods/cuthho"
 
+
+
+
+//////////////////////    ASSEMBLY METHODS   ///////////////////
+
+
+// vector_assembly
+// assembles vector functions by using the associated scalar function
+template<typename T>
+Matrix<T, Dynamic, Dynamic>
+vector_assembly(const Matrix<T, Dynamic, Dynamic>& scalar_mat)
+{
+    size_t scalar_cols = scalar_mat.cols();
+    size_t scalar_rows = scalar_mat.rows();
+    size_t dimension = 2;
+
+    Matrix<T, Dynamic, Dynamic> ret = Matrix<T, Dynamic, Dynamic>::Zero(dimension * scalar_rows,
+                                                                        dimension * scalar_cols);
+    size_t row, col;
+    for(size_t i = 0; i < scalar_rows; i++)
+    {
+        row = i * dimension;
+        for(size_t j = 0; j < scalar_cols; j++)
+        {
+            col = j * dimension;
+            for(size_t k = 0; k < dimension; k++)
+            {
+                ret(row + k, col + k) = scalar_mat(i, j);
+            }
+        }
+    }
+
+    return ret;
+}
+
+// make_hho_cut_interface_vector_penalty
+// eta is the penalty (Nitsche's) parameter
+// return eta h_T^{-1} (u_T , v_T)_{Gamma}
+// we use the definition of the vector basis
+template<typename T, size_t ET>
+Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>
+make_hho_cut_interface_vector_penalty(const cuthho_mesh<T, ET>& msh,
+                                      const typename cuthho_mesh<T, ET>::cell_type& cl,
+                                      const hho_degree_info& di, const T eta)
+{
+    auto scalar_penalty = make_hho_cut_interface_penalty(msh, cl, di, eta);
+
+    return vector_assembly(scalar_penalty);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ///////////////////////   FICTITIOUS DOMAIN METHODS  ///////////////////////////
 
 template<typename T, size_t ET, typename testType>
