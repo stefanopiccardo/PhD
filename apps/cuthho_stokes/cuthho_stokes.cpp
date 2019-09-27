@@ -49,6 +49,20 @@ using namespace Eigen;
 #include "methods/cuthho"
 
 
+//////////////////////////    PRODUCTS    ////////////////////////////////
+
+template<typename T, int N>
+Matrix<T, Dynamic, N>
+outer_product(const std::vector<Matrix<T, N, N>>& a, const Matrix<T, N, 1>& b)
+{
+    Matrix<T, Dynamic, N> ret(a.size(), N);
+    for (size_t i = 0; i < a.size(); i++)
+    {
+        Matrix<T, N, 1> t = a[i] * b;
+        ret.row(i)        = t.transpose();
+    }
+    return ret;
+}
 
 
 //////////////////////    ASSEMBLY METHODS   ///////////////////
@@ -153,6 +167,158 @@ make_hho_vector_cut_stabilization(const cuthho_mesh<T, ET>& msh,
     return vector_assembly(scalar_stab);
 }
 
+
+/////////   RHS
+template<typename Mesh, typename Function>
+Matrix<typename Mesh::coordinate_type, Dynamic, 1>
+make_vector_rhs(const Mesh& msh, const typename Mesh::cell_type& cl,
+                size_t degree, const Function& f, size_t di = 0)
+{
+    using T = typename Mesh::coordinate_type;
+
+    vector_cell_basis<Mesh,T> cb(msh, cl, degree);
+    auto cbs = cb.size();
+
+    Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs);
+
+    auto qps = integrate(msh, cl, 2*(degree+di));
+
+    for (auto& qp : qps)
+    {
+        auto phi = cb.eval_basis(qp.first);
+        ret += qp.second * phi * f(qp.first);
+    }
+
+    return ret;
+}
+
+// make volumic rhs
+template<typename T, size_t ET, typename F1>
+Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, 1>
+make_vector_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
+                size_t degree, const F1& f, const element_location where)
+{
+    if ( location(msh, cl) == where )
+        return make_vector_rhs(msh, cl, degree, f);
+
+    vector_cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, degree);
+    auto cbs = cb.size();
+
+    Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs);
+    auto qps = integrate(msh, cl, 2*degree, where);
+    for (auto& qp : qps)
+    {
+        auto phi = cb.eval_basis(qp.first);
+        ret += qp.second * phi * f(qp.first);
+    }
+    return ret;
+}
+
+
+// make_vector_rhs_penalty
+// return (g , v_T)_{Gamma} * eta/h_T
+template<typename T, size_t ET, typename F1>
+Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, 1>
+make_vector_rhs_penalty(const cuthho_mesh<T, ET>& msh,
+                        const typename cuthho_mesh<T, ET>::cell_type& cl, size_t degree,
+                        const F1& g, T eta)
+{
+    vector_cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, degree);
+    auto cbs = cb.size();
+
+    auto hT = diameter(msh, cl);
+
+    Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs);
+    auto qpsi = integrate_interface(msh, cl, 2*degree, element_location::IN_NEGATIVE_SIDE);
+    for (auto& qp : qpsi)
+    {
+        const auto phi = cb.eval_basis(qp.first);
+
+        ret += qp.second * phi * g(qp.first) * eta / hT;
+    }
+    return ret;
+}
+
+
+// make_vector_GR_rhs
+// return -(g , GR(v_T) . n)_{Gamma}
+template<typename T, size_t ET, typename F1, typename F2>
+Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, 1>
+make_vector_GR_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
+                   size_t degree, const F1& g, const F2& level_set_function,
+                   Matrix<T, Dynamic, Dynamic> GR)
+{
+    typedef Matrix<T, Dynamic, Dynamic> matrix_type;
+    vector_cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, degree);
+    auto cbs = cb.size();
+
+    matrix_cell_basis<cuthho_mesh<T, ET>,T> gb(msh, cl, degree-1);
+    auto gbs = gb.size();
+
+    Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs);
+
+    Matrix<T, Dynamic, 1> source_vect = Matrix<T, Dynamic, 1>::Zero(gbs);
+
+    auto qpsi = integrate_interface(msh, cl, 2*degree-1, element_location::IN_NEGATIVE_SIDE);
+    for (auto& qp : qpsi)
+    {
+        const auto n = level_set_function.normal(qp.first);
+        const auto g_phi  = gb.eval_basis(qp.first);
+        const matrix_type     qp_g_phi_n = qp.second * outer_product(g_phi, n);
+
+        source_vect += qp_g_phi_n * g(qp.first);
+    }
+
+    return -GR.transpose() * source_vect;
+}
+
+
+
+// make_vector_rhs on faces
+template<typename Mesh, typename Function>
+Matrix<typename Mesh::coordinate_type, Dynamic, 1>
+make_vector_rhs(const Mesh& msh, const typename Mesh::face_type& fc,
+         size_t degree, const Function& f, size_t di = 0)
+{
+    using T = typename Mesh::coordinate_type;
+
+    vector_face_basis<Mesh,T> fb(msh, fc, degree);
+    auto fbs = fb.size();
+
+    Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(fbs);
+
+    auto qps = integrate(msh, fc, 2*(degree+di));
+
+    for (auto& qp : qps)
+    {
+        auto phi = fb.eval_basis(qp.first);
+        ret += qp.second * phi * f(qp.first);
+    }
+
+    return ret;
+}
+
+
+template<typename T, size_t ET, typename Function>
+Matrix<T, Dynamic, 1>
+make_vector_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::face_type& fc,
+                size_t degree, element_location where, const Function& f)
+{
+    cut_vector_face_basis<cuthho_mesh<T, ET>,T> fb(msh, fc, degree, where);
+    auto fbs = fb.size();
+
+    Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(fbs);
+
+    auto qps = integrate(msh, fc, 2*degree, where);
+
+    for (auto& qp : qps)
+    {
+        auto phi = fb.eval_basis(qp.first);
+        ret += qp.second * phi * f(qp.first);
+    }
+
+    return ret;
+}
 
 
 
