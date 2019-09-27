@@ -129,12 +129,29 @@ make_hho_gradrec_matrix
     return std::make_pair(oper, data);
 }
 
+/////// STAB
+
+template<typename Mesh>
+Matrix<typename Mesh::coordinate_type, Dynamic, Dynamic>
+make_hho_vector_naive_stabilization(const Mesh& msh, const typename Mesh::cell_type& cl, const hho_degree_info& di)
+{
+    auto scalar_stab = make_hho_naive_stabilization(msh, cl, di);
+
+    return vector_assembly(scalar_stab);
+}
 
 
 
+template<typename T, size_t ET>
+Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>
+make_hho_vector_cut_stabilization(const cuthho_mesh<T, ET>& msh,
+                                  const typename cuthho_mesh<T, ET>::cell_type& cl,
+                                  const hho_degree_info& di, element_location where)
+{
+    auto scalar_stab = make_hho_cut_stabilization(msh, cl, di, where);
 
-
-
+    return vector_assembly(scalar_stab);
+}
 
 
 
