@@ -321,6 +321,28 @@ make_vector_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>
 }
 
 
+/////////  MASS MATRIX
+
+template<typename Mesh, typename T = typename Mesh::coordinate_type>
+Matrix<T, Dynamic, Dynamic>
+make_vector_mass_matrix(const Mesh& msh, const typename Mesh::face_type& fc, size_t degree, size_t di = 0)
+{
+    auto scalar_matrix = make_mass_matrix(msh, fc, degree, di);
+
+    return vector_assembly(scalar_matrix);
+}
+
+
+template<typename T, size_t ET>
+Matrix<T, Dynamic, Dynamic>
+make_vector_mass_matrix(const cuthho_mesh<T, ET>& msh,
+                        const typename cuthho_mesh<T, ET>::face_type& fc,
+                        size_t degree, element_location where)
+{
+    auto scalar_matrix = make_mass_matrix(msh, fc, degree, where);
+
+    return vector_assembly(scalar_matrix);
+}
 
 
 ///////////////////////   FICTITIOUS DOMAIN METHODS  ///////////////////////////
