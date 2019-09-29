@@ -1645,3 +1645,225 @@ auto make_vector_fict_assembler(const Mesh& msh, hho_degree_info hdi, element_lo
 
 
 
+/////////////////////////////////////////
+
+template<typename Mesh>
+class vector_fict_condensed_assembler : public vector_fict_assembler<Mesh>
+{
+    using T = typename Mesh::coordinate_type;
+
+    std::vector< Triplet<T> >           triplets;
+
+    std::vector< Matrix<T, Dynamic, Dynamic> > loc_LHS;
+    std::vector< Matrix<T, Dynamic, 1> > loc_RHS;
+
+    class assembly_index
+    {
+        size_t  idx;
+        bool    assem;
+
+    public:
+        assembly_index(size_t i, bool as)
+            : idx(i), assem(as)
+        {}
+
+        operator size_t() const
+        {
+            if (!assem)
+                throw std::logic_error("Invalid assembly_index");
+
+            return idx;
+        }
+
+        bool assemble() const
+        {
+            return assem;
+        }
+
+        friend std::ostream& operator<<(std::ostream& os, const assembly_index& as)
+        {
+            os << "(" << as.idx << "," << as.assem << ")";
+            return os;
+        }
+    };
+
+public:
+
+    SparseMatrix<T>         LHS;
+    Matrix<T, Dynamic, 1>   RHS;
+
+    vector_fict_condensed_assembler(const Mesh& msh, hho_degree_info hdi, element_location where)
+        : vector_fict_assembler<Mesh>(msh, hdi, where)
+    {
+        loc_LHS.resize( this->num_cells );
+        loc_RHS.resize( this->num_cells );
+
+        auto facdeg = this->di.face_degree();
+        auto fbs = vector_face_basis<Mesh,T>::size(facdeg);
+
+        auto system_size = fbs * this->expand_face_table.size();
+
+        LHS = SparseMatrix<T>( system_size, system_size );
+        RHS = Matrix<T, Dynamic, 1>::Zero( system_size );
+    }
+
+    template<typename Function>
+    void
+    assemble(const Mesh& msh, const typename Mesh::cell_type& cl,
+             const Matrix<T, Dynamic, Dynamic>& lhs, const Matrix<T, Dynamic, 1>& rhs,
+             const Function& dirichlet_bf)
+    {
+        if( !(location(msh, cl) == this->loc_zone ||
+              location(msh, cl) == element_location::ON_INTERFACE) )
+            return;
+
+        // save local matrices
+        size_t cell_offset = this->compress_cells_table.at( offset(msh, cl) );
+        loc_LHS.at( cell_offset ) = lhs;
+        loc_RHS.at( cell_offset ) = rhs;
+
+        auto celdeg = this->di.cell_degree();
+        auto facdeg = this->di.face_degree();
+
+        auto cbs = vector_cell_basis<Mesh,T>::size(celdeg);
+        auto fbs = vector_face_basis<Mesh,T>::size(facdeg);
+
+        auto fcs = faces(msh, cl);
+        auto num_faces = fcs.size();
+        size_t f_dofs = num_faces * fbs;
+
+        // static condensation
+        auto mat_sc = static_condensation_compute(lhs, rhs, cbs, f_dofs);
+        Matrix<T, Dynamic, Dynamic> lhs_sc = mat_sc.first;
+        Matrix<T, Dynamic, 1> rhs_sc = mat_sc.second;
+
+        std::vector<assembly_index> asm_map;
+        asm_map.reserve(f_dofs);
+
+        Matrix<T, Dynamic, 1> dirichlet_data = Matrix<T, Dynamic, 1>::Zero(f_dofs);
+
+        for (size_t face_i = 0; face_i < num_faces; face_i++)
+        {
+            auto fc = fcs[face_i];
+            auto face_offset = offset(msh, fc);
+            auto face_LHS_offset = this->compress_face_table.at(face_offset) * fbs;
+
+            element_location loc_fc = location(msh, fc);
+            bool in_dom = (loc_fc == element_location::ON_INTERFACE ||
+                           loc_fc == this->loc_zone);
+
+            bool dirichlet = fc.is_boundary && fc.bndtype == boundary::DIRICHLET
+                && in_dom;
+
+            for (size_t i = 0; i < fbs; i++)
+                asm_map.push_back( assembly_index(face_LHS_offset+i, !dirichlet) );
+
+            if (dirichlet)
+            {
+                Matrix<T, Dynamic, Dynamic> mass = make_vector_mass_matrix(msh, fc, facdeg, this->loc_zone);
+                Matrix<T, Dynamic, 1> loc_rhs = make_vector_rhs(msh, fc, facdeg, this->loc_zone, dirichlet_bf);
+                dirichlet_data.block(face_i*fbs, 0, fbs, 1) = mass.ldlt().solve(loc_rhs);
+            }
+        }
+
+        assert( asm_map.size() == lhs_sc.rows() && asm_map.size() == lhs_sc.cols() );
+
+        for (size_t i = 0; i < lhs_sc.rows(); i++)
+        {
+            if (!asm_map[i].assemble())
+                continue;
+
+            for (size_t j = 0; j < lhs_sc.cols(); j++)
+            {
+                if ( asm_map[j].assemble() )
+                    triplets.push_back( Triplet<T>(asm_map[i], asm_map[j], lhs_sc(i,j)) );
+                else
+                    RHS(asm_map[i]) -= lhs_sc(i,j)*dirichlet_data(j);
+            }
+        }
+
+        //RHS
+        for (size_t i = 0; i < rhs_sc.rows(); i++)
+        {
+            if (!asm_map[i].assemble())
+                continue;
+
+            RHS(asm_map[i]) += rhs_sc(i);
+        }
+
+    } // assemble()
+
+    //// take_local_data
+    // loc_mat is the full loc matrix (cell + faces dofs)
+    // loc_rhs can be either cell rhs or full rhs
+    template<typename Function>
+    Matrix<T, Dynamic, 1>
+    take_local_data(const Mesh& msh, const typename Mesh::cell_type& cl,
+                    const Matrix<T, Dynamic, 1>& solution, const Function& dirichlet_bf,
+                    const Matrix<T, Dynamic, Dynamic> loc_mat, const Matrix<T, Dynamic, 1> loc_rhs)
+    {
+        auto celdeg = this->di.cell_degree();
+        auto facdeg = this->di.face_degree();
+
+        auto cbs = vector_cell_basis<Mesh,T>::size(celdeg);
+        auto fbs = vector_face_basis<Mesh,T>::size(facdeg);
+
+        auto fcs = faces(msh, cl);
+        auto num_faces = fcs.size();
+        size_t f_dofs = num_faces*fbs;
+
+
+        Matrix<T, Dynamic, 1> solF = Matrix<T, Dynamic, 1>::Zero(f_dofs);
+
+        for (size_t face_i = 0; face_i < num_faces; face_i++)
+        {
+            auto fc = fcs[face_i];
+
+            bool dirichlet = fc.is_boundary && fc.bndtype == boundary::DIRICHLET;
+
+            if (dirichlet)
+            {
+                Matrix<T, Dynamic, Dynamic> mass = make_vector_mass_matrix(msh, fc, facdeg);
+                Matrix<T, Dynamic, 1> rhs = make_vector_rhs(msh, fc, facdeg, dirichlet_bf);
+                solF.block(face_i*fbs, 0, fbs, 1) = mass.ldlt().solve(rhs);
+            }
+            else
+            {
+                auto face_offset = offset(msh, fc);
+                auto face_SOL_offset = this->compress_face_table.at(face_offset)*fbs;
+                solF.block(face_i*fbs, 0, fbs, 1) = solution.block(face_SOL_offset, 0, fbs, 1);
+            }
+        }
+
+        // Recover the full solution
+        return static_condensation_recover(loc_mat, loc_rhs, cbs, f_dofs, solF);
+    }
+
+
+    //// take_local_data
+    // uses the local matrices stored previously
+    template<typename Function>
+    Matrix<T, Dynamic, 1>
+    take_local_data(const Mesh& msh, const typename Mesh::cell_type& cl,
+                    const Matrix<T, Dynamic, 1>& solution,
+                    const Function& dirichlet_bf)
+    {
+        size_t offset_cl = this->compress_cells_table.at( offset(msh, cl) );
+
+        return take_local_data(msh, cl, solution, dirichlet_bf, loc_LHS.at(offset_cl),
+                               loc_RHS.at(offset_cl));
+    }
+
+    void finalize(void)
+    {
+        LHS.setFromTriplets( triplets.begin(), triplets.end() );
+        triplets.clear();
+    }
+};
+
+
+template<typename Mesh>
+auto make_vector_fict_condensed_assembler(const Mesh& msh, hho_degree_info hdi, element_location where)
+{
+    return vector_fict_condensed_assembler<Mesh>(msh, hdi, where);
+}
