@@ -65,6 +65,14 @@ outer_product(const std::vector<Matrix<T, N, N>>& a, const Matrix<T, N, 1>& b)
 }
 
 
+template<typename T, int N>
+T
+inner_product(const Matrix<T, N, N>& b, const Matrix<T, N, N>& a)
+{
+    return a.cwiseProduct(b).sum();
+}
+
+
 //////////////////////    ASSEMBLY METHODS   ///////////////////
 
 
@@ -348,14 +356,14 @@ make_vector_mass_matrix(const cuthho_mesh<T, ET>& msh,
 ///////////////////////   FICTITIOUS DOMAIN METHODS  ///////////////////////////
 
 template<typename T, size_t ET, typename testType>
-class fictdom_method
+class vector_fictdom_method
 {
     using Mat  = Matrix<T, Dynamic, Dynamic>;
     using Vect = Matrix<T, Dynamic, 1>;
     using Mesh = cuthho_mesh<T, ET>;
 
 protected:
-    fictdom_method(){}
+    vector_fictdom_method(){}
 
     virtual std::pair<Mat, Vect>
     make_contrib_cut(const Mesh& msh, const typename Mesh::cell_type& cl,
@@ -370,10 +378,10 @@ public:
     make_contrib_uncut(const Mesh& msh, const typename Mesh::cell_type& cl,
                        const hho_degree_info hdi, const testType test_case)
     {
-        auto gr = make_hho_gradrec_vector(msh, cl, hdi);
-        Mat stab = make_hho_naive_stabilization(msh, cl, hdi);
+        auto gr = make_hho_gradrec_matrix(msh, cl, hdi);
+        Mat stab = make_hho_vector_naive_stabilization(msh, cl, hdi);
         Mat lc = gr.second + stab;
-        Mat f = make_rhs(msh, cl, hdi.cell_degree(), test_case.rhs_fun);
+        Mat f = make_vector_rhs(msh, cl, hdi.cell_degree(), test_case.rhs_fun);
         return std::make_pair(lc, f);
     }
 
@@ -400,7 +408,7 @@ public:
 /////////////////////////  GRADREC_FICTITIOUS_METHOD
 
 template<typename T, size_t ET, typename testType>
-class gradrec_fictdom_method : public fictdom_method<T, ET, testType>
+class gradrec_vector_fictdom_method : public vector_fictdom_method<T, ET, testType>
 {
     using Mat = Matrix<T, Dynamic, Dynamic>;
     using Vect = Matrix<T, Dynamic, 1>;
@@ -409,8 +417,8 @@ class gradrec_fictdom_method : public fictdom_method<T, ET, testType>
 public:
     T eta;
 
-    gradrec_fictdom_method(T eta_)
-        : fictdom_method<T,ET,testType>(), eta(eta_) {}
+    gradrec_vector_fictdom_method(T eta_)
+        : vector_fictdom_method<T,ET,testType>(), eta(eta_) {}
 
     std::pair<Mat, Vect>
     make_contrib_cut(const Mesh& msh, const typename Mesh::cell_type& cl,
@@ -419,20 +427,20 @@ public:
                      const params<T>& parms = params<T>())
     {
         // LHS
-        auto gr = make_hho_gradrec_vector(msh, cl, test_case.level_set_, hdi, where, 1.0);
-        Mat stab = make_hho_cut_stabilization(msh, cl, hdi, where)
-            + make_hho_cut_interface_penalty(msh, cl, hdi, eta);
+        auto gr = make_hho_gradrec_matrix(msh, cl, test_case.level_set_, hdi, where, 1.0);
+        Mat stab = make_hho_vector_cut_stabilization(msh, cl, hdi, where)
+            + make_hho_cut_interface_vector_penalty(msh, cl, hdi, eta);
         Mat lc = gr.second + stab;
 
 
         // RHS
         auto celdeg = hdi.cell_degree();
-        auto cbs = cell_basis<Mesh,T>::size(celdeg);
+        auto cbs = vector_cell_basis<Mesh,T>::size(celdeg);
 
         Vect f = Vect::Zero(lc.rows());
-        f.block(0, 0, cbs, 1) += make_rhs(msh, cl, celdeg, test_case.rhs_fun, where);
-        f.block(0, 0, cbs, 1) += make_rhs_penalty(msh, cl, celdeg, test_case.bcs_fun, eta);
-        f += make_GR_rhs(msh, cl, celdeg, test_case.bcs_fun, test_case.level_set_, gr.first);
+        f.block(0, 0, cbs, 1) += make_vector_rhs(msh, cl, celdeg, test_case.rhs_fun, where);
+        f.block(0, 0, cbs, 1) += make_vector_rhs_penalty(msh, cl, celdeg, test_case.bcs_fun, eta);
+        f += make_vector_GR_rhs(msh, cl, celdeg, test_case.bcs_fun, test_case.level_set_, gr.first);
 
         return std::make_pair(lc, f);
     }
@@ -441,10 +449,10 @@ public:
 
 
 template<typename T, size_t ET, typename testType>
-auto make_gradrec_fictdom_method(const cuthho_mesh<T, ET>& msh, const T eta_,
+auto make_gradrec_vector_fictdom_method(const cuthho_mesh<T, ET>& msh, const T eta_,
                                  const testType test_case)
 {
-    return gradrec_fictdom_method<T, ET, testType>(eta_);
+    return gradrec_vector_fictdom_method<T, ET, testType>(eta_);
 }
 
 ///////////////////////////
@@ -506,12 +514,12 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
     element_location where = element_location::IN_NEGATIVE_SIDE;
 
     tc.tic();
-    auto assembler = make_fict_assembler(msh, hdi, where);
-    auto assembler_sc = make_fict_condensed_assembler(msh, hdi, where);
+    auto assembler = make_vector_fict_assembler(msh, hdi, where);
+    // auto assembler_sc = make_fict_condensed_assembler(msh, hdi, where);
 
 
     // method with gradient reconstruction (penalty-free)
-    auto class_meth = make_gradrec_fictdom_method(msh, 1.0, test_case);
+    auto class_meth = make_gradrec_vector_fictdom_method(msh, 1.0, test_case);
 
     for (auto& cl : msh.cells)
     {
@@ -521,24 +529,24 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
         auto f = contrib.second;
 
 
-        if( sc )
-            assembler_sc.assemble(msh, cl, lc, f, bcs_fun);
-        else
-            assembler.assemble(msh, cl, lc, f, bcs_fun);
+        // if( sc )
+        //     assembler_sc.assemble(msh, cl, lc, f, bcs_fun);
+        // else
+        assembler.assemble(msh, cl, lc, f, bcs_fun);
     }
 
-    if( sc )
-        assembler_sc.finalize();
-    else
-        assembler.finalize();
+    // if( sc )
+    //     assembler_sc.finalize();
+    // else
+    assembler.finalize();
 
     tc.toc();
     std::cout << bold << yellow << "Matrix assembly: " << tc << " seconds" << reset << std::endl;
 
-    if( sc )
-        std::cout << "System unknowns: " << assembler_sc.LHS.rows() << std::endl;
-    else
-        std::cout << "System unknowns: " << assembler.LHS.rows() << std::endl;
+    // if( sc )
+    //     std::cout << "System unknowns: " << assembler_sc.LHS.rows() << std::endl;
+    // else
+    std::cout << "System unknowns: " << assembler.LHS.rows() << std::endl;
 
     std::cout << "Cells: " << msh.cells.size() << std::endl;
     std::cout << "Faces: " << msh.faces.size() << std::endl;
@@ -550,18 +558,18 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
     SparseLU<SparseMatrix<RealType>>  solver;
     Matrix<RealType, Dynamic, 1> sol;
 
-    if( sc )
-    {
-        solver.analyzePattern(assembler_sc.LHS);
-        solver.factorize(assembler_sc.LHS);
-        sol = solver.solve(assembler_sc.RHS);
-    }
-    else
-    {
-        solver.analyzePattern(assembler.LHS);
-        solver.factorize(assembler.LHS);
-        sol = solver.solve(assembler.RHS);
-    }
+    // if( sc )
+    // {
+    //     solver.analyzePattern(assembler_sc.LHS);
+    //     solver.factorize(assembler_sc.LHS);
+    //     sol = solver.solve(assembler_sc.RHS);
+    // }
+    // else
+    // {
+    solver.analyzePattern(assembler.LHS);
+    solver.factorize(assembler.LHS);
+    sol = solver.solve(assembler.RHS);
+    // }
 #endif
 #if 1
     Matrix<RealType, Dynamic, 1> sol;
@@ -569,18 +577,18 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
     cgp.histfile = "cuthho_cg_hist.dat";
     cgp.verbose = true;
     cgp.apply_preconditioner = true;
-    if( sc )
-    {
-        sol = Matrix<RealType, Dynamic, 1>::Zero(assembler_sc.RHS.rows());
-        cgp.max_iter = assembler_sc.LHS.rows();
-        conjugated_gradient(assembler_sc.LHS, assembler_sc.RHS, sol, cgp);
-    }
-    else
-    {
-        sol = Matrix<RealType, Dynamic, 1>::Zero(assembler.RHS.rows());
-        cgp.max_iter = assembler.LHS.rows();
-        conjugated_gradient(assembler.LHS, assembler.RHS, sol, cgp);
-    }
+    // if( sc )
+    // {
+    //     sol = Matrix<RealType, Dynamic, 1>::Zero(assembler_sc.RHS.rows());
+    //     cgp.max_iter = assembler_sc.LHS.rows();
+    //     conjugated_gradient(assembler_sc.LHS, assembler_sc.RHS, sol, cgp);
+    // }
+    // else
+    // {
+    sol = Matrix<RealType, Dynamic, 1>::Zero(assembler.RHS.rows());
+    cgp.max_iter = assembler.LHS.rows();
+    conjugated_gradient(assembler.LHS, assembler.RHS, sol, cgp);
+    // }
 #endif
     tc.toc();
     std::cout << bold << yellow << "Linear solver: " << tc << " seconds" << reset << std::endl;
@@ -591,13 +599,8 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
 
     postprocess_output<RealType>  postoutput;
 
-    auto uT_gp  = std::make_shared< gnuplot_output_object<RealType> >("fictdom_uT.dat");
-    auto Ru_gp  = std::make_shared< gnuplot_output_object<RealType> >("fictdom_Ru.dat");
-    auto int_gp  = std::make_shared< gnuplot_output_object<RealType> >("ficdom_int.dat");
-    auto diff_gp  = std::make_shared< gnuplot_output_object<RealType> >("fictdom_diff.dat");
-
-
-    std::vector<RealType>   solution_uT, eigval_data;
+    auto uT1_gp  = std::make_shared< gnuplot_output_object<RealType> >("fictdom_uT1.dat");
+    auto uT2_gp  = std::make_shared< gnuplot_output_object<RealType> >("fictdom_uT2.dat");
 
     tc.tic();
     RealType    H1_error = 0.0;
@@ -609,25 +612,20 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
         if (hide_fict_dom && location(msh,cl) == element_location::IN_POSITIVE_SIDE)
             continue;
 
-        cell_basis<cuthho_poly_mesh<RealType>, RealType> cb(msh, cl, hdi.cell_degree());
+        vector_cell_basis<cuthho_poly_mesh<RealType>, RealType> cb(msh, cl, hdi.cell_degree());
         auto cbs = cb.size();
 
         Matrix<RealType, Dynamic, 1> locdata;
-        if( sc )
-        {
-            locdata = assembler_sc.take_local_data(msh, cl, sol, sol_fun);
-        }
-        else
-            locdata = assembler.take_local_data(msh, cl, sol, sol_fun);
+        // if( sc )
+        // {
+        //     locdata = assembler_sc.take_local_data(msh, cl, sol, sol_fun);
+        // }
+        // else
+        locdata = assembler.take_local_data(msh, cl, sol, sol_fun);
 
         Matrix<RealType, Dynamic, 1> cell_dofs = locdata.head(cbs);
 
         auto bar = barycenter(msh, cl, element_location::IN_NEGATIVE_SIDE);
-
-        Matrix<RealType, Dynamic, 1> c_phi = cb.eval_basis(bar);
-        auto c_val = cell_dofs.dot( c_phi );
-        solution_uT.push_back(c_val);
-
 
         if ( location(msh, cl) == element_location::IN_NEGATIVE_SIDE ||
              location(msh, cl) == element_location::ON_INTERFACE )
@@ -639,21 +637,24 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
             {
                 /* Compute H1-error */
                 auto t_dphi = cb.eval_gradients( qp.first );
-                Matrix<RealType, 1, 2> grad = Matrix<RealType, 1, 2>::Zero();
+                Matrix<RealType, 2, 2> grad = Matrix<RealType, 2, 2>::Zero();
 
-                for (size_t i = 1; i < cbs; i++ )
-                    grad += cell_dofs(i) * t_dphi.block(i, 0, 1, 2);
+                for (size_t i = 0; i < cbs; i++ )
+                    grad += cell_dofs(i) * t_dphi[i].block(0, 0, 2, 2);
 
-                H1_error += qp.second * (sol_grad(qp.first) - grad).dot(sol_grad(qp.first) - grad);
+                Matrix<RealType, 2, 2> grad_diff = sol_grad(qp.first) - grad;
+
+                H1_error += qp.second * inner_product(grad_diff , grad_diff);
 
 
-
+                /* L2 - error */
                 auto t_phi = cb.eval_basis( qp.first );
-                auto v = cell_dofs.dot(t_phi);
-                L2_error += qp.second * (sol_fun(qp.first) - v) * (sol_fun(qp.first) - v);
+                auto v = t_phi.transpose() * cell_dofs;
+                Matrix<RealType, 2, 1> sol_diff = sol_fun(qp.first) - v;
+                L2_error += qp.second * sol_diff.dot(sol_diff);
 
-                int_gp->add_data( qp.first, 1.0 );
-                uT_gp->add_data( qp.first, cell_dofs.dot(t_phi) );
+                uT1_gp->add_data( qp.first, v(0) );
+                uT2_gp->add_data( qp.first, v(1) );
             }
         }
 
@@ -662,13 +663,9 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
 
     std::cout << bold << green << "Energy-norm absolute error:           " << std::sqrt(H1_error) << std::endl;
 
-    postoutput.add_object(uT_gp);
-    postoutput.add_object(Ru_gp);
-    postoutput.add_object(diff_gp);
-    postoutput.add_object(int_gp);
+    postoutput.add_object(uT1_gp);
+    postoutput.add_object(uT2_gp);
     postoutput.write();
-
-    silo.add_variable("mesh", "uT", solution_uT.data(), solution_uT.size(), zonal_variable_t);
 
     test_info<RealType> TI;
     TI.H1 = std::sqrt(H1_error);
@@ -1142,8 +1139,8 @@ void convergence_test(void)
     // polynomial orders
     pol_orders.push_back(0);
     pol_orders.push_back(1);
-    // pol_orders.push_back(2);
-    // pol_orders.push_back(3);
+    pol_orders.push_back(2);
+    pol_orders.push_back(3);
 
 
     // export to files ...
@@ -1182,7 +1179,7 @@ void convergence_test(void)
             mip.Nx = N;
             mip.Ny = N;
             cuthho_poly_mesh<T> msh(mip);
-            size_t int_refsteps = 1;
+            size_t int_refsteps = 4;
             T radius = 1.0/3.0;
             auto circle_level_set_function = circle_level_set<T>(radius, 0.5, 0.5);
 
@@ -1215,8 +1212,8 @@ void convergence_test(void)
             // auto TI = run_cuthho_interface(msh, level_set_function, k, 3, test_case);
             if(1) // sin(\pi x) * sin(\pi y)
             {
-                auto test_case = make_test_case_laplacian_sin_sin(msh, level_set_function);
-                auto meth3 = make_sym_gradrec_interface_method(msh, 1.0, test_case);
+                auto test_case = make_test_case_vector_laplacian_sin_sin(msh, level_set_function);
+                // auto meth3 = make_sym_gradrec_interface_method(msh, 1.0, test_case);
                 // TI = run_cuthho_interface(msh, k, meth3, test_case);
                 TI = run_cuthho_fictdom(msh, k, test_case);
             }
@@ -1262,7 +1259,7 @@ void convergence_test(void)
 }
 
 //////////////////////////     MAIN        ////////////////////////////
-#if 1
+#if 0
 int main(int argc, char **argv)
 {
     convergence_test();
@@ -1272,7 +1269,7 @@ int main(int argc, char **argv)
 }
 #endif
 
-#if 0
+#if 1
 int main(int argc, char **argv)
 {
     using RealType = double;
@@ -1398,18 +1395,19 @@ int main(int argc, char **argv)
     {
         dump_mesh(msh);
         output_mesh_info(msh, level_set_function);
-        test_projection(msh, level_set_function, degree);
     }
 
     output_mesh_info(msh, level_set_function);
 
     // jumps sin_sin -> exp_cos
-    auto test_case = make_test_case_laplacian_jumps_1(msh, level_set_function);
+    // auto test_case = make_test_case_laplacian_jumps_1(msh, level_set_function);
+    auto test_case = make_test_case_vector_laplacian_sin_sin_exp_cos(msh, level_set_function);
+    // auto test_case = make_test_case_vector_laplacian_sin_sin(msh, level_set_function);
 
-    auto method = make_sym_gradrec_interface_method(msh, 1.0, test_case);
+    // auto method = make_sym_gradrec_interface_method(msh, 1.0, test_case);
 
-    if (solve_interface)
-        run_cuthho_interface(msh, degree, method, test_case);
+    // if (solve_interface)
+    //     run_cuthho_interface(msh, degree, method, test_case);
 
     if (solve_fictdom)
         run_cuthho_fictdom(msh, degree, test_case);
