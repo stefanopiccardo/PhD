@@ -952,8 +952,8 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
     hho_degree_info hdi(degree+1, degree);
 
     tc.tic();
-    auto assembler = make_interface_assembler(msh, hdi);
-    auto assembler_sc = make_interface_condensed_assembler(msh, hdi);
+    auto assembler = make_interface_vector_assembler(msh, hdi);
+    // auto assembler_sc = make_interface_condensed_assembler(msh, hdi);
     for (auto& cl : msh.cells)
     {
         auto contrib = method.make_contrib(msh, cl, test_case, hdi);
@@ -962,34 +962,34 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
 
         if (location(msh, cl) != element_location::ON_INTERFACE)
         {
-            if( sc )
-                assembler_sc.assemble(msh, cl, lc, f, bcs_fun);
-            else
-                assembler.assemble(msh, cl, lc, f, bcs_fun);
+            // if( sc )
+            //     assembler_sc.assemble(msh, cl, lc, f, bcs_fun);
+            // else
+            assembler.assemble(msh, cl, lc, f, bcs_fun);
         }
         else
         {
-            if( sc )
-                assembler_sc.assemble_cut(msh, cl, lc, f);
-            else
-                assembler.assemble_cut(msh, cl, lc, f);
+            // if( sc )
+            //     assembler_sc.assemble_cut(msh, cl, lc, f);
+            // else
+            assembler.assemble_cut(msh, cl, lc, f);
         }
     }
 
-    if( sc )
-        assembler_sc.finalize();
-    else
-        assembler.finalize();
+    // if( sc )
+    //     assembler_sc.finalize();
+    // else
+    assembler.finalize();
 
     //dump_sparse_matrix(assembler.LHS, "matrix.dat");
 
     tc.toc();
     std::cout << bold << yellow << "Matrix assembly: " << tc << " seconds" << reset << std::endl;
 
-    if( sc )
-        std::cout << "System unknowns: " << assembler_sc.LHS.rows() << std::endl;
-    else
-        std::cout << "System unknowns: " << assembler.LHS.rows() << std::endl;
+    // if( sc )
+    //     std::cout << "System unknowns: " << assembler_sc.LHS.rows() << std::endl;
+    // else
+    std::cout << "System unknowns: " << assembler.LHS.rows() << std::endl;
 
     std::cout << "Cells: " << msh.cells.size() << std::endl;
     std::cout << "Faces: " << msh.faces.size() << std::endl;
@@ -1000,18 +1000,18 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
     SparseLU<SparseMatrix<RealType>>  solver;
     Matrix<RealType, Dynamic, 1> sol;
 
-    if( sc )
-    {
-        solver.analyzePattern(assembler_sc.LHS);
-        solver.factorize(assembler_sc.LHS);
-        sol = solver.solve(assembler_sc.RHS);
-    }
-    else
-    {
-        solver.analyzePattern(assembler.LHS);
-        solver.factorize(assembler.LHS);
-        sol = solver.solve(assembler.RHS);
-    }
+    // if( sc )
+    // {
+    //     solver.analyzePattern(assembler_sc.LHS);
+    //     solver.factorize(assembler_sc.LHS);
+    //     sol = solver.solve(assembler_sc.RHS);
+    // }
+    // else
+    // {
+    solver.analyzePattern(assembler.LHS);
+    solver.factorize(assembler.LHS);
+    sol = solver.solve(assembler.RHS);
+    // }
 #endif
 //#if 0
     Matrix<RealType, Dynamic, 1> sol;
@@ -1019,18 +1019,18 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
     cgp.histfile = "cuthho_cg_hist.dat";
     cgp.verbose = true;
     cgp.apply_preconditioner = true;
-    if( sc )
-    {
-        sol = Matrix<RealType, Dynamic, 1>::Zero(assembler_sc.RHS.rows());
-        cgp.max_iter = assembler_sc.LHS.rows();
-        conjugated_gradient(assembler_sc.LHS, assembler_sc.RHS, sol, cgp);
-    }
-    else
-    {
-        sol = Matrix<RealType, Dynamic, 1>::Zero(assembler.RHS.rows());
-        cgp.max_iter = assembler.LHS.rows();
-        conjugated_gradient(assembler.LHS, assembler.RHS, sol, cgp);
-    }
+    // if( sc )
+    // {
+    //     sol = Matrix<RealType, Dynamic, 1>::Zero(assembler_sc.RHS.rows());
+    //     cgp.max_iter = assembler_sc.LHS.rows();
+    //     conjugated_gradient(assembler_sc.LHS, assembler_sc.RHS, sol, cgp);
+    // }
+    // else
+    // {
+    sol = Matrix<RealType, Dynamic, 1>::Zero(assembler.RHS.rows());
+    cgp.max_iter = assembler.LHS.rows();
+    conjugated_gradient(assembler.LHS, assembler.RHS, sol, cgp);
+    // }
 //#endif
     tc.toc();
     std::cout << bold << yellow << "Linear solver: " << tc << " seconds" << reset << std::endl;
@@ -1040,11 +1040,8 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
 
     postprocess_output<RealType>  postoutput;
 
-    auto uT_gp  = std::make_shared< gnuplot_output_object<RealType> >("interface_uT.dat");
-    auto diff_gp  = std::make_shared< gnuplot_output_object<RealType> >("interface_diff.dat");
-
-
-    std::vector<RealType>   solution_uT;
+    auto uT1_gp  = std::make_shared< gnuplot_output_object<RealType> >("interface_uT1.dat");
+    auto uT2_gp  = std::make_shared< gnuplot_output_object<RealType> >("interface_uT2.dat");
 
     tc.tic();
     RealType    H1_error = 0.0;
@@ -1052,27 +1049,27 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
     size_t      cell_i   = 0;
     for (auto& cl : msh.cells)
     {
-        cell_basis<cuthho_poly_mesh<RealType>, RealType> cb(msh, cl, hdi.cell_degree());
+        vector_cell_basis<cuthho_poly_mesh<RealType>, RealType> cb(msh, cl, hdi.cell_degree());
         auto cbs = cb.size();
         auto fcs = faces(msh, cl);
         auto num_faces = fcs.size();
-        auto fbs = face_basis<cuthho_poly_mesh<RealType>,RealType>::size(hdi.face_degree());
+        auto fbs = vector_face_basis<cuthho_poly_mesh<RealType>,RealType>::size(hdi.face_degree());
 
         Matrix<RealType, Dynamic, 1> locdata_n, locdata_p, locdata;
         Matrix<RealType, Dynamic, 1> cell_dofs_n, cell_dofs_p, cell_dofs;
 
         if (location(msh, cl) == element_location::ON_INTERFACE)
         {
-            if( sc )
-            {
-                locdata_n = assembler_sc.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_NEGATIVE_SIDE);
-                locdata_p = assembler_sc.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_POSITIVE_SIDE);
-            }
-            else
-            {
-                locdata_n = assembler.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_NEGATIVE_SIDE);
-                locdata_p = assembler.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_POSITIVE_SIDE);
-            }
+            // if( sc )
+            // {
+            //     locdata_n = assembler_sc.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_NEGATIVE_SIDE);
+            //     locdata_p = assembler_sc.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_POSITIVE_SIDE);
+            // }
+            // else
+            // {
+            locdata_n = assembler.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_NEGATIVE_SIDE);
+            locdata_p = assembler.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_POSITIVE_SIDE);
+            // }
 
             cell_dofs_n = locdata_n.head(cbs);
             cell_dofs_p = locdata_p.head(cbs);
@@ -1083,19 +1080,23 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
             {
                 /* Compute H1-error */
                 auto t_dphi = cb.eval_gradients( qp.first );
-                Matrix<RealType, 1, 2> grad = Matrix<RealType, 1, 2>::Zero();
+                Matrix<RealType, 2, 2> grad = Matrix<RealType, 2, 2>::Zero();
 
                 for (size_t i = 1; i < cbs; i++ )
-                    grad += cell_dofs_n(i) * t_dphi.block(i, 0, 1, 2);
+                    grad += cell_dofs_n(i) * t_dphi[i].block(0, 0, 2, 2);
 
-                H1_error += qp.second * (sol_grad(qp.first) - grad).dot(sol_grad(qp.first) - grad);
+                Matrix<RealType, 2, 2> grad_diff = sol_grad(qp.first) - grad;
+                H1_error += qp.second * inner_product(grad_diff , grad_diff);
 
-                auto t_phi = cb.eval_basis( qp.first );
-                auto v = cell_dofs_n.dot(t_phi);
-                uT_gp->add_data(qp.first, v);
 
                 /* Compute L2-error */
-                L2_error += qp.second * (sol_fun(qp.first) - v) * (sol_fun(qp.first) - v);
+                auto t_phi = cb.eval_basis( qp.first );
+                auto v = t_phi.transpose() * cell_dofs_n;
+                Matrix<RealType, 2, 1> sol_diff = sol_fun(qp.first) - v;
+                L2_error += qp.second * sol_diff.dot(sol_diff);
+
+                uT1_gp->add_data( qp.first, v(0) );
+                uT2_gp->add_data( qp.first, v(1) );
             }
 
 
@@ -1104,29 +1105,32 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
             {
                 /* Compute H1-error */
                 auto t_dphi = cb.eval_gradients( qp.first );
-                Matrix<RealType, 1, 2> grad = Matrix<RealType, 1, 2>::Zero();
+                Matrix<RealType, 2, 2> grad = Matrix<RealType, 2, 2>::Zero();
 
                 for (size_t i = 1; i < cbs; i++ )
-                    grad += cell_dofs_p(i) * t_dphi.block(i, 0, 1, 2);
+                    grad += cell_dofs_p(i) * t_dphi[i].block(0, 0, 2, 2);
 
-                H1_error += qp.second * (sol_grad(qp.first) - grad).dot(sol_grad(qp.first) - grad);
-
-                auto t_phi = cb.eval_basis( qp.first );
-                auto v = cell_dofs_p.dot(t_phi);
-                uT_gp->add_data(qp.first, v);
+                Matrix<RealType, 2, 2> grad_diff = sol_grad(qp.first) - grad;
+                H1_error += qp.second * inner_product(grad_diff , grad_diff);
 
                 /* Compute L2-error */
-                L2_error += qp.second * (sol_fun(qp.first) - v) * (sol_fun(qp.first) - v);
+                auto t_phi = cb.eval_basis( qp.first );
+                auto v = t_phi.transpose() * cell_dofs_p;
+                Matrix<RealType, 2, 1> sol_diff = sol_fun(qp.first) - v;
+                L2_error += qp.second * sol_diff.dot(sol_diff);
+
+                uT1_gp->add_data( qp.first, v(0) );
+                uT2_gp->add_data( qp.first, v(1) );
             }
         }
         else
         {
-            if( sc )
-            {
-                locdata = assembler_sc.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_POSITIVE_SIDE);
-            }
-            else
-                locdata = assembler.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_POSITIVE_SIDE);
+            // if( sc )
+            // {
+            //     locdata = assembler_sc.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_POSITIVE_SIDE);
+            // }
+            // else
+            locdata = assembler.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_POSITIVE_SIDE);
             cell_dofs = locdata.head(cbs);
 
             auto qps = integrate(msh, cl, 2*hdi.cell_degree());
@@ -1134,19 +1138,22 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
             {
                 /* Compute H1-error */
                 auto t_dphi = cb.eval_gradients( qp.first );
-                Matrix<RealType, 1, 2> grad = Matrix<RealType, 1, 2>::Zero();
+                Matrix<RealType, 2, 2> grad = Matrix<RealType, 2, 2>::Zero();
 
                 for (size_t i = 1; i < cbs; i++ )
-                    grad += cell_dofs(i) * t_dphi.block(i, 0, 1, 2);
+                    grad += cell_dofs(i) * t_dphi[i].block(0, 0, 2, 2);
 
-                H1_error += qp.second * (sol_grad(qp.first) - grad).dot(sol_grad(qp.first) - grad);
-
-                auto t_phi = cb.eval_basis( qp.first );
-                auto v = cell_dofs.dot(t_phi);
-                uT_gp->add_data(qp.first, v);
+                Matrix<RealType, 2, 2> grad_diff = sol_grad(qp.first) - grad;
+                H1_error += qp.second * inner_product(grad_diff , grad_diff);
 
                 /* Compute L2-error */
-                L2_error += qp.second * (sol_fun(qp.first) - v) * (sol_fun(qp.first) - v);
+                auto t_phi = cb.eval_basis( qp.first );
+                auto v = t_phi.transpose() * cell_dofs;
+                Matrix<RealType, 2, 1> sol_diff = sol_fun(qp.first) - v;
+                L2_error += qp.second * sol_diff.dot(sol_diff);
+
+                uT1_gp->add_data( qp.first, v(0) );
+                uT2_gp->add_data( qp.first, v(1) );
             }
         }
 
@@ -1156,8 +1163,8 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
     std::cout << bold << green << "Energy-norm absolute error:           " << std::sqrt(H1_error) << std::endl;
     std::cout << bold << green << "L2-norm absolute error:           " << std::sqrt(L2_error) << std::endl;
 
-    postoutput.add_object(uT_gp);
-    postoutput.add_object(diff_gp);
+    postoutput.add_object(uT1_gp);
+    postoutput.add_object(uT2_gp);
     postoutput.write();
 
 
@@ -1171,10 +1178,10 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
         /////////////// compute condition number
         SparseMatrix<RealType> Mat;
         // Matrix<RealType, Dynamic, Dynamic> Mat;
-        if (sc)
-            Mat = assembler_sc.LHS;
-        else
-            Mat = assembler.LHS;
+        // if (sc)
+        //     Mat = assembler_sc.LHS;
+        // else
+        Mat = assembler.LHS;
 
 
         RealType sigma_max, sigma_min;
@@ -1501,13 +1508,14 @@ int main(int argc, char **argv)
 
     // jumps sin_sin -> exp_cos
     // auto test_case = make_test_case_laplacian_jumps_1(msh, level_set_function);
-    auto test_case = make_test_case_vector_laplacian_sin_sin_exp_cos(msh, level_set_function);
+    // auto test_case = make_test_case_vector_laplacian_sin_sin_exp_cos(msh, level_set_function);
     // auto test_case = make_test_case_vector_laplacian_sin_sin(msh, level_set_function);
+    auto test_case = make_test_case_vector_laplacian_jumps_1(msh, level_set_function);
 
     auto method = make_sym_gradrec_interface_vector_method(msh, 1.0, test_case);
 
-    // if (solve_interface)
-    //     run_cuthho_interface(msh, degree, method, test_case);
+    if (solve_interface)
+        run_cuthho_interface(msh, degree, method, test_case);
 
     if (solve_fictdom)
         run_cuthho_fictdom(msh, degree, test_case);
