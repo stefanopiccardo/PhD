@@ -289,8 +289,8 @@ public:
 
         Vect f = Vect::Zero(lc.rows());
         f.block(0, 0, cbs, 1) += make_vector_rhs(msh, cl, celdeg, test_case.rhs_fun, where);
-        f.block(0, 0, cbs, 1) += make_vector_rhs_penalty(msh, cl, celdeg, test_case.bcs_fun, eta);
-        f += make_vector_GR_rhs(msh, cl, celdeg, test_case.bcs_fun, test_case.level_set_, gr.first);
+        f.block(0, 0, cbs, 1) += make_vector_rhs_penalty(msh, cl, celdeg, test_case.bcs_vel, eta);
+        f += make_vector_GR_rhs(msh, cl, celdeg, test_case.bcs_vel, test_case.level_set_, gr.first);
 
         return std::make_pair(lc, f);
     }
@@ -315,10 +315,9 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
 
     auto level_set_function = test_case.level_set_;
 
-    auto rhs_fun = test_case.rhs_fun;
-    auto sol_fun = test_case.sol_fun;
-    auto sol_grad = test_case.sol_grad;
-    auto bcs_fun = test_case.bcs_fun;
+    auto sol_vel = test_case.sol_vel;
+    auto vel_grad = test_case.vel_grad;
+    auto bcs_fun = test_case.bcs_vel;
 
 
     /************** OPEN SILO DATABASE **************/
@@ -468,10 +467,10 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
         Matrix<RealType, Dynamic, 1> locdata;
         if( sc )
         {
-            locdata = assembler_sc.take_local_data(msh, cl, sol, sol_fun);
+            locdata = assembler_sc.take_local_data(msh, cl, sol, sol_vel);
         }
         else
-            locdata = assembler.take_local_data(msh, cl, sol, sol_fun);
+            locdata = assembler.take_local_data(msh, cl, sol, sol_vel);
 
         Matrix<RealType, Dynamic, 1> cell_dofs = locdata.head(cbs);
 
@@ -492,7 +491,7 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
                 for (size_t i = 0; i < cbs; i++ )
                     grad += cell_dofs(i) * t_dphi[i].block(0, 0, 2, 2);
 
-                Matrix<RealType, 2, 2> grad_diff = sol_grad(qp.first) - grad;
+                Matrix<RealType, 2, 2> grad_diff = vel_grad(qp.first) - grad;
 
                 H1_error += qp.second * inner_product(grad_diff , grad_diff);
 
@@ -500,7 +499,7 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
                 /* L2 - error */
                 auto t_phi = cb.eval_basis( qp.first );
                 auto v = t_phi.transpose() * cell_dofs;
-                Matrix<RealType, 2, 1> sol_diff = sol_fun(qp.first) - v;
+                Matrix<RealType, 2, 1> sol_diff = sol_vel(qp.first) - v;
                 L2_error += qp.second * sol_diff.dot(sol_diff);
 
                 uT1_gp->add_data( qp.first, v(0) );
@@ -1263,12 +1262,13 @@ int main(int argc, char **argv)
     // auto test_case = make_test_case_laplacian_jumps_1(msh, level_set_function);
     // auto test_case = make_test_case_vector_laplacian_sin_sin_exp_cos(msh, level_set_function);
     // auto test_case = make_test_case_vector_laplacian_sin_sin(msh, level_set_function);
-    auto test_case = make_test_case_vector_laplacian_jumps_1(msh, level_set_function);
+    // auto test_case = make_test_case_vector_laplacian_jumps_1(msh, level_set_function);
+    auto test_case = make_test_case_stokes_1(msh, level_set_function);
 
-    auto method = make_sym_gradrec_interface_vector_method(msh, 1.0, test_case);
+    // auto method = make_sym_gradrec_interface_vector_method(msh, 1.0, test_case);
 
-    if (solve_interface)
-        run_cuthho_interface(msh, degree, method, test_case);
+    // if (solve_interface)
+    //     run_cuthho_interface(msh, degree, method, test_case);
 
     if (solve_fictdom)
         run_cuthho_fictdom(msh, degree, test_case);
