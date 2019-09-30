@@ -151,6 +151,20 @@ make_hho_gradrec_matrix
     return std::make_pair(oper, data);
 }
 
+template<typename T, size_t ET, typename Function>
+std::pair<   Matrix<T, Dynamic, Dynamic>, Matrix<T, Dynamic, Dynamic>  >
+make_hho_gradrec_matrix_interface(const cuthho_mesh<T, ET>& msh,
+                                  const typename cuthho_mesh<T, ET>::cell_type& cl,
+                                  const Function& level_set_function, const hho_degree_info& di,
+                                  element_location where, T coeff)
+{
+    auto gradrec_vector = make_hho_gradrec_vector_interface(msh, cl, level_set_function, di, where, coeff);
+    auto oper = vector_assembly(gradrec_vector.first);
+    auto data = vector_assembly(gradrec_vector.second);
+
+    return std::make_pair(oper, data);
+}
+
 /////// STAB
 
 template<typename Mesh>
@@ -175,6 +189,18 @@ make_hho_vector_cut_stabilization(const cuthho_mesh<T, ET>& msh,
     return vector_assembly(scalar_stab);
 }
 
+template<typename T, size_t ET, typename Function>
+Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>
+make_hho_vector_stabilization_interface(const cuthho_mesh<T, ET>& msh,
+                                        const typename cuthho_mesh<T, ET>::cell_type& cl,
+                                        const Function& level_set_function,
+                                        const hho_degree_info& di,
+                                        const params<T>& parms = params<T>())
+{
+    auto scalar_stab = make_hho_stabilization_interface(msh, cl, level_set_function, di, parms);
+
+    return vector_assembly(scalar_stab);
+}
 
 /////////   RHS
 template<typename Mesh, typename Function>
@@ -323,6 +349,76 @@ make_vector_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>
     {
         auto phi = fb.eval_basis(qp.first);
         ret += qp.second * phi * f(qp.first);
+    }
+
+    return ret;
+}
+
+
+
+// make_vector_Dirichlet_jump
+template<typename T, size_t ET, typename F1, typename F2>
+Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, 1>
+make_vector_Dirichlet_jump(const cuthho_mesh<T, ET>& msh,
+                           const typename cuthho_mesh<T, ET>::cell_type& cl,
+                           size_t degree, const element_location where,
+                           const F1& level_set_function, const F2& dir_jump, T eta)
+{
+    typedef Matrix<T, Dynamic, Dynamic> matrix_type;
+    vector_cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, degree);
+    auto cbs = cb.size();
+    Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs);
+
+    if( location(msh, cl) != element_location::ON_INTERFACE )
+        return ret;
+
+    auto hT = diameter(msh, cl);
+
+    if(where == element_location::IN_NEGATIVE_SIDE) {
+        auto qpsi = integrate_interface(msh, cl, 2*degree, element_location::IN_NEGATIVE_SIDE );
+
+        for (auto& qp : qpsi)
+        {
+            const auto phi = cb.eval_basis(qp.first);
+            const auto dphi = cb.eval_gradients(qp.first);
+            const auto n = level_set_function.normal(qp.first);
+            const matrix_type     dphi_n = outer_product(dphi, n);
+
+            ret += qp.second * ( phi * eta / hT - dphi_n) * dir_jump(qp.first);
+        }
+    }
+    else if(where == element_location::IN_POSITIVE_SIDE) {
+        auto qpsi = integrate_interface(msh, cl, 2*degree, element_location::IN_NEGATIVE_SIDE );
+
+        for (auto& qp : qpsi)
+        {
+            auto phi = cb.eval_basis(qp.first);
+            ret -= qp.second * eta / hT * phi * dir_jump(qp.first);
+        }
+    }
+    return ret;
+}
+
+
+template<typename T, size_t ET, typename F1>
+Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, 1>
+make_vector_flux_jump(const cuthho_mesh<T, ET>& msh,
+                      const typename cuthho_mesh<T, ET>::cell_type& cl,
+                      size_t degree, const element_location where, const F1& flux_jump)
+{
+    vector_cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, degree);
+    auto cbs = cb.size();
+    Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs);
+
+    if( location(msh, cl) != element_location::ON_INTERFACE )
+        return ret;
+
+    auto qpsi = integrate_interface(msh, cl, 2*degree, element_location::IN_NEGATIVE_SIDE);
+
+    for (auto& qp : qpsi)
+    {
+        auto phi = cb.eval_basis(qp.first);
+        ret += qp.second * phi * flux_jump(qp.first);
     }
 
     return ret;
