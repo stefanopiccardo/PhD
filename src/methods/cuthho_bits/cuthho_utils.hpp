@@ -1206,3 +1206,276 @@ auto make_cut_assembler(const Mesh& msh, hho_degree_info hdi, element_location w
 {
     return cut_assembler<Mesh>(msh, hdi, where);
 }
+
+
+
+/******************************************************************************************/
+/*******************                                               ************************/
+/*******************               VECTOR  LAPLACIAN               ************************/
+/*******************                                               ************************/
+/******************************************************************************************/
+
+// make_hho_cut_interface_vector_penalty
+// eta is the penalty (Nitsche's) parameter
+// return eta h_T^{-1} (u_T , v_T)_{Gamma}
+// we use the definition of the vector basis
+template<typename T, size_t ET>
+Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>
+make_hho_cut_interface_vector_penalty(const cuthho_mesh<T, ET>& msh,
+                                      const typename cuthho_mesh<T, ET>::cell_type& cl,
+                                      const hho_degree_info& di, const T eta)
+{
+    auto scalar_penalty = make_hho_cut_interface_penalty(msh, cl, di, eta);
+
+    return vector_assembly(scalar_penalty);
+}
+
+
+
+/////  GRADREC
+
+template<typename T, size_t ET, typename Function>
+std::pair< Matrix<T, Dynamic, Dynamic>, Matrix<T, Dynamic, Dynamic>  >
+make_hho_gradrec_matrix
+    (const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
+     const Function& level_set_function, const hho_degree_info& di,
+     element_location where, const T coeff)
+{
+    auto gradrec_vector = make_hho_gradrec_vector(msh, cl, level_set_function, di, where, coeff);
+    auto oper = vector_assembly(gradrec_vector.first);
+    auto data = vector_assembly(gradrec_vector.second);
+
+    return std::make_pair(oper, data);
+}
+
+template<typename T, size_t ET, typename Function>
+std::pair<   Matrix<T, Dynamic, Dynamic>, Matrix<T, Dynamic, Dynamic>  >
+make_hho_gradrec_matrix_interface(const cuthho_mesh<T, ET>& msh,
+                                  const typename cuthho_mesh<T, ET>::cell_type& cl,
+                                  const Function& level_set_function, const hho_degree_info& di,
+                                  element_location where, T coeff)
+{
+    auto gradrec_vector = make_hho_gradrec_vector_interface(msh, cl, level_set_function, di, where, coeff);
+    auto oper = vector_assembly(gradrec_vector.first);
+    auto data = vector_assembly(gradrec_vector.second);
+
+    return std::make_pair(oper, data);
+}
+
+/////// STAB
+
+template<typename T, size_t ET>
+Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>
+make_hho_vector_cut_stabilization(const cuthho_mesh<T, ET>& msh,
+                                  const typename cuthho_mesh<T, ET>::cell_type& cl,
+                                  const hho_degree_info& di, element_location where)
+{
+    auto scalar_stab = make_hho_cut_stabilization(msh, cl, di, where);
+
+    return vector_assembly(scalar_stab);
+}
+
+template<typename T, size_t ET, typename Function>
+Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>
+make_hho_vector_stabilization_interface(const cuthho_mesh<T, ET>& msh,
+                                        const typename cuthho_mesh<T, ET>::cell_type& cl,
+                                        const Function& level_set_function,
+                                        const hho_degree_info& di,
+                                        const params<T>& parms = params<T>())
+{
+    auto scalar_stab = make_hho_stabilization_interface(msh, cl, level_set_function, di, parms);
+
+    return vector_assembly(scalar_stab);
+}
+
+/////////   RHS
+
+
+// make volumic rhs
+template<typename T, size_t ET, typename F1>
+Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, 1>
+make_vector_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
+                size_t degree, const F1& f, const element_location where)
+{
+    if ( location(msh, cl) == where )
+        return make_vector_rhs(msh, cl, degree, f);
+
+    vector_cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, degree);
+    auto cbs = cb.size();
+
+    Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs);
+    auto qps = integrate(msh, cl, 2*degree, where);
+    for (auto& qp : qps)
+    {
+        auto phi = cb.eval_basis(qp.first);
+        ret += qp.second * phi * f(qp.first);
+    }
+    return ret;
+}
+
+
+// make_vector_rhs_penalty
+// return (g , v_T)_{Gamma} * eta/h_T
+template<typename T, size_t ET, typename F1>
+Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, 1>
+make_vector_rhs_penalty(const cuthho_mesh<T, ET>& msh,
+                        const typename cuthho_mesh<T, ET>::cell_type& cl, size_t degree,
+                        const F1& g, T eta)
+{
+    vector_cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, degree);
+    auto cbs = cb.size();
+
+    auto hT = diameter(msh, cl);
+
+    Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs);
+    auto qpsi = integrate_interface(msh, cl, 2*degree, element_location::IN_NEGATIVE_SIDE);
+    for (auto& qp : qpsi)
+    {
+        const auto phi = cb.eval_basis(qp.first);
+
+        ret += qp.second * phi * g(qp.first) * eta / hT;
+    }
+    return ret;
+}
+
+
+// make_vector_GR_rhs
+// return -(g , GR(v_T) . n)_{Gamma}
+template<typename T, size_t ET, typename F1, typename F2>
+Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, 1>
+make_vector_GR_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
+                   size_t degree, const F1& g, const F2& level_set_function,
+                   Matrix<T, Dynamic, Dynamic> GR)
+{
+    typedef Matrix<T, Dynamic, Dynamic> matrix_type;
+    vector_cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, degree);
+    auto cbs = cb.size();
+
+    matrix_cell_basis<cuthho_mesh<T, ET>,T> gb(msh, cl, degree-1);
+    auto gbs = gb.size();
+
+    Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs);
+
+    Matrix<T, Dynamic, 1> source_vect = Matrix<T, Dynamic, 1>::Zero(gbs);
+
+    auto qpsi = integrate_interface(msh, cl, 2*degree-1, element_location::IN_NEGATIVE_SIDE);
+    for (auto& qp : qpsi)
+    {
+        const auto n = level_set_function.normal(qp.first);
+        const auto g_phi  = gb.eval_basis(qp.first);
+        const matrix_type     qp_g_phi_n = qp.second * outer_product(g_phi, n);
+
+        source_vect += qp_g_phi_n * g(qp.first);
+    }
+
+    return -GR.transpose() * source_vect;
+}
+
+
+
+
+
+template<typename T, size_t ET, typename Function>
+Matrix<T, Dynamic, 1>
+make_vector_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::face_type& fc,
+                size_t degree, element_location where, const Function& f)
+{
+    cut_vector_face_basis<cuthho_mesh<T, ET>,T> fb(msh, fc, degree, where);
+    auto fbs = fb.size();
+
+    Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(fbs);
+
+    auto qps = integrate(msh, fc, 2*degree, where);
+
+    for (auto& qp : qps)
+    {
+        auto phi = fb.eval_basis(qp.first);
+        ret += qp.second * phi * f(qp.first);
+    }
+
+    return ret;
+}
+
+
+
+// make_vector_Dirichlet_jump
+template<typename T, size_t ET, typename F1, typename F2>
+Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, 1>
+make_vector_Dirichlet_jump(const cuthho_mesh<T, ET>& msh,
+                           const typename cuthho_mesh<T, ET>::cell_type& cl,
+                           size_t degree, const element_location where,
+                           const F1& level_set_function, const F2& dir_jump, T eta)
+{
+    typedef Matrix<T, Dynamic, Dynamic> matrix_type;
+    vector_cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, degree);
+    auto cbs = cb.size();
+    Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs);
+
+    if( location(msh, cl) != element_location::ON_INTERFACE )
+        return ret;
+
+    auto hT = diameter(msh, cl);
+
+    if(where == element_location::IN_NEGATIVE_SIDE) {
+        auto qpsi = integrate_interface(msh, cl, 2*degree, element_location::IN_NEGATIVE_SIDE );
+
+        for (auto& qp : qpsi)
+        {
+            const auto phi = cb.eval_basis(qp.first);
+            const auto dphi = cb.eval_gradients(qp.first);
+            const auto n = level_set_function.normal(qp.first);
+            const matrix_type     dphi_n = outer_product(dphi, n);
+
+            ret += qp.second * ( phi * eta / hT - dphi_n) * dir_jump(qp.first);
+        }
+    }
+    else if(where == element_location::IN_POSITIVE_SIDE) {
+        auto qpsi = integrate_interface(msh, cl, 2*degree, element_location::IN_NEGATIVE_SIDE );
+
+        for (auto& qp : qpsi)
+        {
+            auto phi = cb.eval_basis(qp.first);
+            ret -= qp.second * eta / hT * phi * dir_jump(qp.first);
+        }
+    }
+    return ret;
+}
+
+
+template<typename T, size_t ET, typename F1>
+Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, 1>
+make_vector_flux_jump(const cuthho_mesh<T, ET>& msh,
+                      const typename cuthho_mesh<T, ET>::cell_type& cl,
+                      size_t degree, const element_location where, const F1& flux_jump)
+{
+    vector_cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, degree);
+    auto cbs = cb.size();
+    Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs);
+
+    if( location(msh, cl) != element_location::ON_INTERFACE )
+        return ret;
+
+    auto qpsi = integrate_interface(msh, cl, 2*degree, element_location::IN_NEGATIVE_SIDE);
+
+    for (auto& qp : qpsi)
+    {
+        auto phi = cb.eval_basis(qp.first);
+        ret += qp.second * phi * flux_jump(qp.first);
+    }
+
+    return ret;
+}
+
+
+/////////  MASS MATRIX
+
+template<typename T, size_t ET>
+Matrix<T, Dynamic, Dynamic>
+make_vector_mass_matrix(const cuthho_mesh<T, ET>& msh,
+                        const typename cuthho_mesh<T, ET>::face_type& fc,
+                        size_t degree, element_location where)
+{
+    auto scalar_matrix = make_mass_matrix(msh, fc, degree, where);
+
+    return vector_assembly(scalar_matrix);
+}

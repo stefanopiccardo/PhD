@@ -1,6 +1,6 @@
 /*
- *       /\        Matteo Cicuttin (C) 2017,2018
- *      /__\       matteo.cicuttin@enpc.fr
+ *       /\        Matteo Cicuttin (C) 2017,2018; Guillaume Delay 2018,2019
+ *      /__\       matteo.cicuttin@enpc.fr        guillaume.delay@enpc.fr
  *     /_\/_\      École Nationale des Ponts et Chaussées - CERMICS
  *    /\    /\
  *   /__\  /__\    This is ProtoN, a library for fast Prototyping of
@@ -863,3 +863,36 @@ auto make_obstacle_assembler(const Mesh& msh, const std::vector<bool>& in_A, hho
 {
     return obstacle_assembler<Mesh>(msh, in_A, hdi);
 }
+
+
+
+/******************************************************************************************/
+/*******************                                               ************************/
+/*******************               VECTOR  LAPLACIAN               ************************/
+/*******************                                               ************************/
+/******************************************************************************************/
+
+
+template<typename Mesh>
+std::pair<   Matrix<typename Mesh::coordinate_type, Dynamic, Dynamic>,
+             Matrix<typename Mesh::coordinate_type, Dynamic, Dynamic>  >
+make_hho_gradrec_matrix(const Mesh& msh, const typename Mesh::cell_type& cl, const hho_degree_info& di)
+{
+    auto gradrec_vector = make_hho_gradrec_vector(msh, cl, di);
+    auto oper = vector_assembly(gradrec_vector.first);
+    auto data = vector_assembly(gradrec_vector.second);
+
+    return std::make_pair(oper, data);
+}
+
+
+
+template<typename Mesh>
+Matrix<typename Mesh::coordinate_type, Dynamic, Dynamic>
+make_hho_vector_naive_stabilization(const Mesh& msh, const typename Mesh::cell_type& cl, const hho_degree_info& di)
+{
+    auto scalar_stab = make_hho_naive_stabilization(msh, cl, di);
+
+    return vector_assembly(scalar_stab);
+}
+
