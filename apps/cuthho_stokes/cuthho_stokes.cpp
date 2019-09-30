@@ -203,6 +203,37 @@ make_hho_divergence_reconstruction(const cuthho_mesh<T, ET>& msh,
     return std::make_pair(oper, data);
 }
 
+///////////////////////   RHS  pressure
+template<typename T, size_t ET, typename F1, typename F2>
+Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, 1>
+make_pressure_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
+                  size_t degree, const element_location where,
+                  const F1& level_set_function, const F2& bcs_fun)
+{
+    if( location(msh, cl) != element_location::ON_INTERFACE )
+    {
+        auto cbs = cell_basis<cuthho_mesh<T, ET>,T>::size(degree);
+        Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs);
+        return ret;
+    }
+
+    cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, degree);
+    auto cbs = cb.size();
+    Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs);
+
+    auto qpsi = integrate_interface(msh, cl, 2*degree, element_location::IN_NEGATIVE_SIDE );
+    for (auto& qp : qpsi)
+    {
+        auto phi = cb.eval_basis(qp.first);
+        auto n = level_set_function.normal(qp.first);
+
+        ret -= qp.second * bcs_fun(qp.first).dot(n) * phi;
+    }
+
+    return ret;
+}
+
+
 ///////////////////////   FICTITIOUS DOMAIN METHODS  ///////////////////////////
 
 template<typename T, size_t ET, typename testType>
