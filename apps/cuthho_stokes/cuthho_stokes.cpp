@@ -953,7 +953,7 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
 
     tc.tic();
     auto assembler = make_interface_vector_assembler(msh, hdi);
-    // auto assembler_sc = make_interface_condensed_assembler(msh, hdi);
+    auto assembler_sc = make_interface_vector_condensed_assembler(msh, hdi);
     for (auto& cl : msh.cells)
     {
         auto contrib = method.make_contrib(msh, cl, test_case, hdi);
@@ -962,34 +962,32 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
 
         if (location(msh, cl) != element_location::ON_INTERFACE)
         {
-            // if( sc )
-            //     assembler_sc.assemble(msh, cl, lc, f, bcs_fun);
-            // else
-            assembler.assemble(msh, cl, lc, f, bcs_fun);
+            if( sc )
+                assembler_sc.assemble(msh, cl, lc, f, bcs_fun);
+            else
+                assembler.assemble(msh, cl, lc, f, bcs_fun);
         }
         else
         {
-            // if( sc )
-            //     assembler_sc.assemble_cut(msh, cl, lc, f);
-            // else
-            assembler.assemble_cut(msh, cl, lc, f);
+            if( sc )
+                assembler_sc.assemble_cut(msh, cl, lc, f);
+            else
+                assembler.assemble_cut(msh, cl, lc, f);
         }
     }
 
-    // if( sc )
-    //     assembler_sc.finalize();
-    // else
-    assembler.finalize();
-
-    //dump_sparse_matrix(assembler.LHS, "matrix.dat");
+    if( sc )
+        assembler_sc.finalize();
+    else
+        assembler.finalize();
 
     tc.toc();
     std::cout << bold << yellow << "Matrix assembly: " << tc << " seconds" << reset << std::endl;
 
-    // if( sc )
-    //     std::cout << "System unknowns: " << assembler_sc.LHS.rows() << std::endl;
-    // else
-    std::cout << "System unknowns: " << assembler.LHS.rows() << std::endl;
+    if( sc )
+        std::cout << "System unknowns: " << assembler_sc.LHS.rows() << std::endl;
+    else
+        std::cout << "System unknowns: " << assembler.LHS.rows() << std::endl;
 
     std::cout << "Cells: " << msh.cells.size() << std::endl;
     std::cout << "Faces: " << msh.faces.size() << std::endl;
@@ -1000,18 +998,18 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
     SparseLU<SparseMatrix<RealType>>  solver;
     Matrix<RealType, Dynamic, 1> sol;
 
-    // if( sc )
-    // {
-    //     solver.analyzePattern(assembler_sc.LHS);
-    //     solver.factorize(assembler_sc.LHS);
-    //     sol = solver.solve(assembler_sc.RHS);
-    // }
-    // else
-    // {
-    solver.analyzePattern(assembler.LHS);
-    solver.factorize(assembler.LHS);
-    sol = solver.solve(assembler.RHS);
-    // }
+    if( sc )
+    {
+        solver.analyzePattern(assembler_sc.LHS);
+        solver.factorize(assembler_sc.LHS);
+        sol = solver.solve(assembler_sc.RHS);
+    }
+    else
+    {
+        solver.analyzePattern(assembler.LHS);
+        solver.factorize(assembler.LHS);
+        sol = solver.solve(assembler.RHS);
+    }
 #endif
 //#if 0
     Matrix<RealType, Dynamic, 1> sol;
@@ -1019,18 +1017,18 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
     cgp.histfile = "cuthho_cg_hist.dat";
     cgp.verbose = true;
     cgp.apply_preconditioner = true;
-    // if( sc )
-    // {
-    //     sol = Matrix<RealType, Dynamic, 1>::Zero(assembler_sc.RHS.rows());
-    //     cgp.max_iter = assembler_sc.LHS.rows();
-    //     conjugated_gradient(assembler_sc.LHS, assembler_sc.RHS, sol, cgp);
-    // }
-    // else
-    // {
-    sol = Matrix<RealType, Dynamic, 1>::Zero(assembler.RHS.rows());
-    cgp.max_iter = assembler.LHS.rows();
-    conjugated_gradient(assembler.LHS, assembler.RHS, sol, cgp);
-    // }
+    if( sc )
+    {
+        sol = Matrix<RealType, Dynamic, 1>::Zero(assembler_sc.RHS.rows());
+        cgp.max_iter = assembler_sc.LHS.rows();
+        conjugated_gradient(assembler_sc.LHS, assembler_sc.RHS, sol, cgp);
+    }
+    else
+    {
+        sol = Matrix<RealType, Dynamic, 1>::Zero(assembler.RHS.rows());
+        cgp.max_iter = assembler.LHS.rows();
+        conjugated_gradient(assembler.LHS, assembler.RHS, sol, cgp);
+    }
 //#endif
     tc.toc();
     std::cout << bold << yellow << "Linear solver: " << tc << " seconds" << reset << std::endl;
@@ -1060,16 +1058,16 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
 
         if (location(msh, cl) == element_location::ON_INTERFACE)
         {
-            // if( sc )
-            // {
-            //     locdata_n = assembler_sc.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_NEGATIVE_SIDE);
-            //     locdata_p = assembler_sc.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_POSITIVE_SIDE);
-            // }
-            // else
-            // {
-            locdata_n = assembler.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_NEGATIVE_SIDE);
-            locdata_p = assembler.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_POSITIVE_SIDE);
-            // }
+            if( sc )
+            {
+                locdata_n = assembler_sc.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_NEGATIVE_SIDE);
+                locdata_p = assembler_sc.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_POSITIVE_SIDE);
+            }
+            else
+            {
+                locdata_n = assembler.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_NEGATIVE_SIDE);
+                locdata_p = assembler.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_POSITIVE_SIDE);
+            }
 
             cell_dofs_n = locdata_n.head(cbs);
             cell_dofs_p = locdata_p.head(cbs);
@@ -1125,12 +1123,12 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
         }
         else
         {
-            // if( sc )
-            // {
-            //     locdata = assembler_sc.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_POSITIVE_SIDE);
-            // }
-            // else
-            locdata = assembler.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_POSITIVE_SIDE);
+            if( sc )
+            {
+                locdata = assembler_sc.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_POSITIVE_SIDE);
+            }
+            else
+                locdata = assembler.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_POSITIVE_SIDE);
             cell_dofs = locdata.head(cbs);
 
             auto qps = integrate(msh, cl, 2*hdi.cell_degree());
@@ -1178,10 +1176,10 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
         /////////////// compute condition number
         SparseMatrix<RealType> Mat;
         // Matrix<RealType, Dynamic, Dynamic> Mat;
-        // if (sc)
-        //     Mat = assembler_sc.LHS;
-        // else
-        Mat = assembler.LHS;
+        if (sc)
+            Mat = assembler_sc.LHS;
+        else
+            Mat = assembler.LHS;
 
 
         RealType sigma_max, sigma_min;
