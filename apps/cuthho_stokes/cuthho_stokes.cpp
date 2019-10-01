@@ -400,7 +400,7 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
 
     tc.tic();
     auto assembler = make_stokes_fict_assembler(msh, hdi, where);
-    // auto assembler_sc = make_vector_fict_condensed_assembler(msh, hdi, where);
+    auto assembler_sc = make_stokes_fict_condensed_assembler(msh, hdi, where);
 
 
     // method with gradient reconstruction (penalty-free)
@@ -418,26 +418,24 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
         auto rhs_B = -contrib.second.second;
 
 
-        // if( sc )
-        //     assembler_sc.assemble(msh, cl, lc, f, bcs_fun);
-        // else
-        // assembler.assemble(msh, cl, lc, f, bcs_fun);
-        assembler.assemble(msh, cl, lc_A, lc_B, rhs_A, rhs_B, bcs_fun);
-        // assembler.assemble(msh, cl, lc_A, lc_B, rhs_A, rhs_B, bcs_fun, where);
+        if( sc )
+            assembler_sc.assemble(msh, cl, lc_A, lc_B, rhs_A, rhs_B, bcs_fun);
+        else
+            assembler.assemble(msh, cl, lc_A, lc_B, rhs_A, rhs_B, bcs_fun);
     }
 
-    // if( sc )
-    //     assembler_sc.finalize();
-    // else
-    assembler.finalize();
+    if( sc )
+        assembler_sc.finalize();
+    else
+        assembler.finalize();
 
     tc.toc();
     std::cout << bold << yellow << "Matrix assembly: " << tc << " seconds" << reset << std::endl;
 
-    // if( sc )
-    //     std::cout << "System unknowns: " << assembler_sc.LHS.rows() << std::endl;
-    // else
-    std::cout << "System unknowns: " << assembler.LHS.rows() << std::endl;
+    if( sc )
+        std::cout << "System unknowns: " << assembler_sc.LHS.rows() << std::endl;
+    else
+        std::cout << "System unknowns: " << assembler.LHS.rows() << std::endl;
 
     std::cout << "Cells: " << msh.cells.size() << std::endl;
     std::cout << "Faces: " << msh.faces.size() << std::endl;
@@ -449,18 +447,18 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
     SparseLU<SparseMatrix<RealType>>  solver;
     Matrix<RealType, Dynamic, 1> sol;
 
-    // if( sc )
-    // {
-    //     solver.analyzePattern(assembler_sc.LHS);
-    //     solver.factorize(assembler_sc.LHS);
-    //     sol = solver.solve(assembler_sc.RHS);
-    // }
-    // else
-    // {
-    solver.analyzePattern(assembler.LHS);
-    solver.factorize(assembler.LHS);
-    sol = solver.solve(assembler.RHS);
-    // }
+    if( sc )
+    {
+        solver.analyzePattern(assembler_sc.LHS);
+        solver.factorize(assembler_sc.LHS);
+        sol = solver.solve(assembler_sc.RHS);
+    }
+    else
+    {
+        solver.analyzePattern(assembler.LHS);
+        solver.factorize(assembler.LHS);
+        sol = solver.solve(assembler.RHS);
+    }
 #endif
 #if 0
     Matrix<RealType, Dynamic, 1> sol;
@@ -468,18 +466,18 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
     cgp.histfile = "cuthho_cg_hist.dat";
     cgp.verbose = true;
     cgp.apply_preconditioner = true;
-    // if( sc )
-    // {
-    //     sol = Matrix<RealType, Dynamic, 1>::Zero(assembler_sc.RHS.rows());
-    //     cgp.max_iter = assembler_sc.LHS.rows();
-    //     conjugated_gradient(assembler_sc.LHS, assembler_sc.RHS, sol, cgp);
-    // }
-    // else
-    // {
-    sol = Matrix<RealType, Dynamic, 1>::Zero(assembler.RHS.rows());
-    cgp.max_iter = assembler.LHS.rows();
-    conjugated_gradient(assembler.LHS, assembler.RHS, sol, cgp);
-    // }
+    if( sc )
+    {
+        sol = Matrix<RealType, Dynamic, 1>::Zero(assembler_sc.RHS.rows());
+        cgp.max_iter = assembler_sc.LHS.rows();
+        conjugated_gradient(assembler_sc.LHS, assembler_sc.RHS, sol, cgp);
+    }
+    else
+    {
+        sol = Matrix<RealType, Dynamic, 1>::Zero(assembler.RHS.rows());
+        cgp.max_iter = assembler.LHS.rows();
+        conjugated_gradient(assembler.LHS, assembler.RHS, sol, cgp);
+    }
 #endif
     tc.toc();
     std::cout << bold << yellow << "Linear solver: " << tc << " seconds" << reset << std::endl;
@@ -510,14 +508,16 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
         auto cbs = cb.size();
 
         Matrix<RealType, Dynamic, 1> locdata_vel, locdata_p;
-        // if( sc )
-        // {
-        //     locdata_vel = assembler_sc.take_velocity(msh, cl, sol, sol_vel);
-        //     locdata_p   = assembler_sc.take_pressure(msh, cl, sol);
-        // }
-        // else
-        locdata_vel = assembler.take_velocity(msh, cl, sol, sol_vel);
-        locdata_p   = assembler.take_pressure(msh, cl, sol);
+        if( sc )
+        {
+            locdata_vel = assembler_sc.take_velocity(msh, cl, sol, sol_vel);
+            locdata_p   = assembler_sc.take_pressure(msh, cl, sol);
+        }
+        else
+        {
+            locdata_vel = assembler.take_velocity(msh, cl, sol, sol_vel);
+            locdata_p   = assembler.take_pressure(msh, cl, sol);
+        }
 
         Matrix<RealType, Dynamic, 1> cell_v_dofs = locdata_vel.head(cbs);
 
