@@ -344,7 +344,7 @@ auto make_gradrec_stokes_fictdom_method(const cuthho_mesh<T, ET>& msh, const T e
 ///////////////////////////
 
 template<typename Mesh, typename testType>
-test_info<typename Mesh::coordinate_type>
+stokes_test_info<typename Mesh::coordinate_type>
 run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
 {
     using RealType = typename Mesh::coordinate_type;
@@ -492,11 +492,12 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
 
     auto uT1_gp  = std::make_shared< gnuplot_output_object<RealType> >("fictdom_uT1.dat");
     auto uT2_gp  = std::make_shared< gnuplot_output_object<RealType> >("fictdom_uT2.dat");
+    auto p_gp    = std::make_shared< gnuplot_output_object<RealType> >("fictdom_p.dat");
 
     tc.tic();
     RealType    H1_error = 0.0;
     RealType    L2_error = 0.0;
-    size_t      cell_i   = 0;
+    RealType    L2_pressure_error = 0.0;
     for (auto& cl : msh.cells)
     {
         bool hide_fict_dom = true; // hide the fictitious domain in the gnuplot outputs
@@ -504,17 +505,21 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
             continue;
 
         vector_cell_basis<cuthho_poly_mesh<RealType>, RealType> cb(msh, cl, hdi.cell_degree());
+        cell_basis<cuthho_poly_mesh<RealType>, RealType> s_cb(msh, cl, hdi.face_degree());
+
         auto cbs = cb.size();
 
-        Matrix<RealType, Dynamic, 1> locdata;
+        Matrix<RealType, Dynamic, 1> locdata_vel, locdata_p;
         // if( sc )
         // {
-        //     locdata = assembler_sc.take_local_data(msh, cl, sol, sol_vel);
+        //     locdata_vel = assembler_sc.take_velocity(msh, cl, sol, sol_vel);
+        //     locdata_p   = assembler_sc.take_pressure(msh, cl, sol);
         // }
         // else
-        locdata = assembler.take_velocity(msh, cl, sol, sol_vel);
+        locdata_vel = assembler.take_velocity(msh, cl, sol, sol_vel);
+        locdata_p   = assembler.take_pressure(msh, cl, sol);
 
-        Matrix<RealType, Dynamic, 1> cell_dofs = locdata.head(cbs);
+        Matrix<RealType, Dynamic, 1> cell_v_dofs = locdata_vel.head(cbs);
 
         auto bar = barycenter(msh, cl, element_location::IN_NEGATIVE_SIDE);
 
@@ -531,7 +536,7 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
                 Matrix<RealType, 2, 2> grad = Matrix<RealType, 2, 2>::Zero();
 
                 for (size_t i = 0; i < cbs; i++ )
-                    grad += cell_dofs(i) * t_dphi[i].block(0, 0, 2, 2);
+                    grad += cell_v_dofs(i) * t_dphi[i].block(0, 0, 2, 2);
 
                 Matrix<RealType, 2, 2> grad_diff = vel_grad(qp.first) - grad;
 
@@ -540,27 +545,36 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
 
                 /* L2 - error */
                 auto t_phi = cb.eval_basis( qp.first );
-                auto v = t_phi.transpose() * cell_dofs;
+                auto v = t_phi.transpose() * cell_v_dofs;
                 Matrix<RealType, 2, 1> sol_diff = sol_vel(qp.first) - v;
                 L2_error += qp.second * sol_diff.dot(sol_diff);
 
                 uT1_gp->add_data( qp.first, v(0) );
                 uT2_gp->add_data( qp.first, v(1) );
+
+                /* L2 - pressure - error */
+                auto s_cphi = s_cb.eval_basis( qp.first );
+                RealType p_num = s_cphi.dot(locdata_p);
+                RealType p_diff = test_case.sol_p( qp.first ) - p_num;
+                L2_pressure_error += qp.second * p_diff * p_diff;
+
+                p_gp->add_data( qp.first, p_num );
             }
         }
-
-        cell_i++;
     }
 
     std::cout << bold << green << "Energy-norm absolute error:           " << std::sqrt(H1_error) << std::endl;
+    std::cout << bold << green << "L2 - pressure - error:                " << std::sqrt(L2_pressure_error) << std::endl;
 
     postoutput.add_object(uT1_gp);
     postoutput.add_object(uT2_gp);
+    postoutput.add_object(p_gp);
     postoutput.write();
 
-    test_info<RealType> TI;
-    TI.H1 = std::sqrt(H1_error);
-    TI.L2 = std::sqrt(L2_error);
+    stokes_test_info<RealType> TI;
+    TI.H1_vel = std::sqrt(H1_error);
+    TI.L2_vel = std::sqrt(L2_error);
+    TI.L2_p   = std::sqrt(L2_pressure_error);
 
     tc.toc();
     std::cout << bold << yellow << "Postprocessing: " << tc << " seconds" << reset << std::endl;
@@ -1031,8 +1045,8 @@ void convergence_test(void)
     // meshes
     mesh_sizes.push_back(8);
     mesh_sizes.push_back(16);
-    mesh_sizes.push_back(32);
-    mesh_sizes.push_back(64);
+    // mesh_sizes.push_back(32);
+    // mesh_sizes.push_back(64);
     // mesh_sizes.push_back(128);
     // mesh_sizes.push_back(256);
 
@@ -1063,11 +1077,12 @@ void convergence_test(void)
             throw std::logic_error("file not open");
 
         // output << "N\th\tH1\tordre1\tL2\tordre2" << std::endl;
-        output << "N\th\tH1\tordre1\tL2\tordre2\tcond" << std::endl;
+        output << "N\th\tH1\tordre1\tL2\tordre2\tLp\tordre3\tcond" << std::endl;
 
         // convergence tests
         T previous_H1 = 0.0;
         T previous_L2 = 0.0;
+        T previous_p = 0.0;
         T previous_h = 0.0;
         for (std::vector<size_t>::iterator it_msh = mesh_sizes.begin();
              it_msh != mesh_sizes.end(); it_msh++)
@@ -1107,42 +1122,37 @@ void convergence_test(void)
             }
 
             // compute solution/errors
-            test_info<T> TI;
+            stokes_test_info<T> TI;
 
             // auto TI = run_cuthho_interface(msh, level_set_function, k, 3, test_case);
             if(1) // sin(\pi x) * sin(\pi y)
             {
-                auto test_case = make_test_case_vector_laplacian_jumps_1(msh, level_set_function);
-                // auto test_case = make_test_case_vector_laplacian_sin_sin(msh, level_set_function);
-                auto meth3 = make_sym_gradrec_interface_vector_method(msh, 1.0, test_case);
-                TI = run_cuthho_interface(msh, k, meth3, test_case);
-                // TI = run_cuthho_fictdom(msh, k, test_case);
+                auto test_case = make_test_case_stokes_1(msh, level_set_function);
+                TI = run_cuthho_fictdom(msh, k, test_case);
             }
 
             // report info in the file
             T h = 1.0/N;
             if (it_msh == mesh_sizes.begin())
             {
-                // output << N << "\t" << h << "\t" << TI.H1 << "\t" << "."
-                //        << "\t" << TI.L2 << "\t" << "." << "\t" << "0.0"
-                //        << std::endl;
-                output << N << "\t" << h << "\t" << TI.H1 << "\t" << "."
-                       << "\t" << TI.L2 << "\t" << "." << "\t" << TI.cond
+                output << N << "\t" << h << "\t" << TI.H1_vel << "\t" << "."
+                       << "\t" << TI.L2_vel << "\t" << "." << "\t" << TI.L2_p
+                       << "\t" << "." << "\t" << TI.cond
                        << std::endl;
             }
             else
             {
-                T orderH = log(previous_H1 / TI.H1) / log(previous_h / h);
-                T orderL = log(previous_L2 / TI.L2) / log(previous_h / h);
-                // output << N << "\t" << h << "\t" << TI.H1 << "\t" << orderH
-                //        << "\t" << TI.L2 << "\t" << orderL << "\t" << "0.0"
-                //        << std::endl;
-                output << N << "\t" << h << "\t" << TI.H1 << "\t" << orderH
-                       << "\t" << TI.L2 << "\t" << orderL << "\t" << TI.cond
+                T orderH = log(previous_H1 / TI.H1_vel) / log(previous_h / h);
+                T orderL = log(previous_L2 / TI.L2_vel) / log(previous_h / h);
+                T orderp = log(previous_p / TI.L2_p) / log(previous_h / h);
+                output << N << "\t" << h << "\t" << TI.H1_vel << "\t" << orderH
+                       << "\t" << TI.L2_vel << "\t" << orderL << "\t" << TI.L2_p
+                       << "\t" << orderp << "\t" << TI.cond
                        << std::endl;
             }
-            previous_H1 = TI.H1;
-            previous_L2 = TI.L2;
+            previous_H1 = TI.H1_vel;
+            previous_L2 = TI.L2_vel;
+            previous_p = TI.L2_p;
             previous_h = h;
         }
         // close the file
@@ -1150,17 +1160,17 @@ void convergence_test(void)
     }
 
     // update the gnuplot curves
-    system("gnuplot './output/gnuplot_script.txt'");
+    system("gnuplot './output/gnuplot_script_stokes.txt'");
 
     // update the .pdf file
-    system("pdflatex ./output/autom_tests.tex");
+    system("pdflatex ./output/autom_tests_stokes.tex");
 
     // open the .pdf file
-    system("xdg-open ./autom_tests.pdf");
+    system("xdg-open ./autom_tests_stokes.pdf");
 }
 
 //////////////////////////     MAIN        ////////////////////////////
-#if 0
+#if 1
 int main(int argc, char **argv)
 {
     convergence_test();
@@ -1170,7 +1180,7 @@ int main(int argc, char **argv)
 }
 #endif
 
-#if 1
+#if 0
 int main(int argc, char **argv)
 {
     using RealType = double;
