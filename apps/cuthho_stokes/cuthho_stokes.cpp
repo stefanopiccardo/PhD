@@ -237,16 +237,16 @@ make_pressure_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, E
 ///////////////////////   FICTITIOUS DOMAIN METHODS  ///////////////////////////
 
 template<typename T, size_t ET, typename testType>
-class vector_fictdom_method
+class stokes_fictdom_method
 {
     using Mat  = Matrix<T, Dynamic, Dynamic>;
     using Vect = Matrix<T, Dynamic, 1>;
     using Mesh = cuthho_mesh<T, ET>;
 
 protected:
-    vector_fictdom_method(){}
+    stokes_fictdom_method(){}
 
-    virtual std::pair<Mat, Vect>
+    virtual std::pair< std::pair<Mat,Mat>, std::pair<Vect,Vect> >
     make_contrib_cut(const Mesh& msh, const typename Mesh::cell_type& cl,
                      const testType test_case, const hho_degree_info hdi,
                      const element_location where = element_location::IN_NEGATIVE_SIDE,
@@ -255,19 +255,21 @@ protected:
     }
 
 public:
-    std::pair<Mat, Vect>
+    std::pair< std::pair<Mat,Mat>, std::pair<Vect,Vect> >
     make_contrib_uncut(const Mesh& msh, const typename Mesh::cell_type& cl,
                        const hho_degree_info hdi, const testType test_case)
     {
         auto gr = make_hho_gradrec_matrix(msh, cl, hdi);
         Mat stab = make_hho_vector_naive_stabilization(msh, cl, hdi);
         Mat lc = gr.second + stab;
-        Mat f = make_vector_rhs(msh, cl, hdi.cell_degree(), test_case.rhs_fun);
-        return std::make_pair(lc, f);
+        auto dr = make_hho_divergence_reconstruction(msh, cl, hdi);
+        Vect f = make_vector_rhs(msh, cl, hdi.cell_degree(), test_case.rhs_fun);
+        Vect p_rhs = Vect::Zero( dr.first.rows() );
+        return std::make_pair( std::make_pair(lc, dr.second) , std::make_pair(f,p_rhs) );
     }
 
 
-    std::pair<Mat, Vect>
+    std::pair< std::pair<Mat,Mat>, std::pair<Vect,Vect> >
     make_contrib(const Mesh& msh, const typename Mesh::cell_type& cl,
                  const testType test_case, const hho_degree_info hdi,
                  const element_location where = element_location::IN_NEGATIVE_SIDE,
@@ -279,7 +281,7 @@ public:
         {
             Mat lc;
             Vect f;
-            return std::make_pair(lc, f);
+            return std::make_pair(std::make_pair(lc, lc) , std::make_pair(f,f) );
         }
         else // on interface
             return make_contrib_cut(msh, cl, test_case, hdi, where, parms);
@@ -289,7 +291,7 @@ public:
 /////////////////////////  GRADREC_FICTITIOUS_METHOD
 
 template<typename T, size_t ET, typename testType>
-class gradrec_vector_fictdom_method : public vector_fictdom_method<T, ET, testType>
+class gradrec_stokes_fictdom_method : public stokes_fictdom_method<T, ET, testType>
 {
     using Mat = Matrix<T, Dynamic, Dynamic>;
     using Vect = Matrix<T, Dynamic, 1>;
@@ -298,10 +300,10 @@ class gradrec_vector_fictdom_method : public vector_fictdom_method<T, ET, testTy
 public:
     T eta;
 
-    gradrec_vector_fictdom_method(T eta_)
-        : vector_fictdom_method<T,ET,testType>(), eta(eta_) {}
+    gradrec_stokes_fictdom_method(T eta_)
+        : stokes_fictdom_method<T,ET,testType>(), eta(eta_) {}
 
-    std::pair<Mat, Vect>
+    std::pair< std::pair<Mat,Mat>, std::pair<Vect,Vect> >
     make_contrib_cut(const Mesh& msh, const typename Mesh::cell_type& cl,
                      const testType test_case, const hho_degree_info hdi,
                      const element_location where = element_location::IN_NEGATIVE_SIDE,
@@ -312,7 +314,8 @@ public:
         Mat stab = make_hho_vector_cut_stabilization(msh, cl, hdi, where)
             + make_hho_cut_interface_vector_penalty(msh, cl, hdi, eta);
         Mat lc = gr.second + stab;
-
+        auto dr = make_hho_divergence_reconstruction(msh, cl, test_case.level_set_,
+                                                     hdi, where, 1.0);
 
         // RHS
         auto celdeg = hdi.cell_degree();
@@ -322,18 +325,20 @@ public:
         f.block(0, 0, cbs, 1) += make_vector_rhs(msh, cl, celdeg, test_case.rhs_fun, where);
         f.block(0, 0, cbs, 1) += make_vector_rhs_penalty(msh, cl, celdeg, test_case.bcs_vel, eta);
         f += make_vector_GR_rhs(msh, cl, celdeg, test_case.bcs_vel, test_case.level_set_, gr.first);
+        auto p_rhs = make_pressure_rhs(msh, cl, hdi.face_degree(), where,
+                                       test_case.level_set_, test_case.bcs_vel);
 
-        return std::make_pair(lc, f);
+        return std::make_pair(std::make_pair(lc, dr.second), std::make_pair(f,p_rhs) );
     }
 };
 
 
 
 template<typename T, size_t ET, typename testType>
-auto make_gradrec_vector_fictdom_method(const cuthho_mesh<T, ET>& msh, const T eta_,
+auto make_gradrec_stokes_fictdom_method(const cuthho_mesh<T, ET>& msh, const T eta_,
                                  const testType test_case)
 {
-    return gradrec_vector_fictdom_method<T, ET, testType>(eta_);
+    return gradrec_stokes_fictdom_method<T, ET, testType>(eta_);
 }
 
 ///////////////////////////
@@ -394,39 +399,45 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
     element_location where = element_location::IN_NEGATIVE_SIDE;
 
     tc.tic();
-    auto assembler = make_vector_fict_assembler(msh, hdi, where);
-    auto assembler_sc = make_vector_fict_condensed_assembler(msh, hdi, where);
+    auto assembler = make_stokes_fict_assembler(msh, hdi, where);
+    // auto assembler_sc = make_vector_fict_condensed_assembler(msh, hdi, where);
 
 
     // method with gradient reconstruction (penalty-free)
-    auto class_meth = make_gradrec_vector_fictdom_method(msh, 1.0, test_case);
+    auto class_meth = make_gradrec_stokes_fictdom_method(msh, 1.0, test_case);
 
     for (auto& cl : msh.cells)
     {
+        if( !(location(msh, cl) == element_location::ON_INTERFACE || location(msh, cl) == where) )
+            continue;
         auto contrib = class_meth.make_contrib(msh, cl, test_case, hdi,
                                                element_location::IN_NEGATIVE_SIDE);
-        auto lc = contrib.first;
-        auto f = contrib.second;
+        auto lc_A = contrib.first.first;
+        auto lc_B = -contrib.first.second;
+        auto rhs_A = contrib.second.first;
+        auto rhs_B = -contrib.second.second;
 
 
-        if( sc )
-            assembler_sc.assemble(msh, cl, lc, f, bcs_fun);
-        else
-            assembler.assemble(msh, cl, lc, f, bcs_fun);
+        // if( sc )
+        //     assembler_sc.assemble(msh, cl, lc, f, bcs_fun);
+        // else
+        // assembler.assemble(msh, cl, lc, f, bcs_fun);
+        assembler.assemble(msh, cl, lc_A, lc_B, rhs_A, rhs_B, bcs_fun);
+        // assembler.assemble(msh, cl, lc_A, lc_B, rhs_A, rhs_B, bcs_fun, where);
     }
 
-    if( sc )
-        assembler_sc.finalize();
-    else
-        assembler.finalize();
+    // if( sc )
+    //     assembler_sc.finalize();
+    // else
+    assembler.finalize();
 
     tc.toc();
     std::cout << bold << yellow << "Matrix assembly: " << tc << " seconds" << reset << std::endl;
 
-    if( sc )
-        std::cout << "System unknowns: " << assembler_sc.LHS.rows() << std::endl;
-    else
-        std::cout << "System unknowns: " << assembler.LHS.rows() << std::endl;
+    // if( sc )
+    //     std::cout << "System unknowns: " << assembler_sc.LHS.rows() << std::endl;
+    // else
+    std::cout << "System unknowns: " << assembler.LHS.rows() << std::endl;
 
     std::cout << "Cells: " << msh.cells.size() << std::endl;
     std::cout << "Faces: " << msh.faces.size() << std::endl;
@@ -434,41 +445,41 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
 
     /************** SOLVE **************/
     tc.tic();
-#if 0
+#if 1
     SparseLU<SparseMatrix<RealType>>  solver;
     Matrix<RealType, Dynamic, 1> sol;
 
-    if( sc )
-    {
-        solver.analyzePattern(assembler_sc.LHS);
-        solver.factorize(assembler_sc.LHS);
-        sol = solver.solve(assembler_sc.RHS);
-    }
-    else
-    {
-        solver.analyzePattern(assembler.LHS);
-        solver.factorize(assembler.LHS);
-        sol = solver.solve(assembler.RHS);
-    }
+    // if( sc )
+    // {
+    //     solver.analyzePattern(assembler_sc.LHS);
+    //     solver.factorize(assembler_sc.LHS);
+    //     sol = solver.solve(assembler_sc.RHS);
+    // }
+    // else
+    // {
+    solver.analyzePattern(assembler.LHS);
+    solver.factorize(assembler.LHS);
+    sol = solver.solve(assembler.RHS);
+    // }
 #endif
-#if 1
+#if 0
     Matrix<RealType, Dynamic, 1> sol;
     cg_params<RealType> cgp;
     cgp.histfile = "cuthho_cg_hist.dat";
     cgp.verbose = true;
     cgp.apply_preconditioner = true;
-    if( sc )
-    {
-        sol = Matrix<RealType, Dynamic, 1>::Zero(assembler_sc.RHS.rows());
-        cgp.max_iter = assembler_sc.LHS.rows();
-        conjugated_gradient(assembler_sc.LHS, assembler_sc.RHS, sol, cgp);
-    }
-    else
-    {
-        sol = Matrix<RealType, Dynamic, 1>::Zero(assembler.RHS.rows());
-        cgp.max_iter = assembler.LHS.rows();
-        conjugated_gradient(assembler.LHS, assembler.RHS, sol, cgp);
-    }
+    // if( sc )
+    // {
+    //     sol = Matrix<RealType, Dynamic, 1>::Zero(assembler_sc.RHS.rows());
+    //     cgp.max_iter = assembler_sc.LHS.rows();
+    //     conjugated_gradient(assembler_sc.LHS, assembler_sc.RHS, sol, cgp);
+    // }
+    // else
+    // {
+    sol = Matrix<RealType, Dynamic, 1>::Zero(assembler.RHS.rows());
+    cgp.max_iter = assembler.LHS.rows();
+    conjugated_gradient(assembler.LHS, assembler.RHS, sol, cgp);
+    // }
 #endif
     tc.toc();
     std::cout << bold << yellow << "Linear solver: " << tc << " seconds" << reset << std::endl;
@@ -496,12 +507,12 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
         auto cbs = cb.size();
 
         Matrix<RealType, Dynamic, 1> locdata;
-        if( sc )
-        {
-            locdata = assembler_sc.take_local_data(msh, cl, sol, sol_vel);
-        }
-        else
-            locdata = assembler.take_local_data(msh, cl, sol, sol_vel);
+        // if( sc )
+        // {
+        //     locdata = assembler_sc.take_local_data(msh, cl, sol, sol_vel);
+        // }
+        // else
+        locdata = assembler.take_velocity(msh, cl, sol, sol_vel);
 
         Matrix<RealType, Dynamic, 1> cell_dofs = locdata.head(cbs);
 
