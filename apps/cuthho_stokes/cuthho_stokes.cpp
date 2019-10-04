@@ -307,6 +307,70 @@ make_hho_divergence_reconstruction_interface
     return std::make_pair(oper, dr_rhs);
 }
 
+///////////////////////   Stokes Stabilization
+
+template<typename T, size_t ET, typename F1>
+Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>
+make_stokes_interface_stabilization
+(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
+ const hho_degree_info& di, const F1& level_set_function)
+{
+    auto hT = diameter(msh, cl);
+
+    auto celdeg = di.cell_degree();
+    auto pdeg = di.face_degree();
+
+    vector_cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, celdeg);
+    cell_basis<cuthho_mesh<T, ET>,T>        pb(msh, cl, pdeg);
+
+    auto cbs = cb.size();
+    auto pbs = pb.size();
+
+    Matrix<T, Dynamic, Dynamic> ret = Matrix<T, Dynamic, Dynamic>::Zero( 2*(cbs+pbs), 2*(cbs+pbs));
+    Matrix<T, Dynamic, Dynamic> ret_temp = Matrix<T, Dynamic, Dynamic>::Zero( cbs+pbs, cbs+pbs  );
+
+    auto qpsi = integrate_interface(msh, cl, celdeg - 1 + pdeg ,
+                                    element_location::IN_NEGATIVE_SIDE);
+    for (auto& qp : qpsi)
+    {
+        const auto v_dphi = cb.eval_gradients(qp.first);
+        const auto s_phi  = pb.eval_basis(qp.first);
+        const auto n = level_set_function.normal(qp.first);
+        const Matrix<T, Dynamic, Dynamic> v_dphi_n = outer_product(v_dphi, n);
+        const Matrix<T, Dynamic, Dynamic> s_phi_n = s_phi * n.transpose();
+
+        ret_temp.block(0, 0, cbs, cbs) += qp.second * v_dphi_n * v_dphi_n.transpose();
+        ret_temp.block(cbs, 0, pbs, cbs) += qp.second * s_phi_n * v_dphi_n.transpose();
+        ret_temp.block(cbs, cbs, pbs, pbs) += qp.second * s_phi_n * s_phi_n.transpose();
+    }
+
+    // vel -- vel
+    ret.block(0, 0, cbs, cbs)     += hT * ret_temp.block(0, 0, cbs, cbs);
+    ret.block(0, cbs, cbs, cbs)   -= hT * ret_temp.block(0, 0, cbs, cbs);
+    ret.block(cbs, 0, cbs, cbs)   -= hT * ret_temp.block(0, 0, cbs, cbs);
+    ret.block(cbs, cbs, cbs, cbs) += hT * ret_temp.block(0, 0, cbs, cbs);
+
+    // vel -- p
+    ret.block(0, 2*cbs, cbs, pbs)       -= hT * ret_temp.block(cbs, 0, pbs, cbs).transpose();
+    ret.block(0, 2*cbs + pbs, cbs, pbs) += hT * ret_temp.block(cbs, 0, pbs, cbs).transpose();
+    ret.block(cbs, 2*cbs, cbs, pbs)     += hT * ret_temp.block(cbs, 0, pbs, cbs).transpose();
+    ret.block(cbs, 2*cbs+pbs, cbs, pbs) -= hT * ret_temp.block(cbs, 0, pbs, cbs).transpose();
+
+    // p -- vel
+    ret.block(2*cbs, 0, pbs, cbs)       -= hT * ret_temp.block(cbs, 0, pbs, cbs);
+    ret.block(2*cbs, cbs, pbs, cbs)     += hT * ret_temp.block(cbs, 0, pbs, cbs);
+    ret.block(2*cbs+pbs, 0, pbs, cbs)   += hT * ret_temp.block(cbs, 0, pbs, cbs);
+    ret.block(2*cbs+pbs, cbs, pbs, cbs) -= hT * ret_temp.block(cbs, 0, pbs, cbs);
+
+    // p -- p
+    ret.block(2*cbs, 2*cbs, pbs, pbs)         += hT * ret_temp.block(cbs, cbs, pbs, pbs);
+    ret.block(2*cbs, 2*cbs+pbs, pbs, pbs)     -= hT * ret_temp.block(cbs, cbs, pbs, pbs);
+    ret.block(2*cbs+pbs, 2*cbs, pbs, pbs)     -= hT * ret_temp.block(cbs, cbs, pbs, pbs);
+    ret.block(2*cbs+pbs, 2*cbs+pbs, pbs, pbs) += hT * ret_temp.block(cbs, cbs, pbs, pbs);
+
+    return ret;
+}
+
 ///////////////////////   RHS  pressure
 template<typename T, size_t ET, typename F1, typename F2>
 Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, 1>
@@ -337,6 +401,41 @@ make_pressure_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, E
     return ret;
 }
 
+
+template<typename T, size_t ET, typename F1, typename F2>
+Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, 1>
+make_stokes_interface_stabilization_RHS
+(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
+ const hho_degree_info& di, const F1& level_set_function, const F2& neumann_jump)
+{
+    auto hT = diameter(msh, cl);
+
+    auto celdeg = di.cell_degree();
+    auto pdeg = di.face_degree();
+
+    vector_cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, celdeg);
+    cell_basis<cuthho_mesh<T, ET>,T>        pb(msh, cl, pdeg);
+
+    auto cbs = cb.size();
+    auto pbs = pb.size();
+
+    Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero( 2*(cbs + 2*pbs) );
+
+    auto qpsi = integrate_interface(msh, cl, 2*celdeg, element_location::IN_NEGATIVE_SIDE );
+    for (auto& qp : qpsi)
+    {
+        auto v_dphi = cb.eval_gradients(qp.first);
+        auto s_phi  = pb.eval_basis(qp.first);
+        auto n = level_set_function.normal(qp.first);
+        const Matrix<T, Dynamic, Dynamic> v_dphi_n = outer_product(v_dphi, n);
+        const Matrix<T, Dynamic, Dynamic> s_phi_n = s_phi * n.transpose();
+
+        ret.head(cbs) += hT * qp.second * v_dphi_n * neumann_jump(qp.first);
+        ret.tail(pbs) -= hT * qp.second * s_phi_n  * neumann_jump(qp.first);
+    }
+
+    return ret;
+}
 
 ///////////////////////   FICTITIOUS DOMAIN METHODS  ///////////////////////////
 
