@@ -400,8 +400,8 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
 
     tc.tic();
     auto assembler = make_stokes_fict_assembler(msh, hdi, where);
-    auto assembler_sc = make_stokes_fict_condensed_assembler(msh, hdi, where);
-
+    auto assembler_sc = make_stokes_fict_condensed_assembler2(msh, hdi, where);
+    // auto assembler_sc = make_stokes_fict_condensed_assembler(msh, hdi, where);
 
     // method with gradient reconstruction (penalty-free)
     auto class_meth = make_gradrec_stokes_fictdom_method(msh, 1.0, test_case);
@@ -511,7 +511,7 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
         if( sc )
         {
             locdata_vel = assembler_sc.take_velocity(msh, cl, sol, sol_vel);
-            locdata_p   = assembler_sc.take_pressure(msh, cl, sol);
+            locdata_p   = assembler_sc.take_pressure(msh, cl, sol, sol_vel);
         }
         else
         {
@@ -1045,9 +1045,9 @@ void convergence_test(void)
     // meshes
     mesh_sizes.push_back(8);
     mesh_sizes.push_back(16);
-    // mesh_sizes.push_back(32);
-    // mesh_sizes.push_back(64);
-    // mesh_sizes.push_back(128);
+    mesh_sizes.push_back(32);
+    mesh_sizes.push_back(64);
+    mesh_sizes.push_back(128);
     // mesh_sizes.push_back(256);
 
     // polynomial orders
