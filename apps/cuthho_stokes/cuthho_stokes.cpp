@@ -203,6 +203,110 @@ make_hho_divergence_reconstruction(const cuthho_mesh<T, ET>& msh,
     return std::make_pair(oper, data);
 }
 
+
+
+//// make_hho_divergence_reconstruction_interface
+// return the divergence reconstruction for the interface pb
+// coeff -> scales the interface term
+template<typename T, size_t ET, typename Function>
+std::pair<   Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>,
+             Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>  >
+make_hho_divergence_reconstruction_interface
+(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
+ const Function& level_set_function, const hho_degree_info& di, element_location where, T coeff)
+{
+
+    if ( !is_cut(msh, cl) )
+        throw std::invalid_argument("The cell is not cut");
+
+    typedef Matrix<T, Dynamic, Dynamic> matrix_type;
+    typedef Matrix<T, Dynamic, 1>       vector_type;
+
+    const auto celdeg  = di.cell_degree();
+    const auto facdeg  = di.face_degree();
+    const auto pdeg    = facdeg;
+
+    vector_cell_basis<cuthho_mesh<T, ET>,T>   cb(msh, cl, celdeg);
+    cell_basis<cuthho_mesh<T, ET>,T>          pb(msh, cl, pdeg);
+
+
+    auto cbs = vector_cell_basis<cuthho_mesh<T, ET>,T>::size(celdeg);
+    auto fbs = vector_face_basis<cuthho_mesh<T, ET>,T>::size(facdeg);
+    auto pbs = cell_basis<cuthho_mesh<T, ET>,T>::size(pdeg);
+
+    const auto num_faces = faces(msh, cl).size();
+
+    matrix_type       rhs_tmp = matrix_type::Zero(pbs, cbs + num_faces * fbs);
+    matrix_type        dr_lhs = matrix_type::Zero(pbs, pbs);
+    matrix_type        dr_rhs = matrix_type::Zero(pbs, 2*cbs + 2*num_faces * fbs);
+
+    const auto qps = integrate(msh, cl, celdeg - 1 + pdeg, where);
+    for (auto& qp : qps)
+    {
+        const auto v_phi     = cb.eval_basis(qp.first);
+        const auto s_phi   = pb.eval_basis(qp.first);
+        const auto s_dphi  = pb.eval_gradients(qp.first);
+
+        dr_lhs += qp.second * s_phi * s_phi.transpose();
+        rhs_tmp.block(0, 0, pbs, cbs) -= qp.second * s_dphi * v_phi.transpose();
+    }
+
+    const auto fcs = faces(msh, cl);
+    const auto ns = normals(msh, cl);
+    for (size_t i = 0; i < fcs.size(); i++)
+    {
+        const auto fc = fcs[i];
+        const auto n  = ns[i];
+        cut_vector_face_basis<cuthho_mesh<T, ET>,T> fb(msh, fc, facdeg, where);
+
+        const auto qps_f = integrate(msh, fc, pdeg + std::max(facdeg, celdeg), where);
+        for (auto& qp : qps_f)
+        {
+            const matrix_type f_phi      = fb.eval_basis(qp.first);
+            const auto        s_phi      = pb.eval_basis(qp.first);
+            const matrix_type qp_s_phi_n = qp.second * s_phi * n.transpose();
+
+            rhs_tmp.block(0, cbs + i * fbs, pbs, fbs) += qp_s_phi_n * f_phi.transpose();
+        }
+    }
+
+    // term on the interface
+    matrix_type        interface_term = matrix_type::Zero(pbs, cbs);
+    const auto iqps = integrate_interface(msh, cl, celdeg + pdeg, element_location::IN_NEGATIVE_SIDE);
+    for (auto& qp : iqps)
+    {
+        const auto v_phi        = cb.eval_basis(qp.first);
+        const auto s_phi        = pb.eval_basis(qp.first);
+
+        Matrix<T,2,1> n = level_set_function.normal(qp.first);
+        const matrix_type qp_s_phi_n = qp.second * s_phi * n.transpose();
+
+        interface_term += qp_s_phi_n * v_phi.transpose();
+    }
+
+    // finalize rhs
+    if(where == element_location::IN_NEGATIVE_SIDE)
+    {
+        dr_rhs.block(0, 0, pbs, cbs) += rhs_tmp.block(0, 0, pbs, cbs);
+        dr_rhs.block(0, 2*cbs, pbs, num_faces*fbs)
+            += rhs_tmp.block(0, cbs, pbs, num_faces*fbs);
+        dr_rhs.block(0, 0, pbs, cbs) += (1.0 - coeff) * interface_term;
+        dr_rhs.block(0, cbs, pbs, cbs) += coeff * interface_term;
+    }
+    else if( where == element_location::IN_POSITIVE_SIDE)
+    {
+        dr_rhs.block(0, cbs, pbs, cbs) += rhs_tmp.block(0, 0, pbs, cbs);
+        dr_rhs.block(0, 2*cbs + num_faces*fbs, pbs, num_faces*fbs)
+                     += rhs_tmp.block(0, cbs, pbs, num_faces*fbs);
+        dr_rhs.block(0, 0, pbs, cbs) -= coeff * interface_term;
+        dr_rhs.block(0, cbs, pbs, cbs) += (coeff-1.0) * interface_term;
+    }
+
+    matrix_type oper = dr_lhs.ldlt().solve(dr_rhs);
+
+    return std::make_pair(oper, dr_rhs);
+}
+
 ///////////////////////   RHS  pressure
 template<typename T, size_t ET, typename F1, typename F2>
 Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, 1>
