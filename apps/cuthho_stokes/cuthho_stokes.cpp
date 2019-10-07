@@ -961,7 +961,7 @@ auto make_sym_gradrec_stokes_interface_method(const cuthho_mesh<T, ET>& msh, con
 ///////////////////////////////////////
 
 template<typename Mesh, typename testType, typename meth>
-test_info<typename Mesh::coordinate_type>
+stokes_test_info<typename Mesh::coordinate_type>
 run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_case)
 {
     using RealType = typename Mesh::coordinate_type;
@@ -1075,37 +1075,40 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
 
     auto uT1_gp  = std::make_shared< gnuplot_output_object<RealType> >("interface_uT1.dat");
     auto uT2_gp  = std::make_shared< gnuplot_output_object<RealType> >("interface_uT2.dat");
+    auto p_gp    = std::make_shared< gnuplot_output_object<RealType> >("interface_p.dat");
 
     tc.tic();
     RealType    H1_error = 0.0;
     RealType    L2_error = 0.0;
-    size_t      cell_i   = 0;
+    RealType    L2_pressure_error = 0.0;
     for (auto& cl : msh.cells)
     {
         vector_cell_basis<cuthho_poly_mesh<RealType>, RealType> cb(msh, cl, hdi.cell_degree());
+        cell_basis<cuthho_poly_mesh<RealType>, RealType> pb(msh, cl, hdi.face_degree());
         auto cbs = cb.size();
-        auto fcs = faces(msh, cl);
-        auto num_faces = fcs.size();
-        auto fbs = vector_face_basis<cuthho_poly_mesh<RealType>,RealType>::size(hdi.face_degree());
+        auto pbs = pb.size();
 
-        Matrix<RealType, Dynamic, 1> locdata_n, locdata_p, locdata;
-        Matrix<RealType, Dynamic, 1> cell_dofs_n, cell_dofs_p, cell_dofs;
+        Matrix<RealType, Dynamic, 1> vel_locdata_n, vel_locdata_p, vel_locdata;
+        Matrix<RealType, Dynamic, 1> P_locdata_n, P_locdata_p, P_locdata;
+        Matrix<RealType, Dynamic, 1> vel_cell_dofs_n, vel_cell_dofs_p, vel_cell_dofs;
 
         if (location(msh, cl) == element_location::ON_INTERFACE)
         {
             // if( sc )
             // {
-            //     locdata_n = assembler_sc.take_local_data(msh, cl, sol, bcs_vel, element_location::IN_NEGATIVE_SIDE);
-            //     locdata_p = assembler_sc.take_local_data(msh, cl, sol, bcs_vel, element_location::IN_POSITIVE_SIDE);
+            //     vel_locdata_n = assembler_sc.take_local_data(msh, cl, sol, bcs_vel, element_location::IN_NEGATIVE_SIDE);
+            //     vel_locdata_p = assembler_sc.take_local_data(msh, cl, sol, bcs_vel, element_location::IN_POSITIVE_SIDE);
             // }
             // else
             // {
-            locdata_n = assembler.take_velocity(msh, cl, sol, bcs_vel, element_location::IN_NEGATIVE_SIDE);
-            locdata_p = assembler.take_velocity(msh, cl, sol, bcs_vel, element_location::IN_POSITIVE_SIDE);
+            vel_locdata_n = assembler.take_velocity(msh, cl, sol, bcs_vel, element_location::IN_NEGATIVE_SIDE);
+            vel_locdata_p = assembler.take_velocity(msh, cl, sol, bcs_vel, element_location::IN_POSITIVE_SIDE);
+            P_locdata_n = assembler.take_pressure(msh,cl, sol, element_location::IN_NEGATIVE_SIDE);
+            P_locdata_p = assembler.take_pressure(msh,cl, sol, element_location::IN_POSITIVE_SIDE);
             // }
 
-            cell_dofs_n = locdata_n.head(cbs);
-            cell_dofs_p = locdata_p.head(cbs);
+            vel_cell_dofs_n = vel_locdata_n.head(cbs);
+            vel_cell_dofs_p = vel_locdata_p.head(cbs);
 
 
             auto qps_n = integrate(msh, cl, 2*hdi.cell_degree(), element_location::IN_NEGATIVE_SIDE);
@@ -1116,7 +1119,7 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
                 Matrix<RealType, 2, 2> grad = Matrix<RealType, 2, 2>::Zero();
 
                 for (size_t i = 1; i < cbs; i++ )
-                    grad += cell_dofs_n(i) * t_dphi[i].block(0, 0, 2, 2);
+                    grad += vel_cell_dofs_n(i) * t_dphi[i].block(0, 0, 2, 2);
 
                 Matrix<RealType, 2, 2> grad_diff = vel_grad(qp.first) - grad;
                 H1_error += qp.second * inner_product(grad_diff , grad_diff);
@@ -1124,14 +1127,21 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
 
                 /* Compute L2-error */
                 auto t_phi = cb.eval_basis( qp.first );
-                auto v = t_phi.transpose() * cell_dofs_n;
+                auto v = t_phi.transpose() * vel_cell_dofs_n;
                 Matrix<RealType, 2, 1> sol_diff = sol_vel(qp.first) - v;
                 L2_error += qp.second * sol_diff.dot(sol_diff);
 
                 uT1_gp->add_data( qp.first, v(0) );
                 uT2_gp->add_data( qp.first, v(1) );
-            }
 
+                /* L2 - pressure - error */
+                auto p_phi = pb.eval_basis( qp.first );
+                RealType p_num = p_phi.dot(P_locdata_n);
+                RealType p_diff = test_case.sol_p( qp.first ) - p_num;
+                L2_pressure_error += qp.second * p_diff * p_diff;
+
+                p_gp->add_data( qp.first, p_num );
+            }
 
             auto qps_p = integrate(msh, cl, 2*hdi.cell_degree(), element_location::IN_POSITIVE_SIDE);
             for (auto& qp : qps_p)
@@ -1141,30 +1151,39 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
                 Matrix<RealType, 2, 2> grad = Matrix<RealType, 2, 2>::Zero();
 
                 for (size_t i = 1; i < cbs; i++ )
-                    grad += cell_dofs_p(i) * t_dphi[i].block(0, 0, 2, 2);
+                    grad += vel_cell_dofs_p(i) * t_dphi[i].block(0, 0, 2, 2);
 
                 Matrix<RealType, 2, 2> grad_diff = vel_grad(qp.first) - grad;
                 H1_error += qp.second * inner_product(grad_diff , grad_diff);
 
                 /* Compute L2-error */
                 auto t_phi = cb.eval_basis( qp.first );
-                auto v = t_phi.transpose() * cell_dofs_p;
+                auto v = t_phi.transpose() * vel_cell_dofs_p;
                 Matrix<RealType, 2, 1> sol_diff = sol_vel(qp.first) - v;
                 L2_error += qp.second * sol_diff.dot(sol_diff);
 
                 uT1_gp->add_data( qp.first, v(0) );
                 uT2_gp->add_data( qp.first, v(1) );
+
+                /* L2 - pressure - error */
+                auto p_phi = pb.eval_basis( qp.first );
+                RealType p_num = p_phi.dot(P_locdata_p);
+                RealType p_diff = test_case.sol_p( qp.first ) - p_num;
+                L2_pressure_error += qp.second * p_diff * p_diff;
+
+                p_gp->add_data( qp.first, p_num );
             }
         }
         else
         {
             // if( sc )
             // {
-            //     locdata = assembler_sc.take_local_data(msh, cl, sol, bcs_vel, element_location::IN_POSITIVE_SIDE);
+            //     vel_locdata = assembler_sc.take_local_data(msh, cl, sol, bcs_vel, element_location::IN_POSITIVE_SIDE);
             // }
             // else
-            locdata = assembler.take_velocity(msh, cl, sol, bcs_vel, element_location::IN_POSITIVE_SIDE);
-            cell_dofs = locdata.head(cbs);
+            vel_locdata = assembler.take_velocity(msh, cl, sol, bcs_vel, element_location::IN_POSITIVE_SIDE);
+            P_locdata = assembler.take_pressure(msh,cl, sol, element_location::IN_POSITIVE_SIDE);
+            vel_cell_dofs = vel_locdata.head(cbs);
 
             auto qps = integrate(msh, cl, 2*hdi.cell_degree());
             for (auto& qp : qps)
@@ -1174,37 +1193,47 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
                 Matrix<RealType, 2, 2> grad = Matrix<RealType, 2, 2>::Zero();
 
                 for (size_t i = 1; i < cbs; i++ )
-                    grad += cell_dofs(i) * t_dphi[i].block(0, 0, 2, 2);
+                    grad += vel_cell_dofs(i) * t_dphi[i].block(0, 0, 2, 2);
 
                 Matrix<RealType, 2, 2> grad_diff = vel_grad(qp.first) - grad;
                 H1_error += qp.second * inner_product(grad_diff , grad_diff);
 
                 /* Compute L2-error */
                 auto t_phi = cb.eval_basis( qp.first );
-                auto v = t_phi.transpose() * cell_dofs;
+                auto v = t_phi.transpose() * vel_cell_dofs;
                 Matrix<RealType, 2, 1> sol_diff = sol_vel(qp.first) - v;
                 L2_error += qp.second * sol_diff.dot(sol_diff);
 
                 uT1_gp->add_data( qp.first, v(0) );
                 uT2_gp->add_data( qp.first, v(1) );
+
+                /* L2 - pressure - error */
+                auto p_phi = pb.eval_basis( qp.first );
+                RealType p_num = p_phi.dot(P_locdata);
+                RealType p_diff = test_case.sol_p( qp.first ) - p_num;
+                L2_pressure_error += qp.second * p_diff * p_diff;
+
+                p_gp->add_data( qp.first, p_num );
             }
         }
 
-        cell_i++;
     }
 
     std::cout << bold << green << "Energy-norm absolute error:           " << std::sqrt(H1_error) << std::endl;
-    std::cout << bold << green << "L2-norm absolute error:           " << std::sqrt(L2_error) << std::endl;
+    std::cout << bold << green << "L2-norm absolute error:               " << std::sqrt(L2_error) << std::endl;
+    std::cout << bold << green << "Pressure L2-norm absolute error:      " << std::sqrt(L2_pressure_error) << std::endl;
 
     postoutput.add_object(uT1_gp);
     postoutput.add_object(uT2_gp);
+    postoutput.add_object(p_gp);
     postoutput.write();
 
 
 
-    test_info<RealType> TI;
-    TI.H1 = std::sqrt(H1_error);
-    TI.L2 = std::sqrt(L2_error);
+    stokes_test_info<RealType> TI;
+    TI.H1_vel = std::sqrt(H1_error);
+    TI.L2_vel = std::sqrt(L2_error);
+    TI.L2_p = std::sqrt(L2_pressure_error);
 
     if (false)
     {
