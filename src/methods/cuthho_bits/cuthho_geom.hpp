@@ -688,13 +688,12 @@ measure(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_t
     if ( !is_cut(msh, cl) ) /* Element is not cut, use std. integration */
         return measure(msh, cl);
 
-    std::vector< std::pair<point<T,2>, T> > ret;
-    auto tris = triangulate(msh, cl, where);
-
     T totmeas = 0.0;
-
-    for (auto& tri : tris)
-        totmeas += tri.area();
+    auto qpsi = integrate(msh, cl, 0, where);
+    for (auto& qp : qpsi)
+    {
+        totmeas += qp.second;
+    }
 
     return totmeas;
 }
