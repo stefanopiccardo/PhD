@@ -3784,7 +3784,7 @@ public:
 
         // null pressure mean condition
         auto mult_offset = fbs_A * this->num_other_faces + this->num_cells;
-        auto area = measure(msh, cl);
+        auto area = measure(msh, cl, this->loc_zone);
         triplets.push_back( Triplet<T>(B_offset, mult_offset, area) );
         triplets.push_back( Triplet<T>(mult_offset, B_offset, area) );
 
