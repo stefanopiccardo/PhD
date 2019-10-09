@@ -50,6 +50,1038 @@ using namespace Eigen;
 
 
 
+//////////////////   STATIC  CONDENSATION   //////////////////////////////
+
+// full static condensation (velocity + pressure)
+// in this version we keep only the velocity face dofs
+// and one pressure dof per cell (that represents the mean pressure in the cell)
+template<typename T>
+std::pair<   Matrix<T, Dynamic, Dynamic>, Matrix<T, Dynamic, 1>  >
+stokes_static_condensation3_compute
+(const Matrix<T, Dynamic, Dynamic> lhs_A, const Matrix<T, Dynamic, Dynamic> lhs_B,
+ const Matrix<T, Dynamic, Dynamic> lhs_C,
+ const Matrix<T, Dynamic, 1> rhs_A, const Matrix<T, Dynamic, 1> rhs_B,
+ const Matrix<T, Dynamic, 1> mult, const size_t cell_size, const size_t face_size)
+{
+    using matrix = Matrix<T, Dynamic, Dynamic>;
+    using vector = Matrix<T, Dynamic, 1>;
+
+    size_t size_tot = cell_size + face_size;
+    size_t p_size = lhs_B.rows();
+    assert(lhs_A.cols() == size_tot && lhs_A.rows() == size_tot);
+    assert(rhs_A.rows() == size_tot || rhs_A.rows() == cell_size);
+    assert(lhs_B.rows() == p_size && lhs_B.cols() == size_tot);
+    assert(rhs_B.rows() == p_size);
+    assert(lhs_C.rows() == p_size && lhs_C.cols() == p_size);
+    assert(mult.rows() == p_size - 1);
+
+    matrix lhs_sc = matrix::Zero(face_size + 1, face_size + 1);
+    vector rhs_sc = vector::Zero(face_size + 1);
+
+    // sub--lhs
+    matrix K_TT = lhs_A.topLeftCorner(cell_size, cell_size);
+    matrix K_TF = lhs_A.topRightCorner(cell_size, face_size);
+    matrix K_FT = lhs_A.bottomLeftCorner(face_size, cell_size);
+    matrix K_FF = lhs_A.bottomRightCorner(face_size, face_size);
+    matrix K_PT = lhs_B.block(0, 0, p_size, cell_size);
+    matrix K_PF = lhs_B.block(0, cell_size, p_size, face_size);
+
+
+    // sub--rhs
+    vector cell_rhs = vector::Zero(cell_size);
+    vector face_rhs = vector::Zero(face_size);
+    if(rhs_A.rows() == cell_size)
+        cell_rhs = rhs_A;
+    else
+    {
+        cell_rhs = rhs_A.head(cell_size);
+        face_rhs = rhs_A.tail(face_size);
+    }
+
+    // compute the new matrices
+    matrix tB_PT = K_PT.block(0, 0, 1, cell_size);
+    matrix tB_PF = K_PF.block(0, 0, 1, face_size);
+    matrix temp_B_PT = K_PT.block(1, 0, p_size-1, cell_size);
+    matrix temp_B_PF = K_PF.block(1, 0, p_size-1, face_size);
+    matrix hB_PT = mult * tB_PT + temp_B_PT;
+    matrix hB_PF = mult * tB_PF + temp_B_PF;
+
+    matrix ttC_pp = lhs_C.block(0, 0, 1, p_size).transpose();
+    matrix hhC_pp = lhs_C.block(1, 0, p_size - 1, p_size).transpose() + ttC_pp * mult.transpose();
+    matrix C_tptp = ttC_pp.block(0, 0, 1, 1);
+    matrix C_tphp = hhC_pp.block(0, 0, 1, p_size - 1);
+    matrix C_hptp = ttC_pp.block(1, 0, p_size - 1, 1) + mult * C_tptp;
+    matrix C_hphp = hhC_pp.block(1, 0, p_size - 1, p_size - 1) + mult * C_tphp;
+
+    vector rhs_tp = rhs_B.block(0,0,1,1);
+    vector rhs_temp = rhs_B.block(1,0,p_size-1,1);
+    vector rhs_hp = rhs_temp + mult * rhs_tp;
+
+
+    ////////////// static condensation
+    // invert matrices
+    auto K_TT_ldlt = K_TT.ldlt();
+    matrix iAhB = K_TT_ldlt.solve(hB_PT.transpose());
+    matrix iAK_TF = K_TT_ldlt.solve(K_TF);
+    matrix iAtB = K_TT_ldlt.solve(tB_PT.transpose());
+    vector iA_rhs_T = K_TT_ldlt.solve(cell_rhs);
+
+    auto iBAB = ( hB_PT * iAhB - C_hphp ).ldlt();
+    matrix iBAB_B_PF = iBAB.solve(hB_PF);
+    matrix iBAB_B_PT = iBAB.solve(hB_PT);
+    matrix iBAB_C_hptp = iBAB.solve(C_hptp);
+    vector iBAB_rhs_hp = iBAB.solve(rhs_hp);
+
+    // compute final matrices and rhs
+    matrix AFF_1 = K_FF;
+    matrix AFF_2 = - K_FT * iAK_TF;
+    matrix AFF_3 = ( K_FT * iAhB - hB_PF.transpose() ) * (iBAB_B_PT * iAK_TF - iBAB_B_PF);
+    matrix AFF = AFF_1 + AFF_2 + AFF_3;
+
+    matrix BFP_1 = tB_PF.transpose();
+    matrix BFP_2 = - K_FT * iAtB;
+    matrix BFP_3 = ( hB_PF.transpose() - K_FT * iAhB ) * ( iBAB_C_hptp - iBAB_B_PT * iAtB );
+    matrix BFP = BFP_1 + BFP_2 + BFP_3;
+
+    vector RHS_F_1 = face_rhs;
+    vector RHS_F_2 = - K_FT * iA_rhs_T;
+    vector RHS_F_3 = ( hB_PF.transpose() - K_FT * iAhB ) * ( iBAB_rhs_hp - iBAB_B_PT * iA_rhs_T );
+    vector RHS_F = RHS_F_1 + RHS_F_2 + RHS_F_3;
+
+    matrix BPF_1 = tB_PF;
+    matrix BPF_2 = - tB_PT * iAK_TF;
+    matrix BPF_3 = (C_tphp - tB_PT * iAhB) * ( iBAB_B_PF - iBAB_B_PT * iAK_TF );
+    matrix BPF = BPF_1 + BPF_2 + BPF_3;
+
+    matrix CPP_1 = C_tptp;
+    matrix CPP_2 = - tB_PT * iAtB;
+    matrix CPP_3 = ( C_tphp - tB_PT * iAhB ) * ( iBAB_C_hptp - iBAB_B_PT * iAtB );
+    matrix CPP = CPP_1 + CPP_2 + CPP_3;
+
+    vector RHS_P_1 = rhs_tp;
+    vector RHS_P_2 = - tB_PT * iA_rhs_T;
+    vector RHS_P_3 = ( C_tphp - tB_PT * iAhB) * ( iBAB_rhs_hp - iBAB_B_PT * iA_rhs_T );
+    vector RHS_P = RHS_P_1 + RHS_P_2 + RHS_P_3;
+
+    lhs_sc.block(0, 0, face_size, face_size) = AFF;
+    lhs_sc.block(0, face_size, face_size, 1) = BFP;
+    lhs_sc.block(face_size, 0, 1, face_size) = BPF;
+    lhs_sc.block(face_size, face_size, 1, 1) = CPP;
+
+    rhs_sc.head(face_size) = RHS_F;
+    rhs_sc.tail(1) = RHS_P;
+
+    return std::make_pair(lhs_sc, rhs_sc);
+}
+
+
+
+template<typename T>
+Matrix<T, Dynamic, 1>
+stokes_static_condensation3_recover_velocity
+(const Matrix<T, Dynamic, Dynamic> lhs_A, const Matrix<T, Dynamic, Dynamic> lhs_B,
+ const Matrix<T, Dynamic, Dynamic> lhs_C,
+ const Matrix<T, Dynamic, 1> rhs_A, const Matrix<T, Dynamic, 1> rhs_B,
+ const Matrix<T, Dynamic, 1> mult,
+ const size_t cell_size, const size_t face_size, const Matrix<T, Dynamic, 1> sol_sc)
+{
+    using matrix = Matrix<T, Dynamic, Dynamic>;
+    using vector = Matrix<T, Dynamic, 1>;
+
+    size_t size_tot = cell_size + face_size;
+    size_t p_size = lhs_B.rows();
+    assert(lhs_A.cols() == size_tot && lhs_A.rows() == size_tot);
+    assert(rhs_A.rows() == size_tot || rhs_A.rows() == cell_size);
+    assert(lhs_B.rows() == p_size && lhs_B.cols() == size_tot);
+    assert(rhs_B.rows() == p_size);
+    assert(lhs_C.rows() == p_size && lhs_C.cols() == p_size);
+    assert(mult.rows() == p_size - 1);
+    assert(sol_sc.rows() == face_size + 1);
+
+
+    // sub--lhs
+    matrix K_TT = lhs_A.topLeftCorner(cell_size, cell_size);
+    matrix K_TF = lhs_A.topRightCorner(cell_size, face_size);
+    matrix K_TP = lhs_B.topLeftCorner(p_size, cell_size).transpose();
+    matrix K_PT = lhs_B.block(0, 0, p_size, cell_size);
+    matrix K_PF = lhs_B.block(0, cell_size, p_size, face_size);
+
+    // sub--rhs
+    vector cell_rhs = vector::Zero(cell_size);
+    cell_rhs = rhs_A.head(cell_size);
+
+    // compute the new matrices
+    matrix tB_PT = K_PT.block(0, 0, 1, cell_size);
+    matrix tB_PF = K_PF.block(0, 0, 1, face_size);
+    matrix temp_B_PT = K_PT.block(1, 0, p_size-1, cell_size);
+    matrix temp_B_PF = K_PF.block(1, 0, p_size-1, face_size);
+    matrix hB_PT = mult * tB_PT + temp_B_PT;
+    matrix hB_PF = mult * tB_PF + temp_B_PF;
+
+    matrix ttC_pp = lhs_C.block(0, 0, 1, p_size).transpose();
+    matrix hhC_pp = lhs_C.block(1, 0, p_size - 1, p_size).transpose() + ttC_pp * mult.transpose();
+    matrix C_tptp = ttC_pp.block(0, 0, 1, 1);
+    matrix C_tphp = hhC_pp.block(0, 0, 1, p_size - 1);
+    matrix C_hptp = ttC_pp.block(1, 0, p_size - 1, 1) + mult * C_tptp;
+    matrix C_hphp = hhC_pp.block(1, 0, p_size - 1, p_size - 1) + mult * C_tphp;
+
+    vector rhs_tp = rhs_B.block(0,0,1,1);
+    vector rhs_temp = rhs_B.block(1,0,p_size-1,1);
+    vector rhs_hp = rhs_temp + mult * rhs_tp;
+
+    // recover velocity cell solution
+    auto K_TT_ldlt = K_TT.ldlt();
+    matrix iAhB = K_TT_ldlt.solve(hB_PT.transpose());
+    matrix iAK_TF = K_TT_ldlt.solve(K_TF);
+    matrix iAtB = K_TT_ldlt.solve(tB_PT.transpose());
+    vector iA_rhs_T = K_TT_ldlt.solve(cell_rhs);
+
+    auto iBAB = ( hB_PT * iAhB - C_hphp ).ldlt();
+    matrix iBAB_B_PF = iBAB.solve(hB_PF);
+    matrix iBAB_B_PT = iBAB.solve(hB_PT);
+    matrix iBAB_C_hptp = iBAB.solve(C_hptp);
+    vector iBAB_rhs_hp = iBAB.solve(rhs_hp);
+
+    vector ret = vector::Zero(size_tot);
+
+    vector uF = sol_sc.head(face_size);
+    vector solP = sol_sc.tail(1);
+
+    vector uT_1 = iAhB * iBAB_B_PT * (iAK_TF * uF + iAtB * solP - iA_rhs_T);
+    vector uT_2 = - iAhB * iBAB_B_PF * uF;
+    vector uT_3 = iAhB * iBAB_rhs_hp;
+    vector uT_4 = - iAhB * iBAB_C_hptp * solP;
+    vector uT_5 = iA_rhs_T - iAK_TF * uF - iAtB * solP;
+    vector uT = uT_1 + uT_2 + uT_3 + uT_4 + uT_5;
+
+    ret.head(cell_size) = uT;
+    ret.block(cell_size, 0, face_size, 1) = uF;
+    return ret;
+}
+
+
+template<typename T>
+Matrix<T, Dynamic, 1>
+stokes_static_condensation3_recover_pressure
+(const Matrix<T, Dynamic, Dynamic> lhs_A, const Matrix<T, Dynamic, Dynamic> lhs_B,
+ const Matrix<T, Dynamic, Dynamic> lhs_C,
+ const Matrix<T, Dynamic, 1> rhs_A, const Matrix<T, Dynamic, 1> rhs_B,
+ const Matrix<T, Dynamic, 1> mult,
+ const size_t cell_size, const size_t face_size, const Matrix<T, Dynamic, 1> sol_sc)
+{
+    using matrix = Matrix<T, Dynamic, Dynamic>;
+    using vector = Matrix<T, Dynamic, 1>;
+
+    size_t size_tot = cell_size + face_size;
+    size_t p_size = lhs_B.rows();
+    assert(lhs_A.cols() == size_tot && lhs_A.rows() == size_tot);
+    assert(rhs_A.rows() == size_tot || rhs_A.rows() == cell_size);
+    assert(lhs_B.rows() == p_size && lhs_B.cols() == size_tot);
+    assert(rhs_B.rows() == p_size);
+    assert(lhs_C.rows() == p_size && lhs_C.cols() == p_size);
+    assert(mult.rows() == p_size - 1);
+    assert(sol_sc.rows() == face_size + 1);
+
+    // sub--lhs
+    matrix K_TT = lhs_A.topLeftCorner(cell_size, cell_size);
+    matrix K_TF = lhs_A.topRightCorner(cell_size, face_size);
+    matrix K_TP = lhs_B.topLeftCorner(p_size, cell_size).transpose();
+    matrix K_PT = lhs_B.block(0, 0, p_size, cell_size);
+    matrix K_PF = lhs_B.block(0, cell_size, p_size, face_size);
+
+    // sub--rhs
+    vector cell_rhs = vector::Zero(cell_size);
+    cell_rhs = rhs_A.head(cell_size);
+
+    // compute the new matrices
+    matrix tB_PT = K_PT.block(0, 0, 1, cell_size);
+    matrix tB_PF = K_PF.block(0, 0, 1, face_size);
+    matrix temp_B_PT = K_PT.block(1, 0, p_size-1, cell_size);
+    matrix temp_B_PF = K_PF.block(1, 0, p_size-1, face_size);
+    matrix hB_PT = mult * tB_PT + temp_B_PT;
+    matrix hB_PF = mult * tB_PF + temp_B_PF;
+
+    matrix ttC_pp = lhs_C.block(0, 0, 1, p_size).transpose();
+    matrix hhC_pp = lhs_C.block(1, 0, p_size - 1, p_size).transpose() + ttC_pp * mult.transpose();
+    matrix C_tptp = ttC_pp.block(0, 0, 1, 1);
+    matrix C_tphp = hhC_pp.block(0, 0, 1, p_size - 1);
+    matrix C_hptp = ttC_pp.block(1, 0, p_size - 1, 1) + mult * C_tptp;
+    matrix C_hphp = hhC_pp.block(1, 0, p_size - 1, p_size - 1) + mult * C_tphp;
+
+    vector rhs_tp = rhs_B.block(0,0,1,1);
+    vector rhs_temp = rhs_B.block(1,0,p_size-1,1);
+    vector rhs_hp = rhs_temp + mult * rhs_tp;
+
+    // pressure solution
+    auto K_TT_ldlt = K_TT.ldlt();
+    matrix iAhB = K_TT_ldlt.solve(hB_PT.transpose());
+    matrix iAK_TF = K_TT_ldlt.solve(K_TF);
+    matrix iAtB = K_TT_ldlt.solve(tB_PT.transpose());
+    vector iA_rhs_T = K_TT_ldlt.solve(cell_rhs);
+
+    auto iBAB = ( hB_PT * iAhB - C_hphp ).ldlt();
+    matrix iBAB_B_PF = iBAB.solve(hB_PF);
+    matrix iBAB_B_PT = iBAB.solve(hB_PT);
+    matrix iBAB_C_hptp = iBAB.solve(C_hptp);
+    vector iBAB_rhs_hp = iBAB.solve(rhs_hp);
+
+    vector ret = vector::Zero(p_size);
+
+    vector uF = sol_sc.head(face_size);
+    vector solP = sol_sc.tail(1);
+
+    vector p_1 = iBAB_B_PF * uF;
+    vector p_2 = - iBAB_B_PT * iAK_TF * uF;
+    vector p_3 = - iBAB_B_PT * iAtB * solP;
+    vector p_4 = iBAB_C_hptp * solP;
+    vector p_5 = - iBAB_rhs_hp;
+    vector p_6 = iBAB_B_PT * iA_rhs_T;
+    vector hP = p_1 + p_2 + p_3 + p_4 + p_5 + p_6;
+
+    ret(0) = solP(0) + mult.dot(hP);
+    ret.tail(p_size-1) = hP;
+    return ret;
+}
+
+
+
+/////////////////////////   ASSEMBLERS    ////////////////////////////////
+
+
+
+template<typename Mesh>
+class stokes_interface_condensed_assembler
+{
+    using T = typename Mesh::coordinate_type;
+    std::vector<size_t>                 cell_table, face_table;
+    size_t num_all_cells, num_all_faces, num_other_faces;
+
+    hho_degree_info                     di;
+
+    std::vector< Triplet<T> >           triplets;
+    std::vector< Matrix<T, Dynamic, Dynamic> > loc_LHS;
+    std::vector< Matrix<T, Dynamic, 1> > loc_RHS;
+
+    class assembly_index
+    {
+        size_t  idx;
+        bool    assem;
+
+    public:
+        assembly_index(size_t i, bool as)
+            : idx(i), assem(as)
+        {}
+
+        operator size_t() const
+        {
+            if (!assem)
+                throw std::logic_error("Invalid assembly_index");
+
+            return idx;
+        }
+
+        bool assemble() const
+        {
+            return assem;
+        }
+
+        friend std::ostream& operator<<(std::ostream& os, const assembly_index& as)
+        {
+            os << "(" << as.idx << "," << as.assem << ")";
+            return os;
+        }
+    };
+
+public:
+
+    SparseMatrix<T>         LHS;
+    Matrix<T, Dynamic, 1>   RHS;
+
+    stokes_interface_condensed_assembler(const Mesh& msh, hho_degree_info hdi)
+        : di(hdi)
+    {
+        auto is_dirichlet = [&](const typename Mesh::face_type& fc) -> bool {
+            return fc.is_boundary && fc.bndtype == boundary::DIRICHLET;
+        };
+
+        num_all_cells = 0; /* counts cells with dup. unknowns */
+        for (auto& cl : msh.cells)
+        {
+            cell_table.push_back( num_all_cells );
+            if (location(msh, cl) == element_location::ON_INTERFACE)
+                num_all_cells += 2;
+            else
+                num_all_cells += 1;
+        }
+        assert(cell_table.size() == msh.cells.size());
+
+        num_all_faces = 0; /* counts faces with dup. unknowns */
+        for (auto& fc : msh.faces)
+        {
+            if (location(msh, fc) == element_location::ON_INTERFACE)
+                num_all_faces += 2;
+            else
+                num_all_faces += 1;
+        }
+
+        /* We assume that cut cells can not have dirichlet faces */
+        auto num_dirichlet_faces = std::count_if(msh.faces.begin(), msh.faces.end(), is_dirichlet);
+        num_other_faces = num_all_faces - num_dirichlet_faces;
+        face_table.resize( msh.faces.size() );
+
+        size_t compressed_offset = 0;
+        for (size_t i = 0; i < msh.faces.size(); i++)
+        {
+            auto fc = msh.faces.at(i);
+            if ( !is_dirichlet(fc) )
+            {
+                face_table.at(i) = compressed_offset;
+                if ( location(msh, fc) == element_location::ON_INTERFACE )
+                    compressed_offset += 2;
+                else
+                    compressed_offset += 1;
+            }
+        }
+
+
+        loc_LHS.resize( msh.cells.size() );
+        loc_RHS.resize( msh.cells.size() );
+
+        auto celdeg = di.cell_degree();
+        auto facdeg = di.face_degree();
+        auto pdeg = facdeg;
+
+        auto cbs = vector_cell_basis<Mesh,T>::size(celdeg);
+        auto fbs = vector_face_basis<Mesh,T>::size(facdeg);
+        auto pbs = cell_basis<Mesh,T>::size(pdeg);
+
+        auto system_size = fbs * num_other_faces + msh.cells.size() + 1;
+
+        LHS = SparseMatrix<T>( system_size, system_size );
+        RHS = Matrix<T, Dynamic, 1>::Zero( system_size );
+    }
+
+    void dump_tables() const
+    {
+        //std::cout << "Compress table: " << std::endl;
+        //for (size_t i = 0; i < compress_table.size(); i++)
+        //    std::cout << i << " -> " << compress_table.at(i) << std::endl;
+    }
+
+    template<typename Function>
+    void
+    assemble(const Mesh& msh, const typename Mesh::cell_type& cl,
+             const Matrix<T, Dynamic, Dynamic>& lhs, const Matrix<T, Dynamic, 1>& rhs,
+             const Function& dirichlet_bf)
+    {
+        if (location(msh, cl) == element_location::ON_INTERFACE)
+            throw std::invalid_argument("UNcut cell expected.");
+
+
+        // save local matrices
+        size_t cell_offset = offset(msh, cl);
+        loc_LHS.at( cell_offset ) = lhs;
+        loc_RHS.at( cell_offset ) = rhs;
+
+        auto celdeg = di.cell_degree();
+        auto facdeg = di.face_degree();
+        auto pdeg = facdeg;
+
+        auto cbs = vector_cell_basis<Mesh,T>::size(celdeg);
+        auto fbs = vector_face_basis<Mesh,T>::size(facdeg);
+        auto pbs = cell_basis<Mesh,T>::size(pdeg);
+
+        auto fcs = faces(msh, cl);
+        auto num_faces = fcs.size();
+        auto f_dofs = num_faces * fbs;
+        auto v_dofs = cbs + f_dofs;
+
+
+        // static condensation
+        Matrix<T, Dynamic, Dynamic> lhs_A = lhs.block(0, 0, v_dofs, v_dofs);
+        Matrix<T, Dynamic, Dynamic> lhs_B = lhs.block(v_dofs, 0, pbs, v_dofs);
+        Matrix<T, Dynamic, Dynamic> lhs_C = lhs.block(v_dofs, v_dofs, pbs, pbs);
+        Matrix<T, Dynamic, 1> rhs_A = rhs.head( v_dofs );
+        Matrix<T, Dynamic, 1> rhs_B = rhs.tail( pbs );
+
+
+        Matrix<T, Dynamic, Dynamic> lhs_sc;
+        Matrix<T, Dynamic, 1> rhs_sc;
+        if(facdeg == 0) // condensate only cell velocity dofs
+        {
+            auto mat_sc = stokes_static_condensation_compute(lhs_A, lhs_B, rhs_A, rhs_B,
+                                                             cbs, f_dofs);
+            lhs_sc = mat_sc.first;
+            rhs_sc = mat_sc.second;
+        }
+        else // full static condensation
+        {
+            // compute mult_C
+            cell_basis<cuthho_poly_mesh<T>, T> s_cb(msh, cl, pdeg);
+            auto qpsi = integrate(msh, cl, pdeg);
+            Matrix<T, Dynamic, 1> mult_C = Matrix<T, Dynamic, 1>::Zero( pbs - 1 );
+            T area = 0.0;
+            for (auto& qp : qpsi)
+            {
+                auto s_phi = s_cb.eval_basis(qp.first);
+                mult_C -= qp.second * s_phi.tail(pbs - 1);
+                area += qp.second;
+            }
+            mult_C = mult_C / area;
+
+            auto mat_sc = stokes_static_condensation2_compute
+                (lhs_A, lhs_B, rhs_A, rhs_B, mult_C, cbs, f_dofs);
+            lhs_sc = mat_sc.first;
+            rhs_sc = mat_sc.second;
+        }
+
+        std::vector<assembly_index> asm_map;
+        asm_map.reserve(f_dofs + 1);
+
+        Matrix<T, Dynamic, 1> dirichlet_data = Matrix<T, Dynamic, 1>::Zero(f_dofs);
+
+        for (size_t face_i = 0; face_i < num_faces; face_i++)
+        {
+            auto fc = fcs[face_i];
+            auto face_offset = offset(msh, fc);
+            auto face_LHS_offset = face_table.at(face_offset) * fbs;
+
+            bool dirichlet = fc.is_boundary && fc.bndtype == boundary::DIRICHLET;
+
+            for (size_t i = 0; i < fbs; i++)
+                asm_map.push_back( assembly_index(face_LHS_offset+i, !dirichlet) );
+
+            if (dirichlet)
+            {
+                Matrix<T, Dynamic, Dynamic> mass = make_vector_mass_matrix(msh, fc, facdeg);
+                Matrix<T, Dynamic, 1> rhs = make_vector_rhs(msh, fc, facdeg, dirichlet_bf);
+                dirichlet_data.block(face_i*fbs, 0, fbs, 1) = mass.ldlt().solve(rhs);
+            }
+        }
+
+        auto B_LHS_offset = num_other_faces * fbs + cell_offset;
+        asm_map.push_back( assembly_index(B_LHS_offset, true) );
+
+        assert( asm_map.size() == lhs_sc.rows() && asm_map.size() == lhs_sc.cols() );
+
+        // LHS
+        for (size_t i = 0; i < lhs_sc.rows(); i++)
+        {
+            if (!asm_map[i].assemble())
+                continue;
+
+            for (size_t j = 0; j < lhs_sc.cols(); j++)
+            {
+                if ( asm_map[j].assemble() )
+                    triplets.push_back( Triplet<T>(asm_map[i], asm_map[j], lhs_sc(i,j)) );
+                else
+                    RHS(asm_map[i]) -= lhs_sc(i,j)*dirichlet_data(j);
+            }
+        }
+
+        // null mean pressure condition
+        auto mult_offset = fbs * num_other_faces + msh.cells.size();
+        auto area = measure(msh,cl);
+        triplets.push_back( Triplet<T>(B_LHS_offset, mult_offset, area) );
+        triplets.push_back( Triplet<T>(mult_offset, B_LHS_offset, area) );
+
+        // RHS
+        for (size_t i = 0; i < rhs_sc.rows(); i++)
+        {
+            if (!asm_map[i].assemble())
+                continue;
+
+            RHS(asm_map[i]) += rhs_sc(i);
+        }
+
+    } // assemble()
+
+    void
+    assemble_cut(const Mesh& msh, const typename Mesh::cell_type& cl,
+             const Matrix<T, Dynamic, Dynamic>& lhs, const Matrix<T, Dynamic, 1>& rhs)
+    {
+        if (location(msh, cl) != element_location::ON_INTERFACE)
+            throw std::invalid_argument("Cut cell expected.");
+
+        // save local matrices
+        size_t cell_offset = offset(msh, cl);
+        loc_LHS.at( cell_offset ) = lhs;
+        loc_RHS.at( cell_offset ) = rhs;
+
+        auto celdeg = di.cell_degree();
+        auto facdeg = di.face_degree();
+        auto pdeg = facdeg;
+
+        auto cbs = vector_cell_basis<Mesh,T>::size(celdeg);
+        auto fbs = vector_face_basis<Mesh,T>::size(facdeg);
+        auto pbs = cell_basis<Mesh,T>::size(pdeg);
+
+        auto fcs = faces(msh, cl);
+        auto num_faces = fcs.size();
+        size_t f_dofs = 2*num_faces * fbs;
+        size_t v_dofs = 2*cbs + f_dofs;
+        size_t p_dofs = 2*pbs;
+
+
+        // static condensation
+        Matrix<T, Dynamic, Dynamic> lhs_A = lhs.block(0, 0, v_dofs, v_dofs);
+        Matrix<T, Dynamic, Dynamic> lhs_B = lhs.block(v_dofs, 0, p_dofs, v_dofs);
+        Matrix<T, Dynamic, Dynamic> lhs_C = lhs.block(v_dofs, v_dofs, p_dofs, p_dofs);
+        Matrix<T, Dynamic, 1> rhs_A = rhs.head( v_dofs );
+        Matrix<T, Dynamic, 1> rhs_B = rhs.tail( p_dofs );
+
+        Matrix<T, Dynamic, Dynamic> lhs_sc;
+        Matrix<T, Dynamic, 1> rhs_sc;
+
+        // compute mult_C
+        cell_basis<cuthho_poly_mesh<T>, T> pb(msh, cl, pdeg);
+        auto qpsi_n = integrate(msh, cl, pdeg, element_location::IN_NEGATIVE_SIDE);
+        Matrix<T, Dynamic, 1> mult_C = Matrix<T, Dynamic, 1>::Zero( p_dofs - 1 );
+        T area_n = 0.0;
+        if( facdeg == 0 )
+        {
+            for (auto& qp : qpsi_n)
+            {
+                area_n += qp.second;
+            }
+        }
+        else // if( facdeg > 0 )
+        {
+            for (auto& qp : qpsi_n)
+            {
+                auto phi = pb.eval_basis(qp.first);
+                mult_C.head(pbs - 1) -= qp.second * phi.tail(pbs - 1);
+                area_n += qp.second;
+            }
+        }
+
+        auto qpsi_p = integrate(msh, cl, pdeg, element_location::IN_POSITIVE_SIDE);
+        for (auto& qp : qpsi_p)
+        {
+            auto phi = pb.eval_basis(qp.first);
+            mult_C.block(pbs - 1, 0, pbs, 1) -= qp.second * phi;
+        }
+
+        mult_C = mult_C / area_n;
+
+        auto mat_sc = stokes_static_condensation3_compute
+            (lhs_A, lhs_B, lhs_C, rhs_A, rhs_B, mult_C, 2*cbs, f_dofs);
+        lhs_sc = mat_sc.first;
+        rhs_sc = mat_sc.second;
+
+
+        std::vector<assembly_index> asm_map;
+        asm_map.reserve( f_dofs + 1 );
+
+        for (size_t face_i = 0; face_i < num_faces; face_i++)
+        {
+            auto fc = fcs[face_i];
+            auto face_offset = offset(msh, fc);
+            auto face_LHS_offset = face_table.at(face_offset) * fbs;
+
+            bool dirichlet = fc.is_boundary && fc.bndtype == boundary::DIRICHLET;
+            if ( dirichlet )
+                throw std::invalid_argument("Dirichlet boundary on cut cell not supported.");
+
+            for (size_t i = 0; i < fbs; i++)
+                asm_map.push_back( assembly_index(face_LHS_offset+i, true) );
+        }
+
+        for (size_t face_i = 0; face_i < num_faces; face_i++)
+        {
+            auto fc = fcs[face_i];
+            auto face_offset = offset(msh, fc);
+
+            auto d = (location(msh, fc) == element_location::ON_INTERFACE) ? fbs : 0;
+
+            auto face_LHS_offset = face_table.at(face_offset) * fbs + d;
+
+            bool dirichlet = fc.is_boundary && fc.bndtype == boundary::DIRICHLET;
+            if ( dirichlet )
+                throw std::invalid_argument("Dirichlet boundary on cut cell not supported.");
+
+            for (size_t i = 0; i < fbs; i++)
+                asm_map.push_back( assembly_index(face_LHS_offset+i, true) );
+        }
+
+        auto B_LHS_offset = num_other_faces * fbs + cell_offset;
+        asm_map.push_back( assembly_index(B_LHS_offset, true) );
+
+        assert( asm_map.size() == lhs_sc.rows() && asm_map.size() == lhs_sc.cols() );
+
+        // LHS
+        for (size_t i = 0; i < lhs_sc.rows(); i++)
+        {
+            if (!asm_map[i].assemble())
+                continue;
+
+            for (size_t j = 0; j < lhs_sc.cols(); j++)
+            {
+                if ( asm_map[j].assemble() )
+                    triplets.push_back( Triplet<T>(asm_map[i], asm_map[j], lhs_sc(i,j)) );
+            }
+        }
+
+        auto mult_offset = fbs * num_other_faces + msh.cells.size();
+        T area = measure(msh, cl);
+        triplets.push_back( Triplet<T>(B_LHS_offset, mult_offset, area) );
+        triplets.push_back( Triplet<T>(mult_offset, B_LHS_offset, area) );
+
+        // RHS
+        for (size_t i = 0; i < rhs_sc.rows(); i++)
+        {
+            if (!asm_map[i].assemble())
+                continue;
+
+            RHS(asm_map[i]) += rhs_sc(i);
+        }
+
+    } // assemble_cut()
+
+
+    template<typename Function>
+    Matrix<T, Dynamic, 1>
+    take_velocity(const Mesh& msh, const typename Mesh::cell_type& cl,
+                  const Matrix<T, Dynamic, 1>& solution,
+                  const Function& dirichlet_bf, element_location where)
+    {
+        auto celdeg = di.cell_degree();
+        auto facdeg = di.face_degree();
+        auto pdeg = facdeg;
+
+        auto cbs = vector_cell_basis<Mesh,T>::size(celdeg);
+        auto fbs = vector_face_basis<Mesh,T>::size(facdeg);
+        auto pbs = cell_basis<Mesh,T>::size(pdeg);
+
+        auto cell_offset        = offset(msh, cl);
+        auto lhs = loc_LHS.at(cell_offset);
+        auto rhs = loc_RHS.at(cell_offset);
+
+        auto fcs = faces(msh, cl);
+        auto num_faces = fcs.size();
+        size_t f_dofs = num_faces*fbs;
+
+        auto v_dofs = cbs + f_dofs;
+        auto p_dofs = pbs;
+        if( location(msh, cl) == element_location::ON_INTERFACE )
+        {
+            v_dofs = 2 * v_dofs;
+            p_dofs = 2 * p_dofs;
+        }
+
+        Matrix<T, Dynamic, 1> solF;
+
+        if( location(msh, cl) == element_location::ON_INTERFACE )
+            solF = Matrix<T, Dynamic, 1>::Zero(2*f_dofs);
+        else
+            solF = Matrix<T, Dynamic, 1>::Zero(f_dofs);
+
+        for (size_t face_i = 0; face_i < num_faces; face_i++)
+        {
+            auto fc = fcs[face_i];
+
+            auto face_offset = offset(msh, fc);
+            size_t face_SOL_offset = face_table.at(face_offset) * fbs;
+            if ( location(msh, fc) == element_location::ON_INTERFACE )
+            {
+                // we assume that there is not boundary condition on cut cells
+                solF.block(face_i*fbs, 0, fbs, 1) = solution.block(face_SOL_offset, 0, fbs, 1);
+                solF.block( (num_faces+face_i)*fbs, 0, fbs, 1)
+                    = solution.block(face_SOL_offset + fbs, 0, fbs, 1);
+                continue;
+            }
+            // else
+            bool dirichlet = fc.is_boundary && fc.bndtype == boundary::DIRICHLET;
+
+            if (dirichlet)  // we assume that a cut cell has no Dirichlet faces
+            {
+                assert( solF.rows() == f_dofs );
+                Matrix<T, Dynamic, Dynamic> mass = make_vector_mass_matrix(msh, fc, facdeg);
+                Matrix<T, Dynamic, 1> rhs = make_vector_rhs(msh, fc, facdeg, dirichlet_bf);
+                solF.block(face_i*fbs, 0, fbs, 1) = mass.ldlt().solve(rhs);
+                continue;
+            }
+
+            if( location(msh, cl) == element_location::ON_INTERFACE &&
+                location(msh, fc) == element_location::IN_POSITIVE_SIDE )
+            {
+                solF.block((num_faces+face_i)*fbs, 0, fbs, 1)
+                    = solution.block(face_SOL_offset, 0, fbs, 1);
+                continue;
+            }
+            // else
+            solF.block(face_i*fbs, 0, fbs, 1) = solution.block(face_SOL_offset, 0, fbs, 1);
+        }
+
+        // Recover the full solution
+        Matrix<T, Dynamic, Dynamic> lhs_A = lhs.block(0, 0, v_dofs, v_dofs);
+        Matrix<T, Dynamic, Dynamic> lhs_B = lhs.block(v_dofs, 0, p_dofs, v_dofs);
+        Matrix<T, Dynamic, Dynamic> lhs_C = lhs.block(v_dofs, v_dofs, p_dofs, p_dofs);
+        Matrix<T, Dynamic, 1> rhs_A = rhs.head( v_dofs );
+        Matrix<T, Dynamic, 1> rhs_B = rhs.tail( p_dofs );
+
+        if( location(msh, cl) != element_location::ON_INTERFACE )
+        {
+            if(facdeg == 0)
+                return static_condensation_recover(lhs_A, rhs_A, cbs, f_dofs, solF);
+
+            // else -> at this point facdeg > 0
+            // compute sol_sc
+            Matrix<T, Dynamic, 1> sol_sc = Matrix<T, Dynamic, 1>::Zero(f_dofs + 1);
+            sol_sc.head(f_dofs) = solF;
+            size_t B_offset = fbs * num_other_faces + cell_offset;
+            sol_sc(f_dofs) = solution(B_offset);
+
+            // compute mult_C
+            cell_basis<cuthho_poly_mesh<T>, T> pb(msh, cl, pdeg);
+            auto qpsi = integrate(msh, cl, pdeg);
+            Matrix<T, Dynamic, 1> mult_C = Matrix<T, Dynamic, 1>::Zero( pbs - 1);
+            T area = 0.0;
+            for (auto& qp : qpsi)
+            {
+                auto s_phi = pb.eval_basis(qp.first);
+                mult_C -= qp.second * s_phi.tail(pbs - 1);
+                area += qp.second;
+            }
+            mult_C = mult_C / area;
+
+            return stokes_static_condensation3_recover_velocity
+                (lhs_A, lhs_B, lhs_C, rhs_A, rhs_B, mult_C, cbs, f_dofs, sol_sc);
+        }
+        // else -> location(msh, cl) == element_location::ON_INTERFACE
+
+        Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs + f_dofs);
+
+        // compute sol_sc
+        Matrix<T, Dynamic, 1> sol_sc = Matrix<T, Dynamic, 1>::Zero(2*f_dofs + 1);
+        sol_sc.head(2*f_dofs) = solF;
+        size_t B_offset = fbs * num_other_faces + cell_offset;
+        sol_sc(2*f_dofs) = solution(B_offset);
+
+        // compute mult_C
+        cell_basis<cuthho_poly_mesh<T>, T> pb(msh, cl, pdeg);
+        auto qpsi_n = integrate(msh, cl, pdeg, element_location::IN_NEGATIVE_SIDE);
+        Matrix<T, Dynamic, 1> mult_C = Matrix<T, Dynamic, 1>::Zero( p_dofs - 1 );
+        T area_n = 0.0;
+        if( facdeg == 0 )
+        {
+            for (auto& qp : qpsi_n)
+            {
+                area_n += qp.second;
+            }
+        }
+        else
+        {
+            for (auto& qp : qpsi_n)
+            {
+                auto phi = pb.eval_basis(qp.first);
+                mult_C.block(0, 0, pbs-1, 1) -= qp.second * phi.tail(pbs - 1);
+                area_n += qp.second;
+            }
+        }
+        auto qpsi_p = integrate(msh, cl, pdeg, element_location::IN_POSITIVE_SIDE);
+        for (auto& qp : qpsi_p)
+        {
+            auto phi = pb.eval_basis(qp.first);
+            mult_C.block(pbs - 1, 0, pbs, 1) -= qp.second * phi;
+        }
+        mult_C = mult_C / area_n;
+
+        auto loc_sol = stokes_static_condensation3_recover_velocity
+            (lhs_A, lhs_B, lhs_C, rhs_A, rhs_B, mult_C, 2*cbs, 2*f_dofs, sol_sc);
+
+        if( where == element_location::IN_NEGATIVE_SIDE )
+        {
+            ret.head(cbs) = loc_sol.head(cbs);
+            ret.tail(f_dofs) = solF.head(f_dofs);
+        }
+
+        if( where == element_location::IN_POSITIVE_SIDE )
+        {
+            ret.head(cbs) = loc_sol.block(cbs, 0, cbs, 1);
+            ret.tail(f_dofs) = solF.tail(f_dofs);
+        }
+        return ret;
+    }
+
+    template<typename Function>
+    Matrix<T, Dynamic, 1>
+    take_pressure(const Mesh& msh, const typename Mesh::cell_type& cl,
+                  const Matrix<T, Dynamic, 1>& sol, const Function& dirichlet_bf,
+                  element_location where) const
+    {
+        auto celdeg = di.cell_degree();
+        auto facdeg = di.face_degree();
+        auto pdeg = facdeg;
+
+        auto cbs = vector_cell_basis<Mesh,T>::size(celdeg);
+        auto fbs = vector_face_basis<Mesh,T>::size(facdeg);
+        auto pbs = cell_basis<Mesh,T>::size(pdeg);
+
+        auto fcs = faces(msh, cl);
+        auto num_faces = fcs.size();
+        size_t f_dofs = num_faces*fbs;
+
+        auto v_dofs = cbs + f_dofs;
+        auto p_dofs = pbs;
+        if( location(msh, cl) == element_location::ON_INTERFACE )
+        {
+            v_dofs = 2 * v_dofs;
+            p_dofs = 2 * p_dofs;
+        }
+
+        Matrix<T, Dynamic, 1> solF;
+
+        if( location(msh, cl) == element_location::ON_INTERFACE )
+            solF = Matrix<T, Dynamic, 1>::Zero(2*f_dofs);
+        else
+            solF = Matrix<T, Dynamic, 1>::Zero(f_dofs);
+
+        for (size_t face_i = 0; face_i < num_faces; face_i++)
+        {
+            auto fc = fcs[face_i];
+
+            auto face_offset = offset(msh, fc);
+            size_t face_SOL_offset = face_table.at(face_offset) * fbs;
+            if ( location(msh, fc) == element_location::ON_INTERFACE )
+            {
+                // we assume that there is not boundary condition on cut cells
+                solF.block(face_i*fbs, 0, fbs, 1) = sol.block(face_SOL_offset, 0, fbs, 1);
+                solF.block( (num_faces+face_i)*fbs, 0, fbs, 1)
+                    = sol.block(face_SOL_offset + fbs, 0, fbs, 1);
+                continue;
+            }
+            // else
+            bool dirichlet = fc.is_boundary && fc.bndtype == boundary::DIRICHLET;
+
+            if (dirichlet)  // we assume that a cut cell has no Dirichlet faces
+            {
+                assert( solF.rows() == f_dofs );
+                Matrix<T, Dynamic, Dynamic> mass = make_vector_mass_matrix(msh, fc, facdeg);
+                Matrix<T, Dynamic, 1> rhs = make_vector_rhs(msh, fc, facdeg, dirichlet_bf);
+                solF.block(face_i*fbs, 0, fbs, 1) = mass.ldlt().solve(rhs);
+                continue;
+            }
+
+            if( location(msh, cl) == element_location::ON_INTERFACE &&
+                location(msh, fc) == element_location::IN_POSITIVE_SIDE )
+            {
+                solF.block((num_faces+face_i)*fbs, 0, fbs, 1)
+                    = sol.block(face_SOL_offset, 0, fbs, 1);
+                continue;
+            }
+            // else
+            solF.block(face_i*fbs, 0, fbs, 1) = sol.block(face_SOL_offset, 0, fbs, 1);
+        }
+
+
+        auto cell_offset = offset(msh, cl);
+        auto lhs = loc_LHS.at(cell_offset);
+        auto rhs = loc_RHS.at(cell_offset);
+
+        Matrix<T, Dynamic, Dynamic> lhs_A = lhs.block(0, 0, v_dofs, v_dofs);
+        Matrix<T, Dynamic, Dynamic> lhs_B = lhs.block(v_dofs, 0, p_dofs, v_dofs);
+        Matrix<T, Dynamic, Dynamic> lhs_C = lhs.block(v_dofs, v_dofs, p_dofs, p_dofs);
+        Matrix<T, Dynamic, 1> rhs_A = rhs.head( v_dofs );
+        Matrix<T, Dynamic, 1> rhs_B = rhs.tail( p_dofs );
+
+        size_t P_SOL_offset = num_other_faces * fbs + cell_offset;
+        Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(pbs);
+        if( facdeg == 0 && location(msh, cl) != element_location::ON_INTERFACE )
+        {
+            ret(0) = sol(P_SOL_offset);
+            return ret;
+        }
+        if( location(msh, cl) != element_location::ON_INTERFACE )
+        {
+            // compute sol_sc
+            Matrix<T, Dynamic, 1> sol_sc = Matrix<T, Dynamic, 1>::Zero(f_dofs + 1);
+            sol_sc.head(f_dofs) = solF;
+            size_t B_offset = fbs * num_other_faces + cell_offset;
+            sol_sc(f_dofs) = sol(B_offset);
+
+            // compute mult_C
+            cell_basis<cuthho_poly_mesh<T>, T> pb(msh, cl, pdeg);
+            auto qpsi = integrate(msh, cl, pdeg);
+            Matrix<T, Dynamic, 1> mult_C = Matrix<T, Dynamic, 1>::Zero( pbs - 1 );
+            T area = 0.0;
+            for (auto& qp : qpsi)
+            {
+                auto s_phi = pb.eval_basis(qp.first);
+                mult_C -= qp.second * s_phi.tail(pbs - 1);
+                area += qp.second;
+            }
+            mult_C = mult_C / area;
+
+            return stokes_static_condensation3_recover_pressure
+                (lhs_A, lhs_B, lhs_C, rhs_A, rhs_B, mult_C, cbs, f_dofs, sol_sc);
+        }
+        // else -> location(msh, cl) == element_location::ON_INTERFACE
+        // compute sol_sc
+        Matrix<T, Dynamic, 1> sol_sc = Matrix<T, Dynamic, 1>::Zero(2*f_dofs + 1);
+        sol_sc.head(2*f_dofs) = solF;
+        size_t B_offset = fbs * num_other_faces + cell_offset;
+        sol_sc(2*f_dofs) = sol(B_offset);
+
+        // compute mult_C
+        cell_basis<cuthho_poly_mesh<T>, T> pb(msh, cl, pdeg);
+        auto qpsi_n = integrate(msh, cl, pdeg, element_location::IN_NEGATIVE_SIDE);
+        Matrix<T, Dynamic, 1> mult_C = Matrix<T, Dynamic, 1>::Zero( p_dofs - 1 );
+        T area_n = 0.0;
+        if( facdeg == 0 )
+        {
+            for (auto& qp : qpsi_n)
+            {
+                area_n += qp.second;
+            }
+        }
+        else
+        {
+            for (auto& qp : qpsi_n)
+            {
+                auto phi = pb.eval_basis(qp.first);
+                mult_C.block(0, 0, pbs-1, 1) -= qp.second * phi.tail(pbs - 1);
+                area_n += qp.second;
+            }
+        }
+        auto qpsi_p = integrate(msh, cl, pdeg, element_location::IN_POSITIVE_SIDE);
+        for (auto& qp : qpsi_p)
+        {
+            auto phi = pb.eval_basis(qp.first);
+            mult_C.block(pbs - 1, 0, pbs, 1) -= qp.second * phi;
+        }
+
+        mult_C = mult_C / area_n;
+
+        auto loc_sol = stokes_static_condensation3_recover_pressure
+            (lhs_A, lhs_B, lhs_C, rhs_A, rhs_B, mult_C, 2*cbs, 2*f_dofs, sol_sc);
+
+        if( where == element_location::IN_NEGATIVE_SIDE )
+            ret = loc_sol.head(pbs);
+
+        if( where == element_location::IN_POSITIVE_SIDE )
+            ret = loc_sol.tail(pbs);
+
+        return ret;
+    }
+
+    void finalize(void)
+    {
+        LHS.setFromTriplets( triplets.begin(), triplets.end() );
+        triplets.clear();
+    }
+};
+
+
+template<typename Mesh>
+auto make_stokes_interface_condensed_assembler(const Mesh& msh, hho_degree_info hdi)
+{
+    return stokes_interface_condensed_assembler<Mesh>(msh, hdi);
+}
+
+
+
+
 ///////////////////////   DIVERGENCE RECONSTRUCTION  ///////////////////////////
 template<typename Mesh>
 std::pair<   Matrix<typename Mesh::coordinate_type, Dynamic, Dynamic>,
@@ -986,7 +2018,7 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
 
     tc.tic();
     auto assembler = make_stokes_interface_assembler(msh, hdi);
-    // auto assembler_sc = make_interface_vector_condensed_assembler(msh, hdi);
+    auto assembler_sc = make_stokes_interface_condensed_assembler(msh, hdi);
     for (auto& cl : msh.cells)
     {
         auto contrib = method.make_contrib(msh, cl, test_case, hdi);
@@ -995,34 +2027,32 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
 
         if (location(msh, cl) != element_location::ON_INTERFACE)
         {
-            // if( sc )
-            //     assembler_sc.assemble(msh, cl, lc, f, bcs_vel);
-            // else
-            assembler.assemble(msh, cl, lc, f, bcs_vel);
-            // assembler.assemble(msh, cl, lhs_A, lhs_B, rhs_A, bcs_vel, location(msh,cl));
+            if( sc )
+                assembler_sc.assemble(msh, cl, lc, f, bcs_vel);
+            else
+                assembler.assemble(msh, cl, lc, f, bcs_vel);
         }
         else
         {
-            // if( sc )
-            //     assembler_sc.assemble_cut(msh, cl, lc, f);
-            // else
-            assembler.assemble_cut(msh, cl, lc, f);
-            // assembler.assemble_cut(msh, cl, lhs_A, lhs_B, lhs_C, rhs_A, rhs_B);
+            if( sc )
+                assembler_sc.assemble_cut(msh, cl, lc, f);
+            else
+                assembler.assemble_cut(msh, cl, lc, f);
         }
     }
 
-    // if( sc )
-    //     assembler_sc.finalize();
-    // else
-    assembler.finalize();
+    if( sc )
+        assembler_sc.finalize();
+    else
+        assembler.finalize();
 
     tc.toc();
     std::cout << bold << yellow << "Matrix assembly: " << tc << " seconds" << reset << std::endl;
 
-    // if( sc )
-    //     std::cout << "System unknowns: " << assembler_sc.LHS.rows() << std::endl;
-    // else
-    std::cout << "System unknowns: " << assembler.LHS.rows() << std::endl;
+    if( sc )
+        std::cout << "System unknowns: " << assembler_sc.LHS.rows() << std::endl;
+    else
+        std::cout << "System unknowns: " << assembler.LHS.rows() << std::endl;
 
     std::cout << "Cells: " << msh.cells.size() << std::endl;
     std::cout << "Faces: " << msh.faces.size() << std::endl;
@@ -1033,18 +2063,18 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
     SparseLU<SparseMatrix<RealType>>  solver;
     Matrix<RealType, Dynamic, 1> sol;
 
-    // if( sc )
-    // {
-    //     solver.analyzePattern(assembler_sc.LHS);
-    //     solver.factorize(assembler_sc.LHS);
-    //     sol = solver.solve(assembler_sc.RHS);
-    // }
-    // else
-    // {
-    solver.analyzePattern(assembler.LHS);
-    solver.factorize(assembler.LHS);
-    sol = solver.solve(assembler.RHS);
-    // }
+    if( sc )
+    {
+        solver.analyzePattern(assembler_sc.LHS);
+        solver.factorize(assembler_sc.LHS);
+        sol = solver.solve(assembler_sc.RHS);
+    }
+    else
+    {
+        solver.analyzePattern(assembler.LHS);
+        solver.factorize(assembler.LHS);
+        sol = solver.solve(assembler.RHS);
+    }
 #endif
 #if 0
     Matrix<RealType, Dynamic, 1> sol;
@@ -1052,18 +2082,18 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
     cgp.histfile = "cuthho_cg_hist.dat";
     cgp.verbose = true;
     cgp.apply_preconditioner = true;
-    // if( sc )
-    // {
-    //     sol = Matrix<RealType, Dynamic, 1>::Zero(assembler_sc.RHS.rows());
-    //     cgp.max_iter = assembler_sc.LHS.rows();
-    //     conjugated_gradient(assembler_sc.LHS, assembler_sc.RHS, sol, cgp);
-    // }
-    // else
-    // {
-    sol = Matrix<RealType, Dynamic, 1>::Zero(assembler.RHS.rows());
-    cgp.max_iter = assembler.LHS.rows();
-    conjugated_gradient(assembler.LHS, assembler.RHS, sol, cgp);
-    // }
+    if( sc )
+    {
+        sol = Matrix<RealType, Dynamic, 1>::Zero(assembler_sc.RHS.rows());
+        cgp.max_iter = assembler_sc.LHS.rows();
+        conjugated_gradient(assembler_sc.LHS, assembler_sc.RHS, sol, cgp);
+    }
+    else
+    {
+        sol = Matrix<RealType, Dynamic, 1>::Zero(assembler.RHS.rows());
+        cgp.max_iter = assembler.LHS.rows();
+        conjugated_gradient(assembler.LHS, assembler.RHS, sol, cgp);
+    }
 #endif
     tc.toc();
     std::cout << bold << yellow << "Linear solver: " << tc << " seconds" << reset << std::endl;
@@ -1094,18 +2124,20 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
 
         if (location(msh, cl) == element_location::ON_INTERFACE)
         {
-            // if( sc )
-            // {
-            //     vel_locdata_n = assembler_sc.take_local_data(msh, cl, sol, bcs_vel, element_location::IN_NEGATIVE_SIDE);
-            //     vel_locdata_p = assembler_sc.take_local_data(msh, cl, sol, bcs_vel, element_location::IN_POSITIVE_SIDE);
-            // }
-            // else
-            // {
-            vel_locdata_n = assembler.take_velocity(msh, cl, sol, bcs_vel, element_location::IN_NEGATIVE_SIDE);
-            vel_locdata_p = assembler.take_velocity(msh, cl, sol, bcs_vel, element_location::IN_POSITIVE_SIDE);
-            P_locdata_n = assembler.take_pressure(msh,cl, sol, element_location::IN_NEGATIVE_SIDE);
-            P_locdata_p = assembler.take_pressure(msh,cl, sol, element_location::IN_POSITIVE_SIDE);
-            // }
+            if( sc )
+            {
+                vel_locdata_n = assembler_sc.take_velocity(msh, cl, sol, bcs_vel, element_location::IN_NEGATIVE_SIDE);
+                vel_locdata_p = assembler_sc.take_velocity(msh, cl, sol, bcs_vel, element_location::IN_POSITIVE_SIDE);
+                P_locdata_n = assembler_sc.take_pressure(msh, cl, sol, bcs_vel, element_location::IN_NEGATIVE_SIDE);
+                P_locdata_p = assembler_sc.take_pressure(msh, cl, sol, bcs_vel, element_location::IN_POSITIVE_SIDE);
+            }
+            else
+            {
+                vel_locdata_n = assembler.take_velocity(msh, cl, sol, bcs_vel, element_location::IN_NEGATIVE_SIDE);
+                vel_locdata_p = assembler.take_velocity(msh, cl, sol, bcs_vel, element_location::IN_POSITIVE_SIDE);
+                P_locdata_n = assembler.take_pressure(msh,cl, sol, element_location::IN_NEGATIVE_SIDE);
+                P_locdata_p = assembler.take_pressure(msh,cl, sol, element_location::IN_POSITIVE_SIDE);
+            }
 
             vel_cell_dofs_n = vel_locdata_n.head(cbs);
             vel_cell_dofs_p = vel_locdata_p.head(cbs);
@@ -1176,13 +2208,16 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
         }
         else
         {
-            // if( sc )
-            // {
-            //     vel_locdata = assembler_sc.take_local_data(msh, cl, sol, bcs_vel, element_location::IN_POSITIVE_SIDE);
-            // }
-            // else
-            vel_locdata = assembler.take_velocity(msh, cl, sol, bcs_vel, element_location::IN_POSITIVE_SIDE);
-            P_locdata = assembler.take_pressure(msh,cl, sol, element_location::IN_POSITIVE_SIDE);
+            if( sc )
+            {
+                vel_locdata = assembler_sc.take_velocity(msh, cl, sol, bcs_vel, element_location::IN_POSITIVE_SIDE);
+                P_locdata = assembler_sc.take_pressure(msh, cl, sol, bcs_vel, element_location::IN_POSITIVE_SIDE);
+            }
+            else
+            {
+                vel_locdata = assembler.take_velocity(msh, cl, sol, bcs_vel, element_location::IN_POSITIVE_SIDE);
+                P_locdata = assembler.take_pressure(msh,cl, sol, element_location::IN_POSITIVE_SIDE);
+            }
             vel_cell_dofs = vel_locdata.head(cbs);
 
             auto qps = integrate(msh, cl, 2*hdi.cell_degree());
@@ -1239,11 +2274,11 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
     {
         /////////////// compute condition number
         SparseMatrix<RealType> Mat;
-        // // Matrix<RealType, Dynamic, Dynamic> Mat;
-        // if (sc)
-        //     Mat = assembler_sc.LHS;
-        // else
-        Mat = assembler.LHS;
+        // Matrix<RealType, Dynamic, Dynamic> Mat;
+        if (sc)
+            Mat = assembler_sc.LHS;
+        else
+            Mat = assembler.LHS;
 
 
         RealType sigma_max, sigma_min;
