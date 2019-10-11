@@ -896,3 +896,77 @@ make_hho_vector_naive_stabilization(const Mesh& msh, const typename Mesh::cell_t
     return vector_assembly(scalar_stab);
 }
 
+
+/******************************************************************************************/
+/*******************                                               ************************/
+/*******************                STOKES PROBLEM                 ************************/
+/*******************                                               ************************/
+/******************************************************************************************/
+
+template<typename Mesh>
+std::pair<   Matrix<typename Mesh::coordinate_type, Dynamic, Dynamic>,
+             Matrix<typename Mesh::coordinate_type, Dynamic, Dynamic>  >
+make_hho_divergence_reconstruction(const Mesh& msh, const typename Mesh::cell_type& cl,
+                                   const hho_degree_info& di)
+{
+    using T = typename Mesh::coordinate_type;
+    typedef Matrix<T, Dynamic, Dynamic> matrix_type;
+
+    const auto celdeg = di.cell_degree();
+    const auto facdeg = di.face_degree();
+    const auto pdeg = di.face_degree();
+
+    cell_basis<Mesh,T>                   pb(msh, cl, pdeg);
+    vector_cell_basis<Mesh,T>            cb(msh, cl, celdeg);
+
+    auto pbs = cell_basis<Mesh,T>::size(pdeg);
+    auto fbs = vector_face_basis<Mesh,T>::size(facdeg);
+    auto cbs = vector_cell_basis<Mesh,T>::size(celdeg);
+
+    const auto fcs = faces(msh, cl);
+    const auto num_faces = fcs.size();
+    const auto ns = normals(msh, cl);
+
+    matrix_type dr_lhs = matrix_type::Zero(pbs, pbs);
+    matrix_type dr_rhs = matrix_type::Zero(pbs, cbs + num_faces*fbs);
+
+
+    const auto qps = integrate(msh, cl, celdeg + pdeg - 1);
+    for (auto& qp : qps)
+    {
+        const auto s_phi  = pb.eval_basis(qp.first);
+        const auto s_dphi = pb.eval_gradients(qp.first);
+        const auto v_phi  = cb.eval_basis(qp.first);
+
+        dr_lhs += qp.second * s_phi * s_phi.transpose();
+        dr_rhs.block(0, 0, pbs, cbs) -= qp.second * s_dphi * v_phi.transpose();
+    }
+
+
+    for (size_t i = 0; i < fcs.size(); i++)
+    {
+        const auto fc     = fcs[i];
+        const auto n      = ns[i];
+        vector_face_basis<Mesh,T>            fb(msh, fc, facdeg);
+
+        const auto qps_f = integrate(msh, fc, facdeg + pdeg);
+        for (auto& qp : qps_f)
+        {
+            const auto p_phi = pb.eval_basis(qp.first);
+            const auto f_phi = fb.eval_basis(qp.first);
+
+            const Matrix<T, Dynamic, 2> p_phi_n = (p_phi * n.transpose());
+            dr_rhs.block(0, cbs + i * fbs, pbs, fbs) += qp.second * p_phi_n * f_phi.transpose();
+        }
+    }
+
+
+    assert(dr_lhs.rows() == pbs && dr_lhs.cols() == pbs);
+    assert(dr_rhs.rows() == pbs && dr_rhs.cols() == cbs + num_faces * fbs);
+
+    matrix_type oper = dr_lhs.ldlt().solve(dr_rhs);
+    matrix_type data = dr_rhs;
+
+    return std::make_pair(oper, data);
+}
+
