@@ -3113,6 +3113,45 @@ public:
         //    std::cout << i << " -> " << compress_table.at(i) << std::endl;
     }
 
+    Matrix<T, Dynamic, 1>
+    compute_multC_interface(const Mesh& msh, const typename Mesh::cell_type& cl, const size_t pdeg)
+    {
+        // compute mult_C
+        auto pbs = cell_basis<Mesh,T>::size(pdeg);
+        size_t p_dofs = 2*pbs;
+        cell_basis<cuthho_poly_mesh<T>, T> pb(msh, cl, pdeg);
+        auto qpsi_n = integrate(msh, cl, pdeg, element_location::IN_NEGATIVE_SIDE);
+        Matrix<T, Dynamic, 1> mult_C = Matrix<T, Dynamic, 1>::Zero( p_dofs - 1 );
+        T area_n = 0.0;
+        if( pdeg == 0 )
+        {
+            for (auto& qp : qpsi_n)
+            {
+                area_n += qp.second;
+            }
+        }
+        else // if( facdeg > 0 )
+        {
+            for (auto& qp : qpsi_n)
+            {
+                auto phi = pb.eval_basis(qp.first);
+                mult_C.head(pbs - 1) -= qp.second * phi.tail(pbs - 1);
+                area_n += qp.second;
+            }
+        }
+
+        auto qpsi_p = integrate(msh, cl, pdeg, element_location::IN_POSITIVE_SIDE);
+        for (auto& qp : qpsi_p)
+        {
+            auto phi = pb.eval_basis(qp.first);
+            mult_C.block(pbs - 1, 0, pbs, 1) -= qp.second * phi;
+        }
+
+        mult_C = mult_C / area_n;
+
+        return mult_C;
+    }
+
     template<typename Function>
     void
     assemble(const Mesh& msh, const typename Mesh::cell_type& cl,
@@ -3278,36 +3317,7 @@ public:
         Matrix<T, Dynamic, Dynamic> lhs_sc;
         Matrix<T, Dynamic, 1> rhs_sc;
 
-        // compute mult_C
-        cell_basis<cuthho_poly_mesh<T>, T> pb(msh, cl, pdeg);
-        auto qpsi_n = integrate(msh, cl, pdeg, element_location::IN_NEGATIVE_SIDE);
-        Matrix<T, Dynamic, 1> mult_C = Matrix<T, Dynamic, 1>::Zero( p_dofs - 1 );
-        T area_n = 0.0;
-        if( facdeg == 0 )
-        {
-            for (auto& qp : qpsi_n)
-            {
-                area_n += qp.second;
-            }
-        }
-        else // if( facdeg > 0 )
-        {
-            for (auto& qp : qpsi_n)
-            {
-                auto phi = pb.eval_basis(qp.first);
-                mult_C.head(pbs - 1) -= qp.second * phi.tail(pbs - 1);
-                area_n += qp.second;
-            }
-        }
-
-        auto qpsi_p = integrate(msh, cl, pdeg, element_location::IN_POSITIVE_SIDE);
-        for (auto& qp : qpsi_p)
-        {
-            auto phi = pb.eval_basis(qp.first);
-            mult_C.block(pbs - 1, 0, pbs, 1) -= qp.second * phi;
-        }
-
-        mult_C = mult_C / area_n;
+        auto mult_C = compute_multC_interface(msh, cl, pdeg);
 
         auto mat_sc = stokes_full_static_condensation_compute
             (lhs_A, lhs_B, lhs_C, rhs_A, rhs_B, mult_C, 2*cbs, f_dofs);
@@ -3383,36 +3393,16 @@ public:
 
     } // assemble_cut()
 
-
     template<typename Function>
     Matrix<T, Dynamic, 1>
-    take_velocity(const Mesh& msh, const typename Mesh::cell_type& cl,
-                  const Matrix<T, Dynamic, 1>& solution,
-                  const Function& dirichlet_bf, element_location where)
+    get_sol_F(const Mesh& msh, const typename Mesh::cell_type& cl,
+              const Matrix<T, Dynamic, 1>& solution, const Function& dirichlet_bf)
     {
-        auto celdeg = di.cell_degree();
         auto facdeg = di.face_degree();
-        auto pdeg = facdeg;
-
-        auto cbs = vector_cell_basis<Mesh,T>::size(celdeg);
         auto fbs = vector_face_basis<Mesh,T>::size(facdeg);
-        auto pbs = cell_basis<Mesh,T>::size(pdeg);
-
-        auto cell_offset        = offset(msh, cl);
-        auto lhs = loc_LHS.at(cell_offset);
-        auto rhs = loc_RHS.at(cell_offset);
-
         auto fcs = faces(msh, cl);
         auto num_faces = fcs.size();
         size_t f_dofs = num_faces*fbs;
-
-        auto v_dofs = cbs + f_dofs;
-        auto p_dofs = pbs;
-        if( location(msh, cl) == element_location::ON_INTERFACE )
-        {
-            v_dofs = 2 * v_dofs;
-            p_dofs = 2 * p_dofs;
-        }
 
         Matrix<T, Dynamic, 1> solF;
 
@@ -3457,6 +3447,40 @@ public:
             // else
             solF.block(face_i*fbs, 0, fbs, 1) = solution.block(face_SOL_offset, 0, fbs, 1);
         }
+        return solF;
+    }
+
+    template<typename Function>
+    Matrix<T, Dynamic, 1>
+    take_velocity(const Mesh& msh, const typename Mesh::cell_type& cl,
+                  const Matrix<T, Dynamic, 1>& solution,
+                  const Function& dirichlet_bf, element_location where)
+    {
+        auto celdeg = di.cell_degree();
+        auto facdeg = di.face_degree();
+        auto pdeg = facdeg;
+
+        auto cbs = vector_cell_basis<Mesh,T>::size(celdeg);
+        auto fbs = vector_face_basis<Mesh,T>::size(facdeg);
+        auto pbs = cell_basis<Mesh,T>::size(pdeg);
+
+        auto cell_offset        = offset(msh, cl);
+        auto lhs = loc_LHS.at(cell_offset);
+        auto rhs = loc_RHS.at(cell_offset);
+
+        auto fcs = faces(msh, cl);
+        auto num_faces = fcs.size();
+        size_t f_dofs = num_faces*fbs;
+
+        auto v_dofs = cbs + f_dofs;
+        auto p_dofs = pbs;
+        if( location(msh, cl) == element_location::ON_INTERFACE )
+        {
+            v_dofs = 2 * v_dofs;
+            p_dofs = 2 * p_dofs;
+        }
+
+        auto solF = get_sol_F(msh, cl, solution, dirichlet_bf);
 
         // Recover the full solution
         Matrix<T, Dynamic, Dynamic> lhs_A = lhs.block(0, 0, v_dofs, v_dofs);
@@ -3503,34 +3527,7 @@ public:
         size_t B_offset = fbs * num_other_faces + cell_offset;
         sol_sc(2*f_dofs) = solution(B_offset);
 
-        // compute mult_C
-        cell_basis<cuthho_poly_mesh<T>, T> pb(msh, cl, pdeg);
-        auto qpsi_n = integrate(msh, cl, pdeg, element_location::IN_NEGATIVE_SIDE);
-        Matrix<T, Dynamic, 1> mult_C = Matrix<T, Dynamic, 1>::Zero( p_dofs - 1 );
-        T area_n = 0.0;
-        if( facdeg == 0 )
-        {
-            for (auto& qp : qpsi_n)
-            {
-                area_n += qp.second;
-            }
-        }
-        else
-        {
-            for (auto& qp : qpsi_n)
-            {
-                auto phi = pb.eval_basis(qp.first);
-                mult_C.block(0, 0, pbs-1, 1) -= qp.second * phi.tail(pbs - 1);
-                area_n += qp.second;
-            }
-        }
-        auto qpsi_p = integrate(msh, cl, pdeg, element_location::IN_POSITIVE_SIDE);
-        for (auto& qp : qpsi_p)
-        {
-            auto phi = pb.eval_basis(qp.first);
-            mult_C.block(pbs - 1, 0, pbs, 1) -= qp.second * phi;
-        }
-        mult_C = mult_C / area_n;
+        auto mult_C = compute_multC_interface(msh, cl, pdeg);
 
         auto loc_sol = stokes_full_static_condensation_recover_v
             (lhs_A, lhs_B, lhs_C, rhs_A, rhs_B, mult_C, 2*cbs, 2*f_dofs, sol_sc);
@@ -3553,7 +3550,7 @@ public:
     Matrix<T, Dynamic, 1>
     take_pressure(const Mesh& msh, const typename Mesh::cell_type& cl,
                   const Matrix<T, Dynamic, 1>& sol, const Function& dirichlet_bf,
-                  element_location where) const
+                  element_location where)
     {
         auto celdeg = di.cell_degree();
         auto facdeg = di.face_degree();
@@ -3575,50 +3572,7 @@ public:
             p_dofs = 2 * p_dofs;
         }
 
-        Matrix<T, Dynamic, 1> solF;
-
-        if( location(msh, cl) == element_location::ON_INTERFACE )
-            solF = Matrix<T, Dynamic, 1>::Zero(2*f_dofs);
-        else
-            solF = Matrix<T, Dynamic, 1>::Zero(f_dofs);
-
-        for (size_t face_i = 0; face_i < num_faces; face_i++)
-        {
-            auto fc = fcs[face_i];
-
-            auto face_offset = offset(msh, fc);
-            size_t face_SOL_offset = face_table.at(face_offset) * fbs;
-            if ( location(msh, fc) == element_location::ON_INTERFACE )
-            {
-                // we assume that there is not boundary condition on cut cells
-                solF.block(face_i*fbs, 0, fbs, 1) = sol.block(face_SOL_offset, 0, fbs, 1);
-                solF.block( (num_faces+face_i)*fbs, 0, fbs, 1)
-                    = sol.block(face_SOL_offset + fbs, 0, fbs, 1);
-                continue;
-            }
-            // else
-            bool dirichlet = fc.is_boundary && fc.bndtype == boundary::DIRICHLET;
-
-            if (dirichlet)  // we assume that a cut cell has no Dirichlet faces
-            {
-                assert( solF.rows() == f_dofs );
-                Matrix<T, Dynamic, Dynamic> mass = make_vector_mass_matrix(msh, fc, facdeg);
-                Matrix<T, Dynamic, 1> rhs = make_vector_rhs(msh, fc, facdeg, dirichlet_bf);
-                solF.block(face_i*fbs, 0, fbs, 1) = mass.ldlt().solve(rhs);
-                continue;
-            }
-
-            if( location(msh, cl) == element_location::ON_INTERFACE &&
-                location(msh, fc) == element_location::IN_POSITIVE_SIDE )
-            {
-                solF.block((num_faces+face_i)*fbs, 0, fbs, 1)
-                    = sol.block(face_SOL_offset, 0, fbs, 1);
-                continue;
-            }
-            // else
-            solF.block(face_i*fbs, 0, fbs, 1) = sol.block(face_SOL_offset, 0, fbs, 1);
-        }
-
+        auto solF = get_sol_F(msh, cl, sol, dirichlet_bf);
 
         auto cell_offset = offset(msh, cl);
         auto lhs = loc_LHS.at(cell_offset);
@@ -3668,35 +3622,7 @@ public:
         size_t B_offset = fbs * num_other_faces + cell_offset;
         sol_sc(2*f_dofs) = sol(B_offset);
 
-        // compute mult_C
-        cell_basis<cuthho_poly_mesh<T>, T> pb(msh, cl, pdeg);
-        auto qpsi_n = integrate(msh, cl, pdeg, element_location::IN_NEGATIVE_SIDE);
-        Matrix<T, Dynamic, 1> mult_C = Matrix<T, Dynamic, 1>::Zero( p_dofs - 1 );
-        T area_n = 0.0;
-        if( facdeg == 0 )
-        {
-            for (auto& qp : qpsi_n)
-            {
-                area_n += qp.second;
-            }
-        }
-        else
-        {
-            for (auto& qp : qpsi_n)
-            {
-                auto phi = pb.eval_basis(qp.first);
-                mult_C.block(0, 0, pbs-1, 1) -= qp.second * phi.tail(pbs - 1);
-                area_n += qp.second;
-            }
-        }
-        auto qpsi_p = integrate(msh, cl, pdeg, element_location::IN_POSITIVE_SIDE);
-        for (auto& qp : qpsi_p)
-        {
-            auto phi = pb.eval_basis(qp.first);
-            mult_C.block(pbs - 1, 0, pbs, 1) -= qp.second * phi;
-        }
-
-        mult_C = mult_C / area_n;
+        Matrix<T, Dynamic, 1> mult_C = compute_multC_interface(msh, cl, pdeg);
 
         auto loc_sol = stokes_full_static_condensation_recover_p
             (lhs_A, lhs_B, lhs_C, rhs_A, rhs_B, mult_C, 2*cbs, 2*f_dofs, sol_sc);
