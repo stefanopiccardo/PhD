@@ -798,7 +798,7 @@ class test_case_stokes
 
 ///// test_case_stokes_1
 // exact solution : X^2 (X^2 - 2X + 1) Y (4Y^2 - 6Y + 2) in the whole domain for vel_component 1
-//                 -y^2 (Y^2 - 2Y + 1) X (4X^2 - 6X + 2) in the whole domain for vel_component 2
+//                 -Y^2 (Y^2 - 2Y + 1) X (4X^2 - 6X + 2) in the whole domain for vel_component 2
 //                  X^5 + Y^5                            in the whole domain for p
 // where X = x - 0.5, Y = y - 0.5
 // \kappa_1 = \kappa_2 = 1

@@ -2337,7 +2337,7 @@ void convergence_test(void)
     mesh_sizes.push_back(16);
     mesh_sizes.push_back(32);
     mesh_sizes.push_back(64);
-    mesh_sizes.push_back(128);
+    // mesh_sizes.push_back(128);
     // mesh_sizes.push_back(256);
 
     // polynomial orders
@@ -2414,11 +2414,12 @@ void convergence_test(void)
             // compute solution/errors
             stokes_test_info<T> TI;
 
-            // auto TI = run_cuthho_interface(msh, level_set_function, k, 3, test_case);
             if(1) // sin(\pi x) * sin(\pi y)
             {
                 auto test_case = make_test_case_stokes_1(msh, level_set_function);
-                TI = run_cuthho_fictdom(msh, k, test_case);
+                // TI = run_cuthho_fictdom(msh, k, test_case);
+                auto method = make_sym_gradrec_stokes_interface_method(msh, 1.0, 0.0, test_case);
+                TI = run_cuthho_interface(msh, k, method, test_case);
             }
 
             // report info in the file
@@ -2460,7 +2461,7 @@ void convergence_test(void)
 }
 
 //////////////////////////     MAIN        ////////////////////////////
-#if 0
+#if 1
 int main(int argc, char **argv)
 {
     convergence_test();
@@ -2470,7 +2471,7 @@ int main(int argc, char **argv)
 }
 #endif
 
-#if 1
+#if 0
 int main(int argc, char **argv)
 {
     using RealType = double;
