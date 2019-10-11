@@ -94,6 +94,37 @@ static_condensation_recover(const Matrix<T, Dynamic, Dynamic> lhs, const Matrix<
     return ret;
 }
 
+/////////////////////////////  ASSEMBLY  INDEX ///////////////////////
+// used in all assemblers
+class assembly_index
+{
+    size_t  idx;
+    bool    assem;
+
+public:
+    assembly_index(size_t i, bool as)
+        : idx(i), assem(as)
+        {}
+
+    operator size_t() const
+        {
+            if (!assem)
+                throw std::logic_error("Invalid assembly_index");
+
+            return idx;
+        }
+
+    bool assemble() const
+        {
+            return assem;
+        }
+
+    friend std::ostream& operator<<(std::ostream& os, const assembly_index& as)
+        {
+            os << "(" << as.idx << "," << as.assem << ")";
+            return os;
+        }
+};
 
 //////////////////////////////   FICTITIOUS DOMAIN ASSEMBLERS   /////////////////////////////
 
@@ -111,36 +142,6 @@ protected:
 
     element_location loc_zone;
     size_t num_cells;
-
-    class assembly_index
-    {
-        size_t  idx;
-        bool    assem;
-
-    public:
-        assembly_index(size_t i, bool as)
-            : idx(i), assem(as)
-        {}
-
-        operator size_t() const
-        {
-            if (!assem)
-                throw std::logic_error("Invalid assembly_index");
-
-            return idx;
-        }
-
-        bool assemble() const
-        {
-            return assem;
-        }
-
-        friend std::ostream& operator<<(std::ostream& os, const assembly_index& as)
-        {
-            os << "(" << as.idx << "," << as.assem << ")";
-            return os;
-        }
-    };
 
 public:
 
@@ -366,36 +367,6 @@ class fict_condensed_assembler : public fict_assembler<Mesh>
     std::vector< Matrix<T, Dynamic, Dynamic> > loc_LHS;
     std::vector< Matrix<T, Dynamic, 1> > loc_RHS;
 
-    class assembly_index
-    {
-        size_t  idx;
-        bool    assem;
-
-    public:
-        assembly_index(size_t i, bool as)
-            : idx(i), assem(as)
-        {}
-
-        operator size_t() const
-        {
-            if (!assem)
-                throw std::logic_error("Invalid assembly_index");
-
-            return idx;
-        }
-
-        bool assemble() const
-        {
-            return assem;
-        }
-
-        friend std::ostream& operator<<(std::ostream& os, const assembly_index& as)
-        {
-            os << "(" << as.idx << "," << as.assem << ")";
-            return os;
-        }
-    };
-
 public:
 
     SparseMatrix<T>         LHS;
@@ -596,35 +567,6 @@ class interface_assembler
 
     std::vector< Triplet<T> >           triplets;
 
-    class assembly_index
-    {
-        size_t  idx;
-        bool    assem;
-
-    public:
-        assembly_index(size_t i, bool as)
-            : idx(i), assem(as)
-        {}
-
-        operator size_t() const
-        {
-            if (!assem)
-                throw std::logic_error("Invalid assembly_index");
-
-            return idx;
-        }
-
-        bool assemble() const
-        {
-            return assem;
-        }
-
-        friend std::ostream& operator<<(std::ostream& os, const assembly_index& as)
-        {
-            os << "(" << as.idx << "," << as.assem << ")";
-            return os;
-        }
-    };
 
 public:
 
@@ -983,36 +925,6 @@ class interface_condensed_assembler
 
     std::vector< Matrix<T, Dynamic, Dynamic> > loc_LHS;
     std::vector< Matrix<T, Dynamic, 1> > loc_RHS;
-
-    class assembly_index
-    {
-        size_t  idx;
-        bool    assem;
-
-    public:
-        assembly_index(size_t i, bool as)
-            : idx(i), assem(as)
-        {}
-
-        operator size_t() const
-        {
-            if (!assem)
-                throw std::logic_error("Invalid assembly_index");
-
-            return idx;
-        }
-
-        bool assemble() const
-        {
-            return assem;
-        }
-
-        friend std::ostream& operator<<(std::ostream& os, const assembly_index& as)
-        {
-            os << "(" << as.idx << "," << as.assem << ")";
-            return os;
-        }
-    };
 
 public:
 
@@ -1806,36 +1718,6 @@ protected:
     size_t num_cells;
     size_t num_other_faces;
 
-    class assembly_index
-    {
-        size_t  idx;
-        bool    assem;
-
-    public:
-        assembly_index(size_t i, bool as)
-            : idx(i), assem(as)
-        {}
-
-        operator size_t() const
-        {
-            if (!assem)
-                throw std::logic_error("Invalid assembly_index");
-
-            return idx;
-        }
-
-        bool assemble() const
-        {
-            return assem;
-        }
-
-        friend std::ostream& operator<<(std::ostream& os, const assembly_index& as)
-        {
-            os << "(" << as.idx << "," << as.assem << ")";
-            return os;
-        }
-    };
-
 public:
 
     SparseMatrix<T>         LHS;
@@ -2135,36 +2017,6 @@ class stokes_fict_condensed_assembler : public stokes_fict_assembler<Mesh>
     std::vector< Matrix<T, Dynamic, Dynamic> > loc_LHS_A;
     std::vector< Matrix<T, Dynamic, 1> > loc_RHS_A;
 
-    class assembly_index
-    {
-        size_t  idx;
-        bool    assem;
-
-    public:
-        assembly_index(size_t i, bool as)
-            : idx(i), assem(as)
-        {}
-
-        operator size_t() const
-        {
-            if (!assem)
-                throw std::logic_error("Invalid assembly_index");
-
-            return idx;
-        }
-
-        bool assemble() const
-        {
-            return assem;
-        }
-
-        friend std::ostream& operator<<(std::ostream& os, const assembly_index& as)
-        {
-            os << "(" << as.idx << "," << as.assem << ")";
-            return os;
-        }
-    };
-
 public:
 
     SparseMatrix<T>         LHS;
@@ -2413,36 +2265,6 @@ class stokes_fict_condensed_assembler2 : public stokes_fict_assembler<Mesh>
 
     std::vector< Matrix<T, Dynamic, Dynamic> > loc_LHS_A, loc_LHS_B;
     std::vector< Matrix<T, Dynamic, 1> > loc_RHS_A, loc_RHS_B;
-
-    class assembly_index
-    {
-        size_t  idx;
-        bool    assem;
-
-    public:
-        assembly_index(size_t i, bool as)
-            : idx(i), assem(as)
-        {}
-
-        operator size_t() const
-        {
-            if (!assem)
-                throw std::logic_error("Invalid assembly_index");
-
-            return idx;
-        }
-
-        bool assemble() const
-        {
-            return assem;
-        }
-
-        friend std::ostream& operator<<(std::ostream& os, const assembly_index& as)
-        {
-            os << "(" << as.idx << "," << as.assem << ")";
-            return os;
-        }
-    };
 
 public:
 
@@ -2786,36 +2608,6 @@ class stokes_interface_assembler
     hho_degree_info                     di;
 
     std::vector< Triplet<T> >           triplets;
-
-    class assembly_index
-    {
-        size_t  idx;
-        bool    assem;
-
-    public:
-        assembly_index(size_t i, bool as)
-            : idx(i), assem(as)
-        {}
-
-        operator size_t() const
-        {
-            if (!assem)
-                throw std::logic_error("Invalid assembly_index");
-
-            return idx;
-        }
-
-        bool assemble() const
-        {
-            return assem;
-        }
-
-        friend std::ostream& operator<<(std::ostream& os, const assembly_index& as)
-        {
-            os << "(" << as.idx << "," << as.assem << ")";
-            return os;
-        }
-    };
 
 public:
 
@@ -3244,36 +3036,6 @@ class stokes_interface_condensed_assembler
     std::vector< Triplet<T> >           triplets;
     std::vector< Matrix<T, Dynamic, Dynamic> > loc_LHS;
     std::vector< Matrix<T, Dynamic, 1> > loc_RHS;
-
-    class assembly_index
-    {
-        size_t  idx;
-        bool    assem;
-
-    public:
-        assembly_index(size_t i, bool as)
-            : idx(i), assem(as)
-        {}
-
-        operator size_t() const
-        {
-            if (!assem)
-                throw std::logic_error("Invalid assembly_index");
-
-            return idx;
-        }
-
-        bool assemble() const
-        {
-            return assem;
-        }
-
-        friend std::ostream& operator<<(std::ostream& os, const assembly_index& as)
-        {
-            os << "(" << as.idx << "," << as.assem << ")";
-            return os;
-        }
-    };
 
 public:
 
