@@ -1453,261 +1453,7 @@ stokes_static_condensation_compute
 // and one pressure dof per cell (that represents the mean pressure in the cell)
 template<typename T>
 std::pair<   Matrix<T, Dynamic, Dynamic>, Matrix<T, Dynamic, 1>  >
-stokes_static_condensation2_compute
-(const Matrix<T, Dynamic, Dynamic> lhs_A, const Matrix<T, Dynamic, Dynamic> lhs_B,
- const Matrix<T, Dynamic, 1> rhs_A, const Matrix<T, Dynamic, 1> rhs_B,
- const Matrix<T, Dynamic, 1> mult, const size_t cell_size, const size_t face_size)
-{
-    using matrix = Matrix<T, Dynamic, Dynamic>;
-    using vector = Matrix<T, Dynamic, 1>;
-
-    size_t size_tot = cell_size + face_size;
-    size_t p_size = lhs_B.rows();
-    assert(lhs_A.cols() == size_tot && lhs_A.rows() == size_tot);
-    assert(rhs_A.rows() == size_tot || rhs_A.rows() == cell_size);
-    assert(lhs_B.rows() == p_size && lhs_B.cols() == size_tot);
-    assert(rhs_B.rows() == p_size);
-
-    matrix lhs_sc = matrix::Zero(face_size + 1, face_size + 1);
-    vector rhs_sc = vector::Zero(face_size + 1);
-
-    // sub--lhs
-    matrix K_TT = lhs_A.topLeftCorner(cell_size, cell_size);
-    matrix K_TF = lhs_A.topRightCorner(cell_size, face_size);
-    matrix K_FT = lhs_A.bottomLeftCorner(face_size, cell_size);
-    matrix K_FF = lhs_A.bottomRightCorner(face_size, face_size);
-    matrix K_PT = lhs_B.block(0, 0, p_size, cell_size);
-    matrix K_PF = lhs_B.block(0, cell_size, p_size, face_size);
-
-    // sub--rhs
-    vector cell_rhs = vector::Zero(cell_size);
-    vector face_rhs = vector::Zero(face_size);
-    if(rhs_A.rows() == cell_size)
-        cell_rhs = rhs_A;
-    else
-    {
-        cell_rhs = rhs_A.head(cell_size);
-        face_rhs = rhs_A.tail(face_size);
-    }
-
-    // compute the new matrices
-    matrix tB_PT = K_PT.block(0, 0, 1, cell_size);
-    matrix tB_PF = K_PF.block(0, 0, 1, face_size);
-    matrix temp_B_PT = K_PT.block(1, 0, p_size-1, cell_size);
-    matrix temp_B_PF = K_PF.block(1, 0, p_size-1, face_size);
-    matrix hB_PT = mult * tB_PT + temp_B_PT;
-    matrix hB_PF = mult * tB_PF + temp_B_PF;
-
-    vector rhs_tp = rhs_B.block(0,0,1,1);
-    vector rhs_temp = rhs_B.block(1,0,p_size-1,1);
-    vector rhs_hp = rhs_temp + mult * rhs_tp;
-
-
-    ////////////// static condensation
-    // invert matrices
-    auto K_TT_ldlt = K_TT.ldlt();
-    matrix iAhB = K_TT_ldlt.solve(hB_PT.transpose());
-    matrix iAK_TF = K_TT_ldlt.solve(K_TF);
-    matrix iAtB = K_TT_ldlt.solve(tB_PT.transpose());
-    vector iA_rhs_T = K_TT_ldlt.solve(cell_rhs);
-
-    auto iBAB = (hB_PT * iAhB).ldlt();
-    matrix iBAB_B_PF = iBAB.solve(hB_PF);
-    matrix iBAB_B_PT = iBAB.solve(hB_PT);
-    vector iBAB_rhs_hp = iBAB.solve(rhs_hp);
-
-    // compute final matrices and rhs
-    matrix AFF_1 = K_FF;
-    matrix AFF_2 = hB_PF.transpose() * (iBAB_B_PF - iBAB_B_PT * iAK_TF);
-    matrix AFF_3 = - K_FT * iAK_TF;
-    matrix AFF_4 = K_FT * iAhB * (iBAB_B_PT * iAK_TF - iBAB_B_PF);
-    matrix AFF = AFF_1 + AFF_2 + AFF_3 + AFF_4;
-
-    matrix BFP_1 = tB_PF.transpose();
-    matrix BFP_2 = - K_FT * iAtB;
-    matrix BFP_3 = - hB_PF.transpose() * iBAB_B_PT * iAtB;
-    matrix BFP_4 = K_FT * iAhB * iBAB_B_PT * iAtB;
-    matrix BFP = BFP_1 + BFP_2 + BFP_3 + BFP_4;
-
-    vector RHS_F_1 = face_rhs;
-    vector RHS_F_2 = hB_PF.transpose() * (iBAB_rhs_hp - iBAB_B_PT * iA_rhs_T);
-    vector RHS_F_3 = - K_FT * iA_rhs_T;
-    vector RHS_F_4 = - K_FT * iAhB * (iBAB_rhs_hp - iBAB_B_PT * iA_rhs_T);
-    vector RHS_F = RHS_F_1 + RHS_F_2 + RHS_F_3 + RHS_F_4;
-
-    matrix BPF_1 = tB_PF;
-    matrix BPF_2 = - tB_PT * iAK_TF;
-    matrix BPF_3 = tB_PT * iAhB * (iBAB_B_PT * iAK_TF - iBAB_B_PF);
-    matrix BPF = BPF_1 + BPF_2 + BPF_3;
-
-    matrix CPP_1 = - tB_PT * iAtB;
-    matrix CPP_2 = tB_PT * iAhB * iBAB_B_PT * iAtB;
-    matrix CPP = CPP_1 + CPP_2;
-
-    vector RHS_P_1 = rhs_tp;
-    vector RHS_P_2 = - tB_PT * iA_rhs_T;
-    vector RHS_P_3 = - tB_PT * iAhB * ( iBAB_rhs_hp - iBAB_B_PT * iA_rhs_T );
-    vector RHS_P = RHS_P_1 + RHS_P_2 + RHS_P_3;
-
-    lhs_sc.block(0, 0, face_size, face_size) = AFF;
-    lhs_sc.block(0, face_size, face_size, 1) = BFP;
-    lhs_sc.block(face_size, 0, 1, face_size) = BPF;
-    lhs_sc.block(face_size, face_size, 1, 1) = CPP;
-
-    rhs_sc.head(face_size) = RHS_F;
-    rhs_sc.tail(1) = RHS_P;
-
-    return std::make_pair(lhs_sc, rhs_sc);
-}
-
-
-template<typename T>
-Matrix<T, Dynamic, 1>
-stokes_static_condensation2_recover_velocity
-(const Matrix<T, Dynamic, Dynamic> lhs_A, const Matrix<T, Dynamic, Dynamic> lhs_B,
- const Matrix<T, Dynamic, 1> rhs_A, const Matrix<T, Dynamic, 1> rhs_B,
- const Matrix<T, Dynamic, 1> mult,
- const size_t cell_size, const size_t face_size, const Matrix<T, Dynamic, 1> sol_sc)
-{
-    using matrix = Matrix<T, Dynamic, Dynamic>;
-    using vector = Matrix<T, Dynamic, 1>;
-
-    size_t size_tot = cell_size + face_size;
-    assert(lhs_A.cols() == size_tot && lhs_A.rows() == size_tot);
-    assert(rhs_A.rows() == size_tot || rhs_A.rows() == cell_size);
-    size_t p_size = lhs_B.rows();
-    assert(sol_sc.rows() == face_size + 1);
-
-    // sub--lhs
-    matrix K_TT = lhs_A.topLeftCorner(cell_size, cell_size);
-    matrix K_TF = lhs_A.topRightCorner(cell_size, face_size);
-    matrix K_TP = lhs_B.topLeftCorner(p_size, cell_size).transpose();
-    matrix K_PT = lhs_B.block(0, 0, p_size, cell_size);
-    matrix K_PF = lhs_B.block(0, cell_size, p_size, face_size);
-
-    // sub--rhs
-    vector cell_rhs = vector::Zero(cell_size);
-    cell_rhs = rhs_A.head(cell_size);
-
-    // compute the new matrices
-    matrix tB_PT = K_PT.block(0, 0, 1, cell_size);
-    matrix tB_PF = K_PF.block(0, 0, 1, face_size);
-    matrix temp_B_PT = K_PT.block(1, 0, p_size-1, cell_size);
-    matrix temp_B_PF = K_PF.block(1, 0, p_size-1, face_size);
-    matrix hB_PT = mult * tB_PT + temp_B_PT;
-    matrix hB_PF = mult * tB_PF + temp_B_PF;
-
-    vector rhs_tp = rhs_B.block(0,0,1,1);
-    vector rhs_temp = rhs_B.block(1,0,p_size-1,1);
-    vector rhs_hp = rhs_temp + mult * rhs_tp;
-
-    // recover velocity cell solution
-    auto K_TT_ldlt = K_TT.ldlt();
-    matrix iAhB = K_TT_ldlt.solve(hB_PT.transpose());
-    matrix iAK_TF = K_TT_ldlt.solve(K_TF);
-    matrix iAtB = K_TT_ldlt.solve(tB_PT.transpose());
-    vector iA_rhs_T = K_TT_ldlt.solve(cell_rhs);
-
-    auto iBAB = (hB_PT * iAhB).ldlt();
-    matrix iBAB_B_PF = iBAB.solve(hB_PF);
-    matrix iBAB_B_PT = iBAB.solve(hB_PT);
-    vector iBAB_rhs_hp = iBAB.solve(rhs_hp);
-
-    vector ret = vector::Zero(size_tot);
-
-    vector uF = sol_sc.head(face_size);
-    vector solP = sol_sc.tail(1);
-
-    vector uT_1 = iAhB * iBAB_B_PT * (iAK_TF * uF + iAtB * solP - iA_rhs_T);
-    vector uT_2 = - iAhB * iBAB_B_PF * uF;
-    vector uT_3 = iAhB * iBAB_rhs_hp;
-    vector uT_4 = iA_rhs_T - iAK_TF * uF - iAtB * solP;
-    vector uT = uT_1 + uT_2 + uT_3 + uT_4;
-
-    ret.head(cell_size) = uT;
-    ret.block(cell_size, 0, face_size, 1) = uF;
-    return ret;
-}
-
-
-template<typename T>
-Matrix<T, Dynamic, 1>
-stokes_static_condensation2_recover_pressure
-(const Matrix<T, Dynamic, Dynamic> lhs_A, const Matrix<T, Dynamic, Dynamic> lhs_B,
- const Matrix<T, Dynamic, 1> rhs_A, const Matrix<T, Dynamic, 1> rhs_B,
- const Matrix<T, Dynamic, 1> mult,
- const size_t cell_size, const size_t face_size, const Matrix<T, Dynamic, 1> sol_sc)
-{
-    using matrix = Matrix<T, Dynamic, Dynamic>;
-    using vector = Matrix<T, Dynamic, 1>;
-
-    size_t size_tot = cell_size + face_size;
-    assert(lhs_A.cols() == size_tot && lhs_A.rows() == size_tot);
-    assert(rhs_A.rows() == size_tot || rhs_A.rows() == cell_size);
-    size_t p_size = lhs_B.rows();
-    assert(sol_sc.rows() == face_size + 1);
-
-    // sub--lhs
-    matrix K_TT = lhs_A.topLeftCorner(cell_size, cell_size);
-    matrix K_TF = lhs_A.topRightCorner(cell_size, face_size);
-    matrix K_TP = lhs_B.topLeftCorner(p_size, cell_size).transpose();
-    matrix K_PT = lhs_B.block(0, 0, p_size, cell_size);
-    matrix K_PF = lhs_B.block(0, cell_size, p_size, face_size);
-
-    // sub--rhs
-    vector cell_rhs = vector::Zero(cell_size);
-    cell_rhs = rhs_A.head(cell_size);
-
-    // compute the new matrices
-    matrix tB_PT = K_PT.block(0, 0, 1, cell_size);
-    matrix tB_PF = K_PF.block(0, 0, 1, face_size);
-    matrix temp_B_PT = K_PT.block(1, 0, p_size-1, cell_size);
-    matrix temp_B_PF = K_PF.block(1, 0, p_size-1, face_size);
-    matrix hB_PT = mult * tB_PT + temp_B_PT;
-    matrix hB_PF = mult * tB_PF + temp_B_PF;
-
-    vector rhs_tp = rhs_B.block(0,0,1,1);
-    vector rhs_temp = rhs_B.block(1,0,p_size-1,1);
-    vector rhs_hp = rhs_temp + mult * rhs_tp;
-
-    // pressure solution
-    auto K_TT_ldlt = K_TT.ldlt();
-    matrix iAhB = K_TT_ldlt.solve(hB_PT.transpose());
-    matrix iAK_TF = K_TT_ldlt.solve(K_TF);
-    matrix iAtB = K_TT_ldlt.solve(tB_PT.transpose());
-    vector iA_rhs_T = K_TT_ldlt.solve(cell_rhs);
-
-    auto iBAB = (hB_PT * iAhB).ldlt();
-    matrix iBAB_B_PF = iBAB.solve(hB_PF);
-    matrix iBAB_B_PT = iBAB.solve(hB_PT);
-    vector iBAB_rhs_hp = iBAB.solve(rhs_hp);
-
-    vector ret = vector::Zero(p_size);
-
-    vector uF = sol_sc.head(face_size);
-    vector solP = sol_sc.tail(1);
-
-    vector p_1 = iBAB_B_PF * uF;
-    vector p_2 = - iBAB_B_PT * iAK_TF * uF;
-    vector p_3 = - iBAB_B_PT * iAtB * solP;
-    vector p_4 = - iBAB_rhs_hp;
-    vector p_5 = iBAB_B_PT * iA_rhs_T;
-    vector hP = p_1 + p_2 + p_3 + p_4 + p_5;
-
-    ret(0) = solP(0) + mult.dot(hP);
-    ret.tail(p_size-1) = hP;
-    return ret;
-}
-
-
-//////////////  static condensation with matrix C
-
-// full static condensation (velocity + pressure)
-// in this version we keep only the velocity face dofs
-// and one pressure dof per cell (that represents the mean pressure in the cell)
-template<typename T>
-std::pair<   Matrix<T, Dynamic, Dynamic>, Matrix<T, Dynamic, 1>  >
-stokes_static_condensation3_compute
+stokes_full_static_condensation_compute
 (const Matrix<T, Dynamic, Dynamic> lhs_A, const Matrix<T, Dynamic, Dynamic> lhs_B,
  const Matrix<T, Dynamic, Dynamic> lhs_C,
  const Matrix<T, Dynamic, 1> rhs_A, const Matrix<T, Dynamic, 1> rhs_B,
@@ -1825,10 +1571,25 @@ stokes_static_condensation3_compute
 }
 
 
+template<typename T>
+std::pair<   Matrix<T, Dynamic, Dynamic>, Matrix<T, Dynamic, 1>  >
+stokes_full_static_condensation_compute
+(const Matrix<T, Dynamic, Dynamic> lhs_A, const Matrix<T, Dynamic, Dynamic> lhs_B,
+ const Matrix<T, Dynamic, 1> rhs_A, const Matrix<T, Dynamic, 1> rhs_B,
+ const Matrix<T, Dynamic, 1> mult, const size_t cell_size, const size_t face_size)
+{
+    size_t p_size = lhs_B.rows();
+    Matrix<T, Dynamic, Dynamic> lhs_C = Matrix<T, Dynamic, Dynamic>::Zero(p_size, p_size);
+
+    return stokes_full_static_condensation_compute
+        (lhs_A, lhs_B, lhs_C, rhs_A, rhs_B, mult, cell_size, face_size);
+}
+
+
 
 template<typename T>
 Matrix<T, Dynamic, 1>
-stokes_static_condensation3_recover_velocity
+stokes_full_static_condensation_recover_v
 (const Matrix<T, Dynamic, Dynamic> lhs_A, const Matrix<T, Dynamic, Dynamic> lhs_B,
  const Matrix<T, Dynamic, Dynamic> lhs_C,
  const Matrix<T, Dynamic, 1> rhs_A, const Matrix<T, Dynamic, 1> rhs_B,
@@ -1912,7 +1673,23 @@ stokes_static_condensation3_recover_velocity
 
 template<typename T>
 Matrix<T, Dynamic, 1>
-stokes_static_condensation3_recover_pressure
+stokes_full_static_condensation_recover_v
+(const Matrix<T, Dynamic, Dynamic> lhs_A, const Matrix<T, Dynamic, Dynamic> lhs_B,
+ const Matrix<T, Dynamic, 1> rhs_A, const Matrix<T, Dynamic, 1> rhs_B,
+ const Matrix<T, Dynamic, 1> mult,
+ const size_t cell_size, const size_t face_size, const Matrix<T, Dynamic, 1> sol_sc)
+{
+    size_t p_size = lhs_B.rows();
+    Matrix<T, Dynamic, Dynamic> lhs_C = Matrix<T, Dynamic, Dynamic>::Zero(p_size, p_size);
+
+    return stokes_full_static_condensation_recover_v
+        (lhs_A, lhs_B, lhs_C, rhs_A, rhs_B, mult, cell_size, face_size, sol_sc);
+}
+
+
+template<typename T>
+Matrix<T, Dynamic, 1>
+stokes_full_static_condensation_recover_p
 (const Matrix<T, Dynamic, Dynamic> lhs_A, const Matrix<T, Dynamic, Dynamic> lhs_B,
  const Matrix<T, Dynamic, Dynamic> lhs_C,
  const Matrix<T, Dynamic, 1> rhs_A, const Matrix<T, Dynamic, 1> rhs_B,
@@ -1991,6 +1768,22 @@ stokes_static_condensation3_recover_pressure
     ret(0) = solP(0) + mult.dot(hP);
     ret.tail(p_size-1) = hP;
     return ret;
+}
+
+
+template<typename T>
+Matrix<T, Dynamic, 1>
+stokes_full_static_condensation_recover_p
+(const Matrix<T, Dynamic, Dynamic> lhs_A, const Matrix<T, Dynamic, Dynamic> lhs_B,
+ const Matrix<T, Dynamic, 1> rhs_A, const Matrix<T, Dynamic, 1> rhs_B,
+ const Matrix<T, Dynamic, 1> mult,
+ const size_t cell_size, const size_t face_size, const Matrix<T, Dynamic, 1> sol_sc)
+{
+    size_t p_size = lhs_B.rows();
+    Matrix<T, Dynamic, Dynamic> lhs_C = Matrix<T, Dynamic, Dynamic>::Zero(p_size, p_size);
+
+    return stokes_full_static_condensation_recover_p
+        (lhs_A, lhs_B, lhs_C, rhs_A, rhs_B, mult, cell_size, face_size, sol_sc);
 }
 
 
@@ -2729,7 +2522,7 @@ public:
             }
             mult_C = mult_C / area;
 
-            auto mat_sc = stokes_static_condensation2_compute
+            auto mat_sc = stokes_full_static_condensation_compute
                 (lhs_A, lhs_B, rhs_A, rhs_B, mult_C, cbs_A, f_dofs);
             lhs_sc = mat_sc.first;
             rhs_sc = mat_sc.second;
@@ -2869,7 +2662,7 @@ public:
         }
         mult_C = mult_C / area;
 
-        return stokes_static_condensation2_recover_velocity
+        return stokes_full_static_condensation_recover_v
             (loc_mat_A, loc_mat_B, loc_rhs_A, loc_rhs_B, mult_C, cbs_A, f_dofs, sol_sc);
     }
 
@@ -2960,7 +2753,7 @@ public:
         }
         mult_C = mult_C / area;
 
-        return stokes_static_condensation2_recover_pressure
+        return stokes_full_static_condensation_recover_p
             (loc_LHS_A.at(cell_offset), loc_LHS_B.at(cell_offset),
              loc_RHS_A.at(cell_offset), loc_RHS_B.at(cell_offset), mult_C,
              cbs_A, f_dofs, sol_sc);
@@ -3619,7 +3412,7 @@ public:
             }
             mult_C = mult_C / area;
 
-            auto mat_sc = stokes_static_condensation2_compute
+            auto mat_sc = stokes_full_static_condensation_compute
                 (lhs_A, lhs_B, rhs_A, rhs_B, mult_C, cbs, f_dofs);
             lhs_sc = mat_sc.first;
             rhs_sc = mat_sc.second;
@@ -3754,7 +3547,7 @@ public:
 
         mult_C = mult_C / area_n;
 
-        auto mat_sc = stokes_static_condensation3_compute
+        auto mat_sc = stokes_full_static_condensation_compute
             (lhs_A, lhs_B, lhs_C, rhs_A, rhs_B, mult_C, 2*cbs, f_dofs);
         lhs_sc = mat_sc.first;
         rhs_sc = mat_sc.second;
@@ -3935,7 +3728,7 @@ public:
             }
             mult_C = mult_C / area;
 
-            return stokes_static_condensation3_recover_velocity
+            return stokes_full_static_condensation_recover_v
                 (lhs_A, lhs_B, lhs_C, rhs_A, rhs_B, mult_C, cbs, f_dofs, sol_sc);
         }
         // else -> location(msh, cl) == element_location::ON_INTERFACE
@@ -3977,7 +3770,7 @@ public:
         }
         mult_C = mult_C / area_n;
 
-        auto loc_sol = stokes_static_condensation3_recover_velocity
+        auto loc_sol = stokes_full_static_condensation_recover_v
             (lhs_A, lhs_B, lhs_C, rhs_A, rhs_B, mult_C, 2*cbs, 2*f_dofs, sol_sc);
 
         if( where == element_location::IN_NEGATIVE_SIDE )
@@ -4103,7 +3896,7 @@ public:
             }
             mult_C = mult_C / area;
 
-            return stokes_static_condensation3_recover_pressure
+            return stokes_full_static_condensation_recover_p
                 (lhs_A, lhs_B, lhs_C, rhs_A, rhs_B, mult_C, cbs, f_dofs, sol_sc);
         }
         // else -> location(msh, cl) == element_location::ON_INTERFACE
@@ -4143,7 +3936,7 @@ public:
 
         mult_C = mult_C / area_n;
 
-        auto loc_sol = stokes_static_condensation3_recover_pressure
+        auto loc_sol = stokes_full_static_condensation_recover_p
             (lhs_A, lhs_B, lhs_C, rhs_A, rhs_B, mult_C, 2*cbs, 2*f_dofs, sol_sc);
 
         if( where == element_location::IN_NEGATIVE_SIDE )
