@@ -201,13 +201,6 @@ public:
         RHS = Matrix<T, Dynamic, 1>::Zero( system_size );
     }
 
-    void dump_tables() const
-    {
-        std::cout << "Compress table: " << std::endl;
-        for (size_t i = 0; i < compress_face_table.size(); i++)
-            std::cout << i << " -> " << compress_face_table.at(i) << std::endl;
-    }
-
     template<typename Function>
     void
     assemble(const Mesh& msh, const typename Mesh::cell_type& cl,
@@ -632,13 +625,6 @@ public:
         RHS = Matrix<T, Dynamic, 1>::Zero( system_size );
     }
 
-    void dump_tables() const
-    {
-        //std::cout << "Compress table: " << std::endl;
-        //for (size_t i = 0; i < compress_table.size(); i++)
-        //    std::cout << i << " -> " << compress_table.at(i) << std::endl;
-    }
-
     template<typename Function>
     void
     assemble(const Mesh& msh, const typename Mesh::cell_type& cl,
@@ -977,13 +963,6 @@ public:
 
         loc_LHS.resize( msh.cells.size() );
         loc_RHS.resize( msh.cells.size() );
-    }
-
-    void dump_tables() const
-    {
-        //std::cout << "Compress table: " << std::endl;
-        //for (size_t i = 0; i < compress_table.size(); i++)
-        //    std::cout << i << " -> " << compress_table.at(i) << std::endl;
     }
 
     template<typename Function>
@@ -1776,13 +1755,6 @@ public:
 
         LHS = SparseMatrix<T>( system_size, system_size );
         RHS = Matrix<T, Dynamic, 1>::Zero( system_size );
-    }
-
-    void dump_tables() const
-    {
-        std::cout << "Compress table: " << std::endl;
-        for (size_t i = 0; i < compress_face_table.size(); i++)
-            std::cout << i << " -> " << compress_face_table.at(i) << std::endl;
     }
 
     template<typename Function>
@@ -2674,13 +2646,6 @@ public:
         RHS = Matrix<T, Dynamic, 1>::Zero( system_size );
     }
 
-    void dump_tables() const
-    {
-        //std::cout << "Compress table: " << std::endl;
-        //for (size_t i = 0; i < compress_table.size(); i++)
-        //    std::cout << i << " -> " << compress_table.at(i) << std::endl;
-    }
-
     template<typename Function>
     void
     assemble(const Mesh& msh, const typename Mesh::cell_type& cl,
@@ -3104,13 +3069,6 @@ public:
 
         LHS = SparseMatrix<T>( system_size, system_size );
         RHS = Matrix<T, Dynamic, 1>::Zero( system_size );
-    }
-
-    void dump_tables() const
-    {
-        //std::cout << "Compress table: " << std::endl;
-        //for (size_t i = 0; i < compress_table.size(); i++)
-        //    std::cout << i << " -> " << compress_table.at(i) << std::endl;
     }
 
     Matrix<T, Dynamic, 1>
