@@ -678,8 +678,8 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
     element_location where = element_location::IN_NEGATIVE_SIDE;
 
     tc.tic();
-    auto assembler = make_fict_assembler(msh, hdi, where);
-    auto assembler_sc = make_fict_condensed_assembler(msh, hdi, where);
+    auto assembler = make_fict_assembler(msh, bcs_fun, hdi, where);
+    auto assembler_sc = make_fict_condensed_assembler(msh, bcs_fun, hdi, where);
 
 
     // method with gradient reconstruction (penalty-free)
@@ -694,11 +694,10 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
         auto lc = contrib.first;
         auto f = contrib.second;
 
-
         if( sc )
-            assembler_sc.assemble(msh, cl, lc, f, bcs_fun);
+            assembler_sc.assemble(msh, cl, lc, f);
         else
-            assembler.assemble(msh, cl, lc, f, bcs_fun);
+            assembler.assemble(msh, cl, lc, f);
     }
 
     if( sc )
@@ -788,11 +787,9 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
 
         Matrix<RealType, Dynamic, 1> locdata;
         if( sc )
-        {
-            locdata = assembler_sc.take_local_data(msh, cl, sol, sol_fun);
-        }
+            locdata = assembler_sc.take_local_data(msh, cl, sol);
         else
-            locdata = assembler.take_local_data(msh, cl, sol, sol_fun);
+            locdata = assembler.take_local_data(msh, cl, sol);
         
         Matrix<RealType, Dynamic, 1> cell_dofs = locdata.head(cbs);
         
