@@ -1307,28 +1307,18 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
     hho_degree_info hdi(degree+1, degree);
 
     tc.tic();
-    auto assembler = make_interface_assembler(msh, hdi);
-    auto assembler_sc = make_interface_condensed_assembler(msh, hdi);
+    auto assembler = make_interface_assembler(msh, bcs_fun, hdi);
+    auto assembler_sc = make_interface_condensed_assembler(msh, bcs_fun, hdi);
     for (auto& cl : msh.cells)
     {
         auto contrib = method.make_contrib(msh, cl, test_case, hdi);
         auto lc = contrib.first;
         auto f = contrib.second;
 
-        if (location(msh, cl) != element_location::ON_INTERFACE)
-        {
-            if( sc )
-                assembler_sc.assemble(msh, cl, lc, f, bcs_fun);
-            else
-                assembler.assemble(msh, cl, lc, f, bcs_fun);
-        }
+        if( sc )
+            assembler_sc.assemble(msh, cl, lc, f);
         else
-        {
-            if( sc )
-                assembler_sc.assemble_cut(msh, cl, lc, f);
-            else
-                assembler.assemble_cut(msh, cl, lc, f);
-        }
+            assembler.assemble(msh, cl, lc, f);
     }
 
     if( sc )
@@ -1418,13 +1408,13 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
         {
             if( sc )
             {
-                locdata_n = assembler_sc.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_NEGATIVE_SIDE);
-                locdata_p = assembler_sc.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_POSITIVE_SIDE);
+                locdata_n = assembler_sc.take_local_data(msh, cl, sol, element_location::IN_NEGATIVE_SIDE);
+                locdata_p = assembler_sc.take_local_data(msh, cl, sol, element_location::IN_POSITIVE_SIDE);
             }
             else
             {
-                locdata_n = assembler.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_NEGATIVE_SIDE);
-                locdata_p = assembler.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_POSITIVE_SIDE);
+                locdata_n = assembler.take_local_data(msh, cl, sol, element_location::IN_NEGATIVE_SIDE);
+                locdata_p = assembler.take_local_data(msh, cl, sol, element_location::IN_POSITIVE_SIDE);
             }
 
             cell_dofs_n = locdata_n.head(cbs);
@@ -1476,10 +1466,10 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
         {
             if( sc )
             {
-                locdata = assembler_sc.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_POSITIVE_SIDE);
+                locdata = assembler_sc.take_local_data(msh, cl, sol, element_location::IN_POSITIVE_SIDE);
             }
             else
-                locdata = assembler.take_local_data(msh, cl, sol, bcs_fun, element_location::IN_POSITIVE_SIDE);
+                locdata = assembler.take_local_data(msh, cl, sol, element_location::IN_POSITIVE_SIDE);
             cell_dofs = locdata.head(cbs);
 
             auto qps = integrate(msh, cl, 2*hdi.cell_degree());
