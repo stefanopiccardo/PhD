@@ -214,9 +214,8 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
     element_location where = element_location::IN_NEGATIVE_SIDE;
 
     tc.tic();
-    auto assembler = make_stokes_fict_assembler(msh, hdi, where);
-    auto assembler_sc = make_stokes_fict_condensed_assembler2(msh, hdi, where);
-    // auto assembler_sc = make_stokes_fict_condensed_assembler(msh, hdi, where);
+    auto assembler = make_stokes_fict_assembler(msh, bcs_fun, hdi, where);
+    auto assembler_sc = make_stokes_fict_condensed_assembler(msh, bcs_fun, hdi, where);
 
     // method with gradient reconstruction (penalty-free)
     auto class_meth = make_gradrec_stokes_fictdom_method(msh, 1.0, test_case);
@@ -232,11 +231,10 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
         auto rhs_A = contrib.second.first;
         auto rhs_B = -contrib.second.second;
 
-
         if( sc )
-            assembler_sc.assemble(msh, cl, lc_A, lc_B, rhs_A, rhs_B, bcs_fun);
+            assembler_sc.assemble(msh, cl, lc_A, lc_B, rhs_A, rhs_B);
         else
-            assembler.assemble(msh, cl, lc_A, lc_B, rhs_A, rhs_B, bcs_fun);
+            assembler.assemble(msh, cl, lc_A, lc_B, rhs_A, rhs_B);
     }
 
     if( sc )
@@ -325,12 +323,12 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
         Matrix<RealType, Dynamic, 1> locdata_vel, locdata_p;
         if( sc )
         {
-            locdata_vel = assembler_sc.take_velocity(msh, cl, sol, sol_vel);
-            locdata_p   = assembler_sc.take_pressure(msh, cl, sol, sol_vel);
+            locdata_vel = assembler_sc.take_velocity(msh, cl, sol);
+            locdata_p   = assembler_sc.take_pressure(msh, cl, sol);
         }
         else
         {
-            locdata_vel = assembler.take_velocity(msh, cl, sol, sol_vel);
+            locdata_vel = assembler.take_velocity(msh, cl, sol);
             locdata_p   = assembler.take_pressure(msh, cl, sol);
         }
 
@@ -597,28 +595,18 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
     hho_degree_info hdi(degree+1, degree);
 
     tc.tic();
-    auto assembler = make_stokes_interface_assembler(msh, hdi);
-    auto assembler_sc = make_stokes_interface_condensed_assembler(msh, hdi);
+    auto assembler = make_stokes_interface_assembler(msh, bcs_vel, hdi);
+    auto assembler_sc = make_stokes_interface_condensed_assembler(msh, bcs_vel, hdi);
     for (auto& cl : msh.cells)
     {
         auto contrib = method.make_contrib(msh, cl, test_case, hdi);
         auto lc = contrib.first;
         auto f = contrib.second;
 
-        if (location(msh, cl) != element_location::ON_INTERFACE)
-        {
-            if( sc )
-                assembler_sc.assemble(msh, cl, lc, f, bcs_vel);
-            else
-                assembler.assemble(msh, cl, lc, f, bcs_vel);
-        }
+        if( sc )
+            assembler_sc.assemble(msh, cl, lc, f);
         else
-        {
-            if( sc )
-                assembler_sc.assemble_cut(msh, cl, lc, f);
-            else
-                assembler.assemble_cut(msh, cl, lc, f);
-        }
+            assembler.assemble(msh, cl, lc, f);
     }
 
     if( sc )
@@ -706,15 +694,15 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
         {
             if( sc )
             {
-                vel_locdata_n = assembler_sc.take_velocity(msh, cl, sol, bcs_vel, element_location::IN_NEGATIVE_SIDE);
-                vel_locdata_p = assembler_sc.take_velocity(msh, cl, sol, bcs_vel, element_location::IN_POSITIVE_SIDE);
-                P_locdata_n = assembler_sc.take_pressure(msh, cl, sol, bcs_vel, element_location::IN_NEGATIVE_SIDE);
-                P_locdata_p = assembler_sc.take_pressure(msh, cl, sol, bcs_vel, element_location::IN_POSITIVE_SIDE);
+                vel_locdata_n = assembler_sc.take_velocity(msh, cl, sol, element_location::IN_NEGATIVE_SIDE);
+                vel_locdata_p = assembler_sc.take_velocity(msh, cl, sol, element_location::IN_POSITIVE_SIDE);
+                P_locdata_n = assembler_sc.take_pressure(msh, cl, sol, element_location::IN_NEGATIVE_SIDE);
+                P_locdata_p = assembler_sc.take_pressure(msh, cl, sol, element_location::IN_POSITIVE_SIDE);
             }
             else
             {
-                vel_locdata_n = assembler.take_velocity(msh, cl, sol, bcs_vel, element_location::IN_NEGATIVE_SIDE);
-                vel_locdata_p = assembler.take_velocity(msh, cl, sol, bcs_vel, element_location::IN_POSITIVE_SIDE);
+                vel_locdata_n = assembler.take_velocity(msh, cl, sol, element_location::IN_NEGATIVE_SIDE);
+                vel_locdata_p = assembler.take_velocity(msh, cl, sol, element_location::IN_POSITIVE_SIDE);
                 P_locdata_n = assembler.take_pressure(msh,cl, sol, element_location::IN_NEGATIVE_SIDE);
                 P_locdata_p = assembler.take_pressure(msh,cl, sol, element_location::IN_POSITIVE_SIDE);
             }
@@ -790,12 +778,12 @@ run_cuthho_interface(const Mesh& msh, size_t degree, meth method, testType test_
         {
             if( sc )
             {
-                vel_locdata = assembler_sc.take_velocity(msh, cl, sol, bcs_vel, element_location::IN_POSITIVE_SIDE);
-                P_locdata = assembler_sc.take_pressure(msh, cl, sol, bcs_vel, element_location::IN_POSITIVE_SIDE);
+                vel_locdata = assembler_sc.take_velocity(msh, cl, sol, element_location::IN_POSITIVE_SIDE);
+                P_locdata = assembler_sc.take_pressure(msh, cl, sol, element_location::IN_POSITIVE_SIDE);
             }
             else
             {
-                vel_locdata = assembler.take_velocity(msh, cl, sol, bcs_vel, element_location::IN_POSITIVE_SIDE);
+                vel_locdata = assembler.take_velocity(msh, cl, sol, element_location::IN_POSITIVE_SIDE);
                 P_locdata = assembler.take_pressure(msh,cl, sol, element_location::IN_POSITIVE_SIDE);
             }
             vel_cell_dofs = vel_locdata.head(cbs);
