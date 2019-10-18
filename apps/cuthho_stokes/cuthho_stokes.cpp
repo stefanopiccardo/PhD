@@ -428,7 +428,10 @@ class stokes_interface_method
     using Mesh = cuthho_mesh<T, ET>;
 
 protected:
-    stokes_interface_method(){}
+    bool sym_grad;
+
+    stokes_interface_method(bool sym)
+        : sym_grad(sym) {}
 
     virtual std::pair<Mat, Vect>
     make_contrib_cut(const Mesh& msh, const typename Mesh::cell_type& cl,
@@ -447,13 +450,17 @@ public:
         else
             kappa = test_case.parms.kappa_2;
 
-        auto gr = make_hho_gradrec_matrix(msh, cl, hdi);
+        Mat gr2;
+        if(sym_grad)
+            gr2 = make_hho_gradrec_sym_matrix(msh, cl, hdi).second;
+        else
+            gr2 = make_hho_gradrec_matrix(msh, cl, hdi).second;
         Mat stab = make_hho_vector_naive_stabilization(msh, cl, hdi);
-        Mat lc = kappa * (gr.second + stab);
+        Mat lc = kappa * (gr2 + stab);
         auto dr = make_hho_divergence_reconstruction(msh, cl, hdi);
         Mat f = make_vector_rhs(msh, cl, hdi.cell_degree(), test_case.rhs_fun);
 
-        size_t v_size = gr.second.rows();
+        size_t v_size = gr2.rows();
         size_t p_size = dr.first.rows();
         size_t loc_size = v_size + p_size;
         Mat lhs = Mat::Zero( loc_size, loc_size );
@@ -493,8 +500,8 @@ class Sym_gradrec_stokes_interface_method : public stokes_interface_method<T, ET
 public:
     T eta, gamma_0;
 
-    Sym_gradrec_stokes_interface_method(T eta_, T gamma_)
-        : stokes_interface_method<T,ET,testType>(), eta(eta_), gamma_0(gamma_) {}
+    Sym_gradrec_stokes_interface_method(T eta_, T gamma_, bool sym)
+        : stokes_interface_method<T,ET,testType>(sym), eta(eta_), gamma_0(gamma_) {}
 
     std::pair<Mat, Vect>
     make_contrib_cut(const Mesh& msh, const typename Mesh::cell_type& cl,
@@ -510,10 +517,21 @@ public:
         auto pbs = cell_basis<Mesh,T>::size(pdeg);
 
         // GR
-        auto gr_n = make_hho_gradrec_matrix_interface(msh, cl, level_set_function, hdi,
-                                                      element_location::IN_NEGATIVE_SIDE, 0.5);
-        auto gr_p = make_hho_gradrec_matrix_interface(msh, cl, level_set_function, hdi,
-                                                      element_location::IN_POSITIVE_SIDE, 0.5);
+        Mat gr2_n, gr2_p;
+        if(this->sym_grad)
+        {
+            gr2_n = make_hho_gradrec_sym_matrix_interface
+                (msh, cl, level_set_function, hdi,element_location::IN_NEGATIVE_SIDE, 0.5).second;
+            gr2_p = make_hho_gradrec_sym_matrix_interface
+                (msh, cl, level_set_function, hdi,element_location::IN_POSITIVE_SIDE, 0.5).second;
+        }
+        else
+        {
+            gr2_n = make_hho_gradrec_matrix_interface
+                (msh, cl, level_set_function, hdi,element_location::IN_NEGATIVE_SIDE, 0.5).second;
+            gr2_p = make_hho_gradrec_matrix_interface
+                (msh, cl, level_set_function, hdi,element_location::IN_POSITIVE_SIDE, 0.5).second;
+        }
 
         // stab
         Mat stab = make_hho_vector_stabilization_interface(msh, cl, level_set_function, hdi,parms);
@@ -524,7 +542,7 @@ public:
         stab.block(cbs, 0, cbs, cbs) -= parms.kappa_2 * penalty;
         stab.block(cbs, cbs, cbs, cbs) += parms.kappa_2 * penalty;
 
-        Mat lc = stab + parms.kappa_1 * gr_n.second + parms.kappa_2 * gr_p.second;
+        Mat lc = stab + parms.kappa_1 * gr2_n + parms.kappa_2 * gr2_p;
 
         // DR
         auto dr_n = make_hho_divergence_reconstruction_interface
@@ -584,9 +602,9 @@ public:
 
 template<typename T, size_t ET, typename testType>
 auto make_sym_gradrec_stokes_interface_method(const cuthho_mesh<T, ET>& msh, const T eta_,
-                                              const T gamma_, testType test_case)
+                                              const T gamma_, testType test_case, bool sym)
 {
-    return Sym_gradrec_stokes_interface_method<T, ET, testType>(eta_, gamma_);
+    return Sym_gradrec_stokes_interface_method<T, ET, testType>(eta_, gamma_, sym);
 }
 
 ///////////////////////////////////////
@@ -1006,9 +1024,9 @@ void convergence_test(void)
             if(1) // sin(\pi x) * sin(\pi y)
             {
                 auto test_case = make_test_case_stokes_1(msh, level_set_function);
-                TI = run_cuthho_fictdom(msh, k, test_case);
-                // auto method = make_sym_gradrec_stokes_interface_method(msh, 1.0, 0.0, test_case);
-                // TI = run_cuthho_interface(msh, k, method, test_case);
+                // TI = run_cuthho_fictdom(msh, k, test_case);
+                auto method = make_sym_gradrec_stokes_interface_method(msh, 1.0, 0.0, test_case, true);
+                TI = run_cuthho_interface(msh, k, method, test_case);
             }
 
             // report info in the file
@@ -1197,7 +1215,7 @@ int main(int argc, char **argv)
     // auto test_case = make_test_case_vector_laplacian_jumps_1(msh, level_set_function);
     auto test_case = make_test_case_stokes_1(msh, level_set_function);
 
-    auto method = make_sym_gradrec_stokes_interface_method(msh, 1.0, 0.0, test_case);
+    auto method = make_sym_gradrec_stokes_interface_method(msh, 1.0, 0.0, test_case, true);
 
     if (solve_interface)
         run_cuthho_interface(msh, degree, method, test_case);
