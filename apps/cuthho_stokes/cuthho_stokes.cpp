@@ -59,7 +59,11 @@ class stokes_fictdom_method
     using Mesh = cuthho_mesh<T, ET>;
 
 protected:
-    stokes_fictdom_method(){}
+    bool sym_grad;
+
+    stokes_fictdom_method(bool sym)
+        : sym_grad(sym)
+        {}
 
     virtual std::pair< std::pair<Mat,Mat>, std::pair<Vect,Vect> >
     make_contrib_cut(const Mesh& msh, const typename Mesh::cell_type& cl,
@@ -74,9 +78,13 @@ public:
     make_contrib_uncut(const Mesh& msh, const typename Mesh::cell_type& cl,
                        const hho_degree_info hdi, const testType test_case)
     {
-        auto gr = make_hho_gradrec_matrix(msh, cl, hdi);
+        Mat gr2;
+        if(sym_grad)
+            gr2 = make_hho_gradrec_sym_matrix(msh, cl, hdi).second;
+        else
+            gr2 = make_hho_gradrec_matrix(msh, cl, hdi).second;
         Mat stab = make_hho_vector_naive_stabilization(msh, cl, hdi);
-        Mat lc = gr.second + stab;
+        Mat lc = gr2 + stab;
         auto dr = make_hho_divergence_reconstruction(msh, cl, hdi);
         Vect f = make_vector_rhs(msh, cl, hdi.cell_degree(), test_case.rhs_fun);
         Vect p_rhs = Vect::Zero( dr.first.rows() );
@@ -115,8 +123,8 @@ class gradrec_stokes_fictdom_method : public stokes_fictdom_method<T, ET, testTy
 public:
     T eta;
 
-    gradrec_stokes_fictdom_method(T eta_)
-        : stokes_fictdom_method<T,ET,testType>(), eta(eta_) {}
+    gradrec_stokes_fictdom_method(T eta_, bool sym)
+        : stokes_fictdom_method<T,ET,testType>(sym), eta(eta_) {}
 
     std::pair< std::pair<Mat,Mat>, std::pair<Vect,Vect> >
     make_contrib_cut(const Mesh& msh, const typename Mesh::cell_type& cl,
@@ -125,10 +133,22 @@ public:
                      const params<T>& parms = params<T>())
     {
         // LHS
-        auto gr = make_hho_gradrec_matrix(msh, cl, test_case.level_set_, hdi, where, 1.0);
+        Mat gr1, gr2;
+        if( this->sym_grad )
+        {
+            auto gr = make_hho_gradrec_sym_matrix(msh, cl, test_case.level_set_, hdi, where, 1.0);
+            gr1 = gr.first;
+            gr2 = gr.second;
+        }
+        else
+        {
+            auto gr = make_hho_gradrec_matrix(msh, cl, test_case.level_set_, hdi, where, 1.0);
+            gr1 = gr.first;
+            gr2 = gr.second;
+        }
         Mat stab = make_hho_vector_cut_stabilization(msh, cl, hdi, where)
             + make_hho_cut_interface_vector_penalty(msh, cl, hdi, eta);
-        Mat lc = gr.second + stab;
+        Mat lc = gr2 + stab;
         auto dr = make_hho_divergence_reconstruction(msh, cl, test_case.level_set_,
                                                      hdi, where, 1.0);
 
@@ -139,7 +159,8 @@ public:
         Vect f = Vect::Zero(lc.rows());
         f.block(0, 0, cbs, 1) += make_vector_rhs(msh, cl, celdeg, test_case.rhs_fun, where);
         f.block(0, 0, cbs, 1) += make_vector_rhs_penalty(msh, cl, celdeg, test_case.bcs_vel, eta);
-        f += make_vector_GR_rhs(msh, cl, celdeg, test_case.bcs_vel, test_case.level_set_, gr.first);
+        f += make_vector_GR_rhs(msh, cl, celdeg, test_case.bcs_vel, test_case.level_set_,
+                                gr1, this->sym_grad);
         auto p_rhs = make_pressure_rhs(msh, cl, hdi.face_degree(), where,
                                        test_case.level_set_, test_case.bcs_vel);
 
@@ -151,9 +172,9 @@ public:
 
 template<typename T, size_t ET, typename testType>
 auto make_gradrec_stokes_fictdom_method(const cuthho_mesh<T, ET>& msh, const T eta_,
-                                 const testType test_case)
+                                        const testType test_case, bool sym)
 {
-    return gradrec_stokes_fictdom_method<T, ET, testType>(eta_);
+    return gradrec_stokes_fictdom_method<T, ET, testType>(eta_, sym);
 }
 
 ///////////////////////////
@@ -218,7 +239,7 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
     auto assembler_sc = make_stokes_fict_condensed_assembler(msh, bcs_fun, hdi, where);
 
     // method with gradient reconstruction (penalty-free)
-    auto class_meth = make_gradrec_stokes_fictdom_method(msh, 1.0, test_case);
+    auto class_meth = make_gradrec_stokes_fictdom_method(msh, 1.0, test_case, true);
 
     for (auto& cl : msh.cells)
     {
@@ -985,9 +1006,9 @@ void convergence_test(void)
             if(1) // sin(\pi x) * sin(\pi y)
             {
                 auto test_case = make_test_case_stokes_1(msh, level_set_function);
-                // TI = run_cuthho_fictdom(msh, k, test_case);
-                auto method = make_sym_gradrec_stokes_interface_method(msh, 1.0, 0.0, test_case);
-                TI = run_cuthho_interface(msh, k, method, test_case);
+                TI = run_cuthho_fictdom(msh, k, test_case);
+                // auto method = make_sym_gradrec_stokes_interface_method(msh, 1.0, 0.0, test_case);
+                // TI = run_cuthho_interface(msh, k, method, test_case);
             }
 
             // report info in the file
