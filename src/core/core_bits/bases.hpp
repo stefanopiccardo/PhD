@@ -551,3 +551,86 @@ public:
         return 2*2*(degree+2)*(degree+1)/2;
     }
 };
+
+
+////////////   SYM MATRIX BASIS
+
+
+template<typename Mesh, typename VT>
+class sym_matrix_cell_basis
+{
+    typedef typename Mesh::coordinate_type  coordinate_type;
+    typedef typename Mesh::point_type       point_type;
+    typedef Matrix<VT, 2, 2>                matrix_type;
+    typedef Matrix<VT, Dynamic, 2>          function_type;
+
+    point_type          cell_bar;
+    coordinate_type     cell_h;
+    size_t              basis_degree, basis_size;
+
+    cell_basis<Mesh,VT>          scalar_basis;
+
+#ifdef POWER_CACHE
+    std::vector<coordinate_type>  power_cache;
+#endif
+
+public:
+    sym_matrix_cell_basis(const Mesh& msh, const typename Mesh::cell_type& cl, size_t degree) :
+        scalar_basis(msh, cl, degree)
+    {
+        cell_bar        = barycenter(msh, cl);
+        cell_h          = diameter(msh, cl);
+        basis_degree    = degree;
+        basis_size      = 3*(basis_degree+2)*(basis_degree+1)/2;
+    }
+
+    std::vector<matrix_type>
+    eval_basis(const point_type& pt)
+    {
+        std::vector<matrix_type> ret;
+        ret.reserve(basis_size);
+
+        const auto phi = scalar_basis.eval_basis(pt);
+
+
+
+        for (int k = 0; k < scalar_basis.size(); k++)
+        {
+            matrix_type fc;
+
+            fc       = matrix_type::Zero();
+            fc(0, 0) = phi(k);
+            ret.push_back(fc);
+
+            fc       = matrix_type::Zero();
+            fc(1, 0) = phi(k);
+            fc(0, 1) = phi(k);
+            ret.push_back(fc);
+
+            fc       = matrix_type::Zero();
+            fc(1, 1) = phi(k);
+            ret.push_back(fc);
+        }
+
+        assert(ret.size() == basis_size);
+        assert(3 * scalar_basis.size() == basis_size);
+
+        return ret;
+    }
+
+    size_t size() const
+    {
+        return basis_size;
+    }
+
+    size_t degree() const
+    {
+        return basis_degree;
+    }
+
+    static size_t size(size_t degree)
+    {
+        return 3*(degree+2)*(degree+1)/2;
+    }
+};
+
