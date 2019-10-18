@@ -970,3 +970,72 @@ make_hho_divergence_reconstruction(const Mesh& msh, const typename Mesh::cell_ty
     return std::make_pair(oper, data);
 }
 
+///////  SYMMETRICAL GRADIENT RECONSTRUCTIONS
+
+
+template<typename Mesh>
+std::pair<   Matrix<typename Mesh::coordinate_type, Dynamic, Dynamic>,
+             Matrix<typename Mesh::coordinate_type, Dynamic, Dynamic>  >
+make_hho_gradrec_sym_matrix
+(const Mesh& msh, const typename Mesh::cell_type& cl, const hho_degree_info& di)
+{
+    using T = typename Mesh::coordinate_type;
+    typedef Matrix<T, Dynamic, Dynamic> matrix_type;
+    typedef Matrix<T, Dynamic, 1>       vector_type;
+
+    const auto celdeg  = di.cell_degree();
+    const auto facdeg  = di.face_degree();
+    const auto graddeg = di.grad_degree();
+
+    vector_cell_basis<Mesh,T>     cb(msh, cl, celdeg);
+    sym_matrix_cell_basis<Mesh,T>     gb(msh, cl, graddeg);
+
+    auto cbs = vector_cell_basis<Mesh,T>::size(celdeg);
+    auto fbs = vector_face_basis<Mesh,T>::size(facdeg);
+    auto gbs = sym_matrix_cell_basis<Mesh,T>::size(graddeg);
+
+    const auto num_faces = faces(msh, cl).size();
+
+    matrix_type         gr_lhs = matrix_type::Zero(gbs, gbs);
+    matrix_type         gr_rhs = matrix_type::Zero(gbs, cbs + num_faces * fbs);
+
+    if(celdeg > 0)
+    {
+        const auto qps = integrate(msh, cl, celdeg - 1 + facdeg);
+        for (auto& qp : qps)
+        {
+            const auto c_dphi = cb.eval_gradients(qp.first);
+            const auto g_phi  = gb.eval_basis(qp.first);
+
+            gr_lhs.block(0, 0, gbs, gbs) += qp.second * inner_product(g_phi, g_phi);
+            // we use here the symmetry of the basis gb
+            gr_rhs.block(0, 0, gbs, cbs) += qp.second * inner_product(g_phi, c_dphi);
+        }
+    }
+
+    const auto fcs = faces(msh, cl);
+    const auto ns = normals(msh, cl);
+    for (size_t i = 0; i < fcs.size(); i++)
+    {
+        const auto fc = fcs[i];
+        const auto n  = ns[i];
+        vector_face_basis<Mesh,T> fb(msh, fc, facdeg);
+
+        const auto qps_f = integrate(msh, fc, facdeg + std::max(facdeg, celdeg));
+        for (auto& qp : qps_f)
+        {
+            const matrix_type c_phi      = cb.eval_basis(qp.first);
+            const matrix_type f_phi      = fb.eval_basis(qp.first);
+            const auto        g_phi      = gb.eval_basis(qp.first);
+            const matrix_type qp_g_phi_n = qp.second * outer_product(g_phi, n);
+
+            gr_rhs.block(0, cbs + i * fbs, gbs, fbs) += qp_g_phi_n * f_phi.transpose();
+            gr_rhs.block(0, 0, gbs, cbs) -= qp_g_phi_n * c_phi.transpose();
+        }
+    }
+
+    matrix_type oper = gr_lhs.ldlt().solve(gr_rhs);
+    matrix_type data = 2.0 * gr_rhs.transpose() * oper;
+
+    return std::make_pair(oper, data);
+}

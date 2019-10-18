@@ -448,6 +448,22 @@ inner_product(const Matrix<T, N, N>& b, const Matrix<T, N, N>& a)
     return a.cwiseProduct(b).sum();
 }
 
+
+template<typename T, int N>
+Matrix<T, Dynamic, Dynamic>
+inner_product(const std::vector<Matrix<T, N, N>>& a, const std::vector<Matrix<T, N, N>>& b)
+{
+    Matrix<T, Dynamic, Dynamic> ret = Matrix<T, Dynamic, Dynamic>::Zero( a.size(), b.size() );
+    for(size_t i = 0; i < a.size(); i++)
+    {
+        for(size_t j = 0; j < b.size(); j++)
+        {
+            ret(i,j) = inner_product(a[i],b[j]);
+        }
+    }
+    return ret;
+}
+
 ///////////////////////  ASSEMBLY METHODS  /////////////////////////////
 
 
