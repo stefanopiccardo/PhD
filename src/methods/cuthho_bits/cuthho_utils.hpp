@@ -1345,27 +1345,46 @@ template<typename T, size_t ET, typename F1, typename F2>
 Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, 1>
 make_vector_GR_rhs(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
                    size_t degree, const F1& g, const F2& level_set_function,
-                   Matrix<T, Dynamic, Dynamic> GR)
+                   Matrix<T, Dynamic, Dynamic> GR, bool sym_grad = false)
 {
     typedef Matrix<T, Dynamic, Dynamic> matrix_type;
     vector_cell_basis<cuthho_mesh<T, ET>,T> cb(msh, cl, degree);
     auto cbs = cb.size();
-
-    matrix_cell_basis<cuthho_mesh<T, ET>,T> gb(msh, cl, degree-1);
-    auto gbs = gb.size();
+    size_t gbs;
+    if( sym_grad )
+        gbs = sym_matrix_cell_basis<cuthho_mesh<T, ET>,T>::size(degree-1);
+    else
+        gbs = matrix_cell_basis<cuthho_mesh<T, ET>,T>::size(degree-1);
 
     Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(cbs);
 
     Matrix<T, Dynamic, 1> source_vect = Matrix<T, Dynamic, 1>::Zero(gbs);
 
-    auto qpsi = integrate_interface(msh, cl, 2*degree-1, element_location::IN_NEGATIVE_SIDE);
-    for (auto& qp : qpsi)
+    if( sym_grad )
     {
-        const auto n = level_set_function.normal(qp.first);
-        const auto g_phi  = gb.eval_basis(qp.first);
-        const matrix_type     qp_g_phi_n = qp.second * outer_product(g_phi, n);
+        sym_matrix_cell_basis<cuthho_mesh<T, ET>,T> gb(msh, cl, degree-1);
+        auto qpsi = integrate_interface(msh, cl, 2*degree-1, element_location::IN_NEGATIVE_SIDE);
+        for (auto& qp : qpsi)
+        {
+            const auto n = level_set_function.normal(qp.first);
+            const auto g_phi  = gb.eval_basis(qp.first);
+            const matrix_type     qp_g_phi_n = qp.second * outer_product(g_phi, n);
 
-        source_vect += qp_g_phi_n * g(qp.first);
+            source_vect += 2 * qp_g_phi_n * g(qp.first);
+        }
+    }
+    else
+    {
+        matrix_cell_basis<cuthho_mesh<T, ET>,T> gb(msh, cl, degree-1);
+        auto qpsi = integrate_interface(msh, cl, 2*degree-1, element_location::IN_NEGATIVE_SIDE);
+        for (auto& qp : qpsi)
+        {
+            const auto n = level_set_function.normal(qp.first);
+            const auto g_phi  = gb.eval_basis(qp.first);
+            const matrix_type     qp_g_phi_n = qp.second * outer_product(g_phi, n);
+
+            source_vect += qp_g_phi_n * g(qp.first);
+        }
     }
 
     return -GR.transpose() * source_vect;
