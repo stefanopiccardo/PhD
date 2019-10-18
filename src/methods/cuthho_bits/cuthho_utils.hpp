@@ -1916,3 +1916,106 @@ make_hho_gradrec_sym_matrix
 
     return std::make_pair(oper, data);
 }
+
+
+//// make_hho_gradrec_sym_matrix_interface
+// return the gradient reconstruction for the interface pb
+// coeff -> scales the interface term
+template<typename T, size_t ET, typename Function>
+std::pair<   Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>,
+             Matrix<typename cuthho_mesh<T, ET>::coordinate_type, Dynamic, Dynamic>  >
+make_hho_gradrec_sym_matrix_interface
+(const cuthho_mesh<T, ET>& msh, const typename cuthho_mesh<T, ET>::cell_type& cl,
+ const Function& level_set_function, const hho_degree_info& di, element_location where, T coeff)
+{
+    if ( !is_cut(msh, cl) )
+        throw std::invalid_argument("The cell is not cut");
+
+    typedef Matrix<T, Dynamic, Dynamic> matrix_type;
+    typedef Matrix<T, Dynamic, 1>       vector_type;
+
+    const auto celdeg  = di.cell_degree();
+    const auto facdeg  = di.face_degree();
+    const auto graddeg = di.grad_degree();
+
+    vector_cell_basis<cuthho_mesh<T, ET>,T>        cb(msh, cl, celdeg);
+    sym_matrix_cell_basis<cuthho_mesh<T, ET>,T>    gb(msh, cl, graddeg);
+
+
+    auto cbs = vector_cell_basis<cuthho_mesh<T, ET>,T>::size(celdeg);
+    auto fbs = vector_face_basis<cuthho_mesh<T, ET>,T>::size(facdeg);
+    auto gbs = sym_matrix_cell_basis<cuthho_mesh<T, ET>,T>::size(graddeg);
+
+    const auto num_faces = faces(msh, cl).size();
+
+    matrix_type       rhs_tmp = matrix_type::Zero(gbs, cbs + num_faces * fbs);
+    matrix_type        gr_lhs = matrix_type::Zero(gbs, gbs);
+    matrix_type        gr_rhs = matrix_type::Zero(gbs, 2*cbs + 2*num_faces * fbs);
+
+    const auto qps = integrate(msh, cl, celdeg - 1 + facdeg, where);
+    for (auto& qp : qps)
+    {
+        const auto c_dphi = cb.eval_gradients(qp.first);
+        const auto g_phi  = gb.eval_basis(qp.first);
+
+        gr_lhs.block(0, 0, gbs, gbs) += qp.second * inner_product(g_phi, g_phi);
+        rhs_tmp.block(0, 0, gbs, cbs) += qp.second * inner_product(g_phi, c_dphi);
+    }
+
+    const auto fcs = faces(msh, cl);
+    const auto ns = normals(msh, cl);
+    for (size_t i = 0; i < fcs.size(); i++)
+    {
+        const auto fc = fcs[i];
+        const auto n  = ns[i];
+        cut_vector_face_basis<cuthho_mesh<T, ET>,T> fb(msh, fc, facdeg, where);
+
+        const auto qps_f = integrate(msh, fc, facdeg + std::max(facdeg, celdeg), where);
+        for (auto& qp : qps_f)
+        {
+            const matrix_type c_phi      = cb.eval_basis(qp.first);
+            const matrix_type f_phi      = fb.eval_basis(qp.first);
+            const auto        g_phi      = gb.eval_basis(qp.first);
+            const matrix_type qp_g_phi_n = qp.second * outer_product(g_phi, n);
+
+            rhs_tmp.block(0, cbs + i * fbs, gbs, fbs) += qp_g_phi_n * f_phi.transpose();
+            rhs_tmp.block(0, 0, gbs, cbs) -= qp_g_phi_n * c_phi.transpose();
+        }
+    }
+
+    // term on the interface
+    matrix_type        interface_term = matrix_type::Zero(gbs, 2*cbs);
+    const auto iqps = integrate_interface(msh, cl, celdeg + graddeg, element_location::IN_NEGATIVE_SIDE);
+    for (auto& qp : iqps)
+    {
+        const auto c_phi        = cb.eval_basis(qp.first);
+        const auto g_phi        = gb.eval_basis(qp.first);
+
+        Matrix<T,2,1> n = level_set_function.normal(qp.first);
+        const matrix_type qp_g_phi_n = qp.second * outer_product(g_phi, n);
+
+        interface_term.block(0 , 0, gbs, cbs) -= qp_g_phi_n * c_phi.transpose();
+        interface_term.block(0 , cbs, gbs, cbs) += qp_g_phi_n * c_phi.transpose();
+    }
+    gr_rhs.block(0, 0, gbs, 2*cbs) += coeff * interface_term;
+
+    // other terms
+    if(where == element_location::IN_NEGATIVE_SIDE)
+    {
+        gr_rhs.block(0, 0, gbs, cbs) += rhs_tmp.block(0, 0, gbs, cbs);
+        gr_rhs.block(0, 2*cbs, gbs, num_faces*fbs)
+            += rhs_tmp.block(0, cbs, gbs, num_faces*fbs);
+    }
+    else if( where == element_location::IN_POSITIVE_SIDE)
+    {
+        gr_rhs.block(0, cbs, gbs, cbs) += rhs_tmp.block(0, 0, gbs, cbs);
+        gr_rhs.block(0, 2*cbs + num_faces*fbs, gbs, num_faces*fbs)
+                     += rhs_tmp.block(0, cbs, gbs, num_faces*fbs);
+    }
+
+    matrix_type oper = gr_lhs.ldlt().solve(gr_rhs);
+    matrix_type data = 2 * gr_rhs.transpose() * oper;
+
+    return std::make_pair(oper, data);
+}
+
