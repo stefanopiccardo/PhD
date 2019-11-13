@@ -664,3 +664,89 @@ auto make_test_case_stokes_1(const Mesh& msh, Function level_set_function)
     return test_case_stokes_1<typename Mesh::coordinate_type, Function, Mesh>(level_set_function);
 }
 
+///// test_case_stokes_2
+// exact solution : X^2 (X^2 - 2X + 1) Y (4Y^2 - 6Y + 2) in the whole domain for vel_component 1
+//                 -Y^2 (Y^2 - 2Y + 1) X (4X^2 - 6X + 2) in the whole domain for vel_component 2
+//                   sin(X + Y)                          in the whole domain for p
+// where X = x - 0.5, Y = y - 0.5
+// \kappa_1 = \kappa_2 = 1
+template<typename T, typename Function, typename Mesh>
+class test_case_stokes_2: public test_case_stokes<T, Function, Mesh>
+{
+   public:
+    test_case_stokes_2(Function level_set__)
+        : test_case_stokes<T, Function, Mesh>
+        (level_set__, params<T>(),
+         [](const typename Mesh::point_type& pt) -> Eigen::Matrix<T, 2, 1> { // sol_vel
+            Matrix<T, 2, 1> ret;
+            T x1 = pt.x()-0.5;
+            T x2 = x1 * x1;
+            T y1 = pt.y()-0.5;
+            T y2 = y1 * y1;
+            ret(0) = x2 * (x2 - 2. * x1 + 1.)  * y1 * (4. * y2 - 6. * y1 + 2.);
+            ret(1) = -y2 * (y2 - 2. * y1 + 1. ) * x1 * (4. * x2 - 6. * x1 + 2.);
+            return ret;},
+         [](const typename Mesh::point_type& pt) -> T { // p
+             T x1 = pt.x() - 0.5;
+             T y1 = pt.y() - 0.5;
+             return std::sin(x1 + y1);},
+         [](const typename Mesh::point_type& pt) -> Eigen::Matrix<T, 2, 1> { // rhs
+             Matrix<T, 2, 1> ret;
+             T x1 = pt.x()-0.5;
+             T x2 = x1 * x1;
+             T y1 = pt.y()-0.5;
+             T y2 = y1 * y1;
+
+             T ax =  x2 * (x2 - 2. * x1 + 1.);
+             T ay =  y2 * (y2 - 2. * y1 + 1.);
+             T bx =  x1 * (4. * x2 - 6. * x1 + 2.);
+             T by =  y1 * (4. * y2 - 6. * y1 + 2.);
+             T cx = 12. * x2 - 12.* x1 + 2.;
+             T cy = 12. * y2 - 12.* y1 + 2.;
+             T dx = 24. * x1 - 12.;
+             T dy = 24. * y1 - 12.;
+
+             ret(0) = - cx * by - ax * dy + std::cos(x1+y1);
+             ret(1) = + cy * bx + ay * dx + std::cos(x1+y1);
+
+             return ret;},
+         [&](const typename Mesh::point_type& pt) -> Eigen::Matrix<T, 2, 1> { // bcs
+            Matrix<T, 2, 1> ret;
+            T x1 = pt.x()-0.5;
+            T x2 = x1 * x1;
+            T y1 = pt.y()-0.5;
+            T y2 = y1 * y1;
+            ret(0) = x2 * (x2 - 2. * x1 + 1.)  * y1 * (4. * y2 - 6. * y1 + 2.);
+            ret(1) = -y2 * (y2 - 2. * y1 + 1. ) * x1 * (4. * x2 - 6. * x1 + 2.);
+            return ret;},
+         [](const typename Mesh::point_type& pt) -> auto { // grad
+             Matrix<T, 2, 2> ret;
+             T x1 = pt.x()-0.5;
+             T x2 = x1 * x1;
+             T y1 = pt.y()-0.5;
+             T y2 = y1 * y1;
+
+             ret(0,0) = x1 * (4. * x2 - 6. * x1 + 2.) * y1 * (4. * y2 - 6. * y1 + 2.);
+             ret(0,1) = x2 * ( x2 - 2. * x1 + 1.) * (12. * y2 - 12. * y1 + 2.);
+             ret(1,0) = - y2 * ( y2 - 2. * y1 + 1.) * (12. * x2 - 12. * x1 + 2.);
+             ret(1,1) = - ret(0,0);
+             return ret;},
+         [](const typename Mesh::point_type& pt) -> Eigen::Matrix<T, 2, 1> {/* Dir */
+             Matrix<T, 2, 1> ret;
+             ret(0) = 0.0;
+             ret(1) = 0.0;
+             return ret;},
+         [](const typename Mesh::point_type& pt) -> Eigen::Matrix<T, 2, 1> {/* Neu */
+             Matrix<T, 2, 1> ret;
+             ret(0) = 0.0;
+             ret(1) = 0.0;
+             return ret;})
+        {}
+};
+
+template<typename Mesh, typename Function>
+auto make_test_case_stokes_2(const Mesh& msh, Function level_set_function)
+{
+    return test_case_stokes_2<typename Mesh::coordinate_type, Function, Mesh>(level_set_function);
+}
+

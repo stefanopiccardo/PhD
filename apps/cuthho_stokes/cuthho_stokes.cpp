@@ -1024,12 +1024,13 @@ void convergence_test(void)
             // compute solution/errors
             stokes_test_info<T> TI;
 
-            if(1) // sin(\pi x) * sin(\pi y)
+            if(1)
             {
-                auto test_case = make_test_case_stokes_1(msh, level_set_function);
-                // TI = run_cuthho_fictdom(msh, k, test_case);
-                auto method = make_sym_gradrec_stokes_interface_method(msh, 1.0, 0.0, test_case, true);
-                TI = run_cuthho_interface(msh, k, method, test_case);
+                // auto test_case = make_test_case_stokes_1(msh, level_set_function);
+                auto test_case = make_test_case_stokes_2(msh, level_set_function);
+                TI = run_cuthho_fictdom(msh, k, test_case);
+                // auto method = make_sym_gradrec_stokes_interface_method(msh, 1.0, 0.0, test_case, true);
+                // TI = run_cuthho_interface(msh, k, method, test_case);
             }
 
             // report info in the file
@@ -1211,12 +1212,8 @@ int main(int argc, char **argv)
 
     output_mesh_info(msh, level_set_function);
 
-    // jumps sin_sin -> exp_cos
-    // auto test_case = make_test_case_laplacian_jumps_1(msh, level_set_function);
-    // auto test_case = make_test_case_vector_laplacian_sin_sin_exp_cos(msh, level_set_function);
-    // auto test_case = make_test_case_vector_laplacian_sin_sin(msh, level_set_function);
-    // auto test_case = make_test_case_vector_laplacian_jumps_1(msh, level_set_function);
-    auto test_case = make_test_case_stokes_1(msh, level_set_function);
+    // auto test_case = make_test_case_stokes_1(msh, level_set_function);
+    auto test_case = make_test_case_stokes_2(msh, level_set_function);
 
     auto method = make_sym_gradrec_stokes_interface_method(msh, 1.0, 0.0, test_case, true);
 
