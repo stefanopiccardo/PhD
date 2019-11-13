@@ -322,6 +322,7 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
 
     postprocess_output<RealType>  postoutput;
 
+    auto uT_l2_gp  = std::make_shared< gnuplot_output_object<RealType> >("fictdom_uT_norm.dat");
     auto uT1_gp  = std::make_shared< gnuplot_output_object<RealType> >("fictdom_uT1.dat");
     auto uT2_gp  = std::make_shared< gnuplot_output_object<RealType> >("fictdom_uT2.dat");
     auto p_gp    = std::make_shared< gnuplot_output_object<RealType> >("fictdom_p.dat");
@@ -385,6 +386,7 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
 
                 uT1_gp->add_data( qp.first, v(0) );
                 uT2_gp->add_data( qp.first, v(1) );
+                uT_l2_gp->add_data( qp.first, std::sqrt( v(0)*v(0) + v(1)*v(1) ) );
 
                 /* L2 - pressure - error */
                 auto s_cphi = s_cb.eval_basis( qp.first );
@@ -400,6 +402,7 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
     std::cout << bold << green << "Energy-norm absolute error:           " << std::sqrt(H1_error) << std::endl;
     std::cout << bold << green << "L2 - pressure - error:                " << std::sqrt(L2_pressure_error) << std::endl;
 
+    postoutput.add_object(uT_l2_gp);
     postoutput.add_object(uT1_gp);
     postoutput.add_object(uT2_gp);
     postoutput.add_object(p_gp);
