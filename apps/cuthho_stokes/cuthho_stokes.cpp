@@ -322,6 +322,7 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
 
     postprocess_output<RealType>  postoutput;
 
+    auto uT_l2_gp  = std::make_shared< gnuplot_output_object<RealType> >("fictdom_uT_norm.dat");
     auto uT1_gp  = std::make_shared< gnuplot_output_object<RealType> >("fictdom_uT1.dat");
     auto uT2_gp  = std::make_shared< gnuplot_output_object<RealType> >("fictdom_uT2.dat");
     auto p_gp    = std::make_shared< gnuplot_output_object<RealType> >("fictdom_p.dat");
@@ -385,6 +386,7 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
 
                 uT1_gp->add_data( qp.first, v(0) );
                 uT2_gp->add_data( qp.first, v(1) );
+                uT_l2_gp->add_data( qp.first, std::sqrt( v(0)*v(0) + v(1)*v(1) ) );
 
                 /* L2 - pressure - error */
                 auto s_cphi = s_cb.eval_basis( qp.first );
@@ -400,6 +402,7 @@ run_cuthho_fictdom(const Mesh& msh, size_t degree, testType test_case)
     std::cout << bold << green << "Energy-norm absolute error:           " << std::sqrt(H1_error) << std::endl;
     std::cout << bold << green << "L2 - pressure - error:                " << std::sqrt(L2_pressure_error) << std::endl;
 
+    postoutput.add_object(uT_l2_gp);
     postoutput.add_object(uT1_gp);
     postoutput.add_object(uT2_gp);
     postoutput.add_object(p_gp);
@@ -1021,12 +1024,13 @@ void convergence_test(void)
             // compute solution/errors
             stokes_test_info<T> TI;
 
-            if(1) // sin(\pi x) * sin(\pi y)
+            if(1)
             {
-                auto test_case = make_test_case_stokes_1(msh, level_set_function);
-                // TI = run_cuthho_fictdom(msh, k, test_case);
-                auto method = make_sym_gradrec_stokes_interface_method(msh, 1.0, 0.0, test_case, true);
-                TI = run_cuthho_interface(msh, k, method, test_case);
+                // auto test_case = make_test_case_stokes_1(msh, level_set_function);
+                auto test_case = make_test_case_stokes_2(msh, level_set_function);
+                TI = run_cuthho_fictdom(msh, k, test_case);
+                // auto method = make_sym_gradrec_stokes_interface_method(msh, 1.0, 0.0, test_case, true);
+                // TI = run_cuthho_interface(msh, k, method, test_case);
             }
 
             // report info in the file
@@ -1208,12 +1212,8 @@ int main(int argc, char **argv)
 
     output_mesh_info(msh, level_set_function);
 
-    // jumps sin_sin -> exp_cos
-    // auto test_case = make_test_case_laplacian_jumps_1(msh, level_set_function);
-    // auto test_case = make_test_case_vector_laplacian_sin_sin_exp_cos(msh, level_set_function);
-    // auto test_case = make_test_case_vector_laplacian_sin_sin(msh, level_set_function);
-    // auto test_case = make_test_case_vector_laplacian_jumps_1(msh, level_set_function);
-    auto test_case = make_test_case_stokes_1(msh, level_set_function);
+    // auto test_case = make_test_case_stokes_1(msh, level_set_function);
+    auto test_case = make_test_case_stokes_2(msh, level_set_function);
 
     auto method = make_sym_gradrec_stokes_interface_method(msh, 1.0, 0.0, test_case, true);
 
