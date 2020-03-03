@@ -1072,7 +1072,7 @@ void convergence_test(void)
 }
 
 //////////////////////////     MAIN        ////////////////////////////
-#if 1
+#if 0
 int main(int argc, char **argv)
 {
     convergence_test();
@@ -1082,7 +1082,7 @@ int main(int argc, char **argv)
 }
 #endif
 
-#if 0
+#if 1
 int main(int argc, char **argv)
 {
     using RealType = double;
@@ -1214,9 +1214,16 @@ int main(int argc, char **argv)
 
     // auto test_case = make_test_case_stokes_1(msh, level_set_function);
     auto test_case = make_test_case_stokes_2(msh, level_set_function);
-
+    // auto test_case = make_test_case_kink_velocity(msh, .... );
+    
+    //auto test_case = make_test_case_kink_velocity2(msh, level_set_function);
+    
+    
+    
     auto method = make_sym_gradrec_stokes_interface_method(msh, 1.0, 0.0, test_case, true);
 
+    
+    
     if (solve_interface)
         run_cuthho_interface(msh, degree, method, test_case);
 
