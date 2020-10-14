@@ -33028,7 +33028,7 @@ int main(int argc, char **argv)
 // VAAAAAAAAA!!!!!
 // BERNSTEIN BASIS HIGH ORDER FOR PHI PLUS L2 PROJECTION -> Velocity is Lagrangian
 // Taylor Green Vortex Velocity Field
-#if 0
+#if 1
 int main(int argc, char **argv)
 {
     using RealType = double;
@@ -33157,8 +33157,8 @@ int main(int argc, char **argv)
 
     /************** ANALYTIC LEVEL SET FUNCTION  **************/
     RealType radius = 1.0/9.0; // I PUT 6.0, IT WAS 1.0/3.0
-    RealType x_centre = 0.3; // 0.3
-    RealType y_centre = 0.8;  // 0.8
+    RealType x_centre = 0.5; // 0.3
+    RealType y_centre = 0.25;  // 0.8
 
     auto level_set_function_anal = circle_level_set<RealType>(radius, x_centre, y_centre);
     std::cout << bold << yellow << "Initial Analytic Area Circle: "<< M_PI*radius*radius << " , and circonference: "<< 2*M_PI*radius << reset << std::endl;
@@ -34484,7 +34484,7 @@ int main(int argc, char **argv)
 #endif
 
 
-#if 1
+#if 0
 int main(int argc, char **argv)
 {
     convergence_fast_Bernstein_inlet_condition();
