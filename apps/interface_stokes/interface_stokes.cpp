@@ -44005,11 +44005,11 @@ int main(int argc, char **argv)
     /**************  VELOCITY FIELD  INITIALISATION  **************/
    
     
-    size_t  degree_velocity = std::max(degree + 1 , degree_FEM) ; // degree_FEM ; //10 ;
+    size_t  degree_velocity = degree_FEM ; // std::max(degree + 1 , degree_FEM) ; //10 ;
     auto fe_data_Lagrange = Finite_Element<RealType,Mesh>( msh , degree_velocity , mip ) ;
    
     std::cout<<"Velocity field: high order Lagrange basis: degree = "<<degree_velocity<<std::endl;
-    auto u_projected = velocity_high_order <Mesh,FiniteSpace,T> (fe_data_Lagrange , msh );
+    auto u_projected = velocity_high_order <Mesh,FiniteSpace,T> ( fe_data , msh ); //fe_data_Lagrange
  
     
     
@@ -44480,10 +44480,10 @@ int main(int argc, char **argv)
                 //run_FEM_BERNSTEIN_CORRECT_FAST( level_set_function.msh , fe_data , level_set_function , u_projected , sub_dt);
             }
             else{
-                if(degree_velocity == degree_FEM) // IT IS FASTER
+                //if(degree_velocity == degree_FEM) // IT IS FASTER
                     run_FEM_BERNSTEIN_LOW_ORDER_CORRECT_FAST_NEW_DIRICHLET_COND( level_set_function.msh , fe_data , level_set_function , u_projected , sub_dt  );
-                else
-                    run_FEM_BERNSTEIN_LOW_ORDER_CORRECT_FAST_NEW_DIRICHLET_COND( level_set_function.msh , fe_data , level_set_function , u_projected , sub_dt  , fe_data_Lagrange);
+                //else
+                //    run_FEM_BERNSTEIN_LOW_ORDER_CORRECT_FAST_NEW_DIRICHLET_COND( level_set_function.msh , fe_data , level_set_function , u_projected , sub_dt  , fe_data_Lagrange);
                 
             }
             //run_FEM_BERNSTEIN_LOW_ORDER_CORRECT_FAST( level_set_function.msh , fe_data , level_set_function , u_projected , sub_dt);
@@ -44637,10 +44637,10 @@ int main(int argc, char **argv)
                         run_FEM_BERNSTEIN_CORRECT_FAST_NEW_D_NEW_DIRICHLET_COND( level_set_tmp.msh , fe_data , level_set_tmp , u_projected , sub_dt , mapping );
                     }
                     else{
-                        if(degree_velocity == degree_FEM) // IT IS FASTER
+                        //if(degree_velocity == degree_FEM) // IT IS FASTER
                             run_FEM_BERNSTEIN_LOW_ORDER_CORRECT_FAST_NEW_DIRICHLET_COND( level_set_tmp.msh , fe_data , level_set_tmp , u_projected , sub_dt);
-                        else
-                            run_FEM_BERNSTEIN_LOW_ORDER_CORRECT_FAST_NEW_DIRICHLET_COND( level_set_tmp.msh , fe_data , level_set_tmp , u_projected , sub_dt,fe_data_Lagrange);
+                       // else
+                         //   run_FEM_BERNSTEIN_LOW_ORDER_CORRECT_FAST_NEW_DIRICHLET_COND( level_set_tmp.msh , fe_data , level_set_tmp , u_projected , sub_dt,fe_data_Lagrange);
                         
                     }
                    
@@ -44678,10 +44678,10 @@ int main(int argc, char **argv)
                     }
                     else{
                         T neg_time = -sub_dt ;
-                        if(degree_velocity == degree_FEM) // IT IS FASTER
+                        //if(degree_velocity == degree_FEM) // IT IS FASTER
                             run_FEM_BERNSTEIN_LOW_ORDER_CORRECT_FAST_NEW_DIRICHLET_COND( level_set_function.msh , fe_data , level_set_function , u_projected , neg_time);
-                        else
-                            run_FEM_BERNSTEIN_LOW_ORDER_CORRECT_FAST_NEW_DIRICHLET_COND( level_set_function.msh , fe_data , level_set_function , u_projected , neg_time,fe_data_Lagrange);
+                        //else
+                        //    run_FEM_BERNSTEIN_LOW_ORDER_CORRECT_FAST_NEW_DIRICHLET_COND( level_set_function.msh , fe_data , level_set_function , u_projected , neg_time,fe_data_Lagrange);
                        
                     }
                          
