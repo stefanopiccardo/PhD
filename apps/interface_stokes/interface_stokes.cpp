@@ -34785,7 +34785,7 @@ run_cuthho_interface_velocity_prova(const Mesh& msh, size_t degree, meth& method
 
     timecounter tc;
 
-    bool sc = true ;  // false ; // static condensation
+    bool sc = true ; //  true ;  // false ; // static condensation
 
 
     // ************** ASSEMBLE PROBLEM **************
@@ -36264,7 +36264,7 @@ run_cuthho_interface_numerical_ls(const Mesh& msh, size_t degree, meth method, t
     
     timecounter tc;
 
-    bool sc = true; // static condensation
+    bool sc = true ; //false; // static condensation
 
     std::cout<<"WARNING: interface integration points made by linear approximation. Integration error h^2 order. To be developped higher order integration."<<std::endl;
     //std::cout<<"WARNING: check integration points: it seems there is a repetition in agglomerated cells."<<std::endl; --> NOT TRUE, THE WEIGHTS ARE ZEROS!
@@ -36644,7 +36644,7 @@ run_cuthho_interface_numerical_ls(const Mesh& msh, size_t degree, meth method, t
     std::cout << bold << green << "|Rise velocity| :               " << std::abs(rise_vel0/area_fin) + std::abs(rise_vel1/area_fin) << std::endl;
     std::cout << bold << green << "Rise velocity :               " << rise_vel0/area_fin + rise_vel1/area_fin  << std::endl;
     
-    if (0)
+    if (1)
     {
         /////////////// compute condition number
         SparseMatrix<RealType> Mat;
@@ -37817,7 +37817,7 @@ void convergence_test_normal_error_numerical_ls(void)
     std::vector<size_t> mesh_sizes, pol_orders;
 
     // meshes
-    //mesh_sizes.push_back(8);
+    mesh_sizes.push_back(8);
     mesh_sizes.push_back(16);
     //mesh_sizes.push_back(32);
     //mesh_sizes.push_back(64);
@@ -37825,9 +37825,9 @@ void convergence_test_normal_error_numerical_ls(void)
     // mesh_sizes.push_back(256);
 
     // polynomial orders
-    //pol_orders.push_back(0);
+    pol_orders.push_back(0);
     pol_orders.push_back(1);
-    //pol_orders.push_back(2);
+    pol_orders.push_back(2);
     //pol_orders.push_back(3);
 
 
@@ -37875,7 +37875,7 @@ void convergence_test_normal_error_numerical_ls(void)
             typedef cuthho_poly_mesh<T> Mesh;
             offset_definition(msh);     // For Original Mesh
             offset_definition(msh);     // For Agglomerated Mesh
-            size_t int_refsteps = 1;
+            size_t int_refsteps = 4;
             std::cout<<"Number of refine interface points: r = "<<int_refsteps<<std::endl;
                        
             /************** FINITE ELEMENT INITIALIZATION **************/
@@ -37885,16 +37885,24 @@ void convergence_test_normal_error_numerical_ls(void)
             std::cout<<"Level Set (finite element approximation): degree FEM = "<<degree_FEM<<std::endl;
             
             /************** ANALYTIC LEVEL SET FUNCTION  **************/
-            T radius = 1.0/3.0;
+            T radius;
+            
+            if(0)
+                radius = 1.0/3.0;
+            else
+                radius = 0.31;
+            
+            
             T x_centre = 0.5 ;
             T y_centre = 0.5 ;
-            auto level_set_function_anal = circle_level_set<T>(radius, x_centre, y_centre);
-            typedef  circle_level_set<T> Fonction;
-            // auto level_set_function = flower_level_set<T>(0.31, 0.5, 0.5, 4, 0.04);
-            //auto level_set_function = circle_level_set<T>(radius, 0.5, 0.5);
-            // auto level_set_function = square_level_set<T>(1.05, -0.05, -0.05, 1.05);
-            // auto level_set_function = square_level_set<T>(1.0, -0.0, -0.0, 1.0);
-            //auto level_set_function = square_level_set<T>(0.76, 0.24, 0.24, 0.76);
+            //auto level_set_function_anal = circle_level_set<T>(radius, x_centre, y_centre);
+            //typedef  circle_level_set<T> Fonction;
+            auto level_set_function_anal = flower_level_set<T>(radius, x_centre, y_centre, 4, 0.04);
+            typedef  flower_level_set<T> Fonction;
+            //auto level_set_function_anal = circle_level_set<T>(radius, 0.5, 0.5);
+            // auto level_set_function_anal = square_level_set<T>(1.05, -0.05, -0.05, 1.05);
+            // auto level_set_function_anal = square_level_set<T>(1.0, -0.0, -0.0, 1.0);
+            //auto level_set_function_anal = square_level_set<T>(0.76, 0.24, 0.24, 0.76);
             
             /************** LEVEL SET FUNCTION DISCRETISATION **************/
             // Bernstein-Vandermonde interpolation (order available 1,2,3) -> 0 TO BE CHECKED
