@@ -36279,15 +36279,15 @@ run_cuthho_interface_numerical_ls(const Mesh& msh, size_t degree, meth method, t
     {
         
         test_case.test_case_cell_assignment(cl);
-        //auto level_set_function = test_case.level_set_;
-        test_case.refresh_lambdas(level_set_function, parms , sym_grad );
+        auto level_set_function = test_case.level_set_;
+        //test_case.refresh_lambdas(level_set_function, parms , sym_grad );
         
-        auto rhs_fun = test_case.rhs_fun;
-        auto sol_vel = test_case.sol_vel;
-        auto sol_p = test_case.sol_p;
-        auto vel_grad = test_case.vel_grad;
-        auto bcs_vel = test_case.bcs_vel;
-        auto neumann_jump = test_case.neumann_jump;
+        //auto rhs_fun = test_case.rhs_fun;
+        //auto sol_vel = test_case.sol_vel;
+        //auto sol_p = test_case.sol_p;
+        //auto vel_grad = test_case.vel_grad;
+        //auto bcs_vel = test_case.bcs_vel;
+        //auto neumann_jump = test_case.neumann_jump;
         
         assembler_sc.set_dir_func( bcs_vel );
         
@@ -36396,14 +36396,14 @@ run_cuthho_interface_numerical_ls(const Mesh& msh, size_t degree, meth method, t
         //auto level_set_function = test_case.level_set_;
         level_set_function.cell_assignment(cl);
         test_case.test_case_cell_assignment(cl) ;
-        test_case.refresh_lambdas(level_set_function, parms , sym_grad );
+        //test_case.refresh_lambdas(level_set_function, parms , sym_grad );
         
-        auto rhs_fun = test_case.rhs_fun;
+        //auto rhs_fun = test_case.rhs_fun;
         auto sol_vel = test_case.sol_vel;
-        auto sol_p = test_case.sol_p;
+        //auto sol_p = test_case.sol_p;
         auto vel_grad = test_case.vel_grad;
-        auto bcs_vel = test_case.bcs_vel;
-        auto neumann_jump = test_case.neumann_jump;
+        //auto bcs_vel = test_case.bcs_vel;
+        //auto neumann_jump = test_case.neumann_jump;
         
         assembler_sc.set_dir_func( bcs_vel);
         
@@ -36644,7 +36644,7 @@ run_cuthho_interface_numerical_ls(const Mesh& msh, size_t degree, meth method, t
     std::cout << bold << green << "|Rise velocity| :               " << std::abs(rise_vel0/area_fin) + std::abs(rise_vel1/area_fin) << std::endl;
     std::cout << bold << green << "Rise velocity :               " << rise_vel0/area_fin + rise_vel1/area_fin  << std::endl;
     
-    if (1)
+    if (0)
     {
         /////////////// compute condition number
         SparseMatrix<RealType> Mat;
@@ -37819,7 +37819,7 @@ void convergence_test_normal_error_numerical_ls(void)
     // meshes
     mesh_sizes.push_back(8);
     mesh_sizes.push_back(16);
-    //mesh_sizes.push_back(32);
+    mesh_sizes.push_back(32);
     //mesh_sizes.push_back(64);
     // mesh_sizes.push_back(128);
     // mesh_sizes.push_back(256);
@@ -37887,7 +37887,7 @@ void convergence_test_normal_error_numerical_ls(void)
             /************** ANALYTIC LEVEL SET FUNCTION  **************/
             T radius;
             
-            if(0)
+            if(1)
                 radius = 1.0/3.0;
             else
                 radius = 0.31;
@@ -37895,10 +37895,10 @@ void convergence_test_normal_error_numerical_ls(void)
             
             T x_centre = 0.5 ;
             T y_centre = 0.5 ;
-            //auto level_set_function_anal = circle_level_set<T>(radius, x_centre, y_centre);
-            //typedef  circle_level_set<T> Fonction;
-            auto level_set_function_anal = flower_level_set<T>(radius, x_centre, y_centre, 4, 0.04);
-            typedef  flower_level_set<T> Fonction;
+            auto level_set_function_anal = circle_level_set<T>(radius, x_centre, y_centre);
+            typedef  circle_level_set<T> Fonction;
+            //auto level_set_function_anal = flower_level_set<T>(radius, x_centre, y_centre, 4, 0.04);
+            //typedef  flower_level_set<T> Fonction;
             //auto level_set_function_anal = circle_level_set<T>(radius, 0.5, 0.5);
             // auto level_set_function_anal = square_level_set<T>(1.05, -0.05, -0.05, 1.05);
             // auto level_set_function_anal = square_level_set<T>(1.0, -0.0, -0.0, 1.0);
@@ -49097,7 +49097,7 @@ int main(int argc, char **argv)
 
 
 // ------------------------------------ CONVERGENCE ANALYSIS -------------------------------------
-#if 0
+#if 1
 int main(int argc, char **argv)
 {
     //convergence_test(); // GUILLAUME APPLICATION
@@ -49117,7 +49117,7 @@ int main(int argc, char **argv)
 // ---- > dt_M (CHECK OF THE MAXIMUM TIME STEP)
 // ---- > normal_interface_status CORRECT !!!!
 // UPDATED 26/10/2020 to show results
-#if 1
+#if 0
 int main(int argc, char **argv)
 {
     using RealType = double;
@@ -49298,7 +49298,9 @@ int main(int argc, char **argv)
     /************** ANALYTIC LEVEL SET FUNCTION  **************/
     typedef RealType T;
     
-    bool circle = true , ellipse = false ;
+    bool circle = false , ellipse = true ;
+    
+    bool flower = false ;
     
     RealType radius_a , radius_b , radius ;
     RealType x_centre = 0.5;
@@ -49333,16 +49335,16 @@ int main(int argc, char **argv)
     //typedef  circle_level_set<T> Fonction;
     
     // ------------------------------------ FLOWER LEVEL SET ------------------------------------
-    radius = 0.31 ;
-    std::cout<<"Initial interface: FLOWER"<<std::endl;
-    auto level_set_function_anal = flower_level_set<T>(radius, x_centre, y_centre, 4, 0.04); //0.11
-    typedef  flower_level_set<T> Fonction;
-    bool flower = true ;
+    //radius = 0.31 ;
+    //std::cout<<"Initial interface: FLOWER"<<std::endl;
+    //auto level_set_function_anal = flower_level_set<T>(radius, x_centre, y_centre, 4, 0.04); //0.11
+    //typedef  flower_level_set<T> Fonction;
+    //flower = true ;
     
     // ------------------------------------ ELLIPTIC LEVEL SET -----------------------------------
-    //std::cout<<"Initial interface: ELLIPSE"<<std::endl;
-    //auto level_set_function_anal = elliptic_level_set<RealType>( radius_a, radius_b, x_centre, y_centre);
-    //typedef  elliptic_level_set<T> Fonction;
+    std::cout<<"Initial interface: ELLIPSE"<<std::endl;
+    auto level_set_function_anal = elliptic_level_set<RealType>( radius_a, radius_b, x_centre, y_centre);
+    typedef  elliptic_level_set<T> Fonction;
     
     // ------------> OLD STUFF IMPLEMENTATION
     //auto level_set_function_anal = elliptic_distance_ls<RealType>( radius_a, radius_b, x_centre, y_centre , h);
