@@ -29,7 +29,7 @@
 
 
 //#include "eigen3/Eigen/Dense"
-//#include "Eigen/Dense"
+#include "Eigen/Dense"
 
 template<typename T, size_t DIM>
 using static_vector = Eigen::Matrix<T, DIM, 1>;
