@@ -1228,7 +1228,7 @@ auto make_test_case_static_bubble_numerical_ls(const Mesh& msh, Function& level_
 
 
 /// FATTA DA GUILLAUME !!!!
-/*
+
 ///// test_case_kink_velocity
 // !! available for circle_level_set only !!
 // exact solution : u(r) sin(theta) in the whole domain for vel_component 1
@@ -1238,13 +1238,13 @@ auto make_test_case_static_bubble_numerical_ls(const Mesh& msh, Function& level_
 //                   sin(x+y)     in the whole domain for p
 // \kappa_1 , \kappa_2 given
 
-template<typename T, typename Mesh>
-class test_case_kink_velocity: public test_case_stokes<T, circle_level_set<T>, Mesh>
+template<typename T, typename Mesh , typename Function >
+class test_case_kink_velocity: public test_case_stokes<T, Function , Mesh>
 {
   public:
-   test_case_kink_velocity(T R, T a, T b, params<T> parms_, bool sym_grad)
-       : test_case_stokes<T, circle_level_set<T>, Mesh>
-       (circle_level_set<T>(R, a, b), parms_,
+   test_case_kink_velocity(T R, T a, T b, params<T> parms_, bool sym_grad, Function& level_set_)
+       : test_case_stokes<T, Function, Mesh>
+       (level_set_, parms_,
         [R,a,b,parms_](const typename Mesh::point_type& pt) -> Eigen::Matrix<T, 2, 1> { // sol_vel
            Matrix<T, 2, 1> ret;
            T x1 = pt.x() - a;
@@ -1261,7 +1261,7 @@ class test_case_kink_velocity: public test_case_stokes<T, circle_level_set<T>, M
            ret(0) = ur * y1 / r;
            ret(1) = - ur * x1 / r;
            return ret;},
-        [](const typename Mesh::point_type& pt) -> T { // p
+        [a,b](const typename Mesh::point_type& pt) -> T { // p
             T x1 = pt.x() - a;
             T y1 = pt.y() - b;
             return std::sin(x1 + y1);},
@@ -1351,11 +1351,11 @@ class test_case_kink_velocity: public test_case_stokes<T, circle_level_set<T>, M
        {}
 };
 
-template<typename Mesh, typename T>
-auto make_test_case_kink_velocity(const Mesh& msh, T R, T a, T b, params<T> parms_, bool sym_grad)
+template<typename Mesh, typename T, typename Function>
+auto make_test_case_kink_velocity(const Mesh& msh, T R, T a, T b, params<T> parms_, bool sym_grad,Function& level_set_)
 {
-   return test_case_kink_velocity<typename Mesh::coordinate_type, Mesh>(R,a,b,parms_,sym_grad);
+   return test_case_kink_velocity<typename Mesh::coordinate_type, Mesh, Function>(R,a,b,parms_,sym_grad,level_set_);
 }
  
-*/
+
 
